@@ -15,14 +15,24 @@ import {
   Database,
   AlertCircle,
   Activity,
-  Maximize2
+  Maximize2,
+  Radio,
+  PlayCircle,
+  FolderOpen,
+  Plus,
+  Eye,
+  Edit3,
+  Trash2,
+  User,
+  Video
 } from 'lucide-react';
 import { dbStore } from '@/lib/store/db-store';
-import { Match, NormalizedEvent } from '@/types';
+import { Match, NormalizedEvent, ActiveBotoneraSession, MatchAnalysis } from '@/types';
 import { PitchViewer } from '@/components/pitch/PitchViewer';
 import { PitchFilterBar, FilterState } from '@/components/pitch/PitchFilterBar';
 import { MatchTimeline } from '@/components/pitch/MatchTimeline';
 import { MatchStatsPanel } from '@/components/pitch/MatchStatsPanel';
+import { AnalysisVisor } from '@/components/analysis/AnalysisVisor';
 
 export default function PartidoDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
@@ -30,6 +40,10 @@ export default function PartidoDetailPage({ params }: { params: Promise<{ id: st
 
   const [match, setMatch] = useState<Match | null>(null);
   const [events, setEvents] = useState<NormalizedEvent[]>([]);
+  const [activeSession, setActiveSession] = useState<ActiveBotoneraSession | null>(null);
+  const [analyses, setAnalyses] = useState<MatchAnalysis[]>([]);
+  const [activeVisorAnalysis, setActiveVisorAnalysis] = useState<MatchAnalysis | null>(null);
+
   const [activeTab, setActiveTab] = useState<'pitch' | 'table'>('pitch');
   const [selectedEvent, setSelectedEvent] = useState<NormalizedEvent | null>(null);
 
@@ -50,7 +64,34 @@ export default function PartidoDetailPage({ params }: { params: Promise<{ id: st
       const evs = dbStore.getNormalizedEvents(matchId);
       setEvents(evs);
     }
+    dbStore.syncActiveSessionFromSupabase(matchId).then((sess) => {
+      if (sess && sess.selectedMatchId === matchId) {
+        setActiveSession(sess);
+      }
+    });
+    dbStore.syncAnalysesFromSupabase(matchId).then((ans) => {
+      if (ans && ans.length > 0) {
+        setAnalyses(ans);
+      } else {
+        setAnalyses(dbStore.getAnalyses(matchId));
+      }
+    });
   }, [matchId]);
+
+  const handleDeleteAnalysisCard = (analysisId: string) => {
+    if (confirm('¿Estás seguro de eliminar esta tarjeta de análisis?')) {
+      dbStore.deleteAnalysis(analysisId);
+      setAnalyses((prev) => prev.filter((a) => a.id !== analysisId));
+    }
+  };
+
+  const handleUpdateAnalysisCard = (updated: MatchAnalysis) => {
+    dbStore.saveAnalysis(updated);
+    setAnalyses((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
+    if (updated.match_id === matchId && updated.events) {
+      setEvents(updated.events);
+    }
+  };
 
   if (!match) {
     return (
@@ -131,6 +172,14 @@ export default function PartidoDetailPage({ params }: { params: Promise<{ id: st
 
           <div className="flex items-center gap-3">
             <Link
+              href={`/botonera?match_id=${match.id}`}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs shadow-md transition-all"
+            >
+              <PlayCircle className="w-4 h-4 stroke-[2.5]" />
+              <span>{activeSession ? 'Reanudar Análisis' : 'Analizar / Etiquetar en Vivo'}</span>
+            </Link>
+
+            <Link
               href={`/importar-xml?match_id=${match.id}`}
               className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs shadow-md transition-all"
             >
@@ -139,6 +188,28 @@ export default function PartidoDetailPage({ params }: { params: Promise<{ id: st
             </Link>
           </div>
         </div>
+
+        {activeSession && (
+          <div className="p-4 rounded-xl bg-gradient-to-r from-rose-950/80 via-slate-900 to-slate-900 border border-rose-800/80 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs shadow-lg">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-rose-500/20 text-rose-400 border border-rose-500/30 shrink-0">
+                <Radio className="w-5 h-5 animate-pulse" />
+              </div>
+              <div>
+                <p className="font-extrabold text-white text-sm">Este partido tiene un análisis en directo en marcha</p>
+                <p className="text-slate-400 text-xs">Guardado en Supabase con {activeSession.events?.length || 0} eventos registrados.</p>
+              </div>
+            </div>
+
+            <Link
+              href={`/botonera?match_id=${match.id}`}
+              className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-rose-600 via-amber-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-slate-950 font-black text-xs shadow-md shadow-rose-950/40 flex items-center gap-2 whitespace-nowrap transition-all shrink-0"
+            >
+              <PlayCircle className="w-4 h-4 stroke-[2.5]" />
+              <span>Reanudar / Entrar en el Análisis</span>
+            </Link>
+          </div>
+        )}
 
         {/* View Mode Tabs */}
         <div className="flex items-center gap-2 pt-2 border-t border-slate-800/80">
@@ -166,6 +237,100 @@ export default function PartidoDetailPage({ params }: { params: Promise<{ id: st
             <span>Tabla de Eventos & Metadata Raw</span>
           </button>
         </div>
+      </div>
+
+      {/* Section: Tarjetas de Análisis Realizados */}
+      <div className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-4 shadow-xl">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
+          <div>
+            <h3 className="text-sm font-extrabold text-white flex items-center gap-2">
+              <FolderOpen className="w-4 h-4 text-amber-400" />
+              <span>Tarjetas de Análisis Realizados ({analyses.length})</span>
+            </h3>
+            <p className="text-xs text-slate-400">
+              Abre cualquier análisis en formato Visor (vídeo + mapa de campo + edición directa) o edítalo en la botonera.
+            </p>
+          </div>
+
+          <Link
+            href={`/botonera?match_id=${match.id}`}
+            className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-extrabold text-xs shadow-md transition-all flex items-center gap-2 shrink-0"
+          >
+            <Plus className="w-4 h-4 stroke-[3]" />
+            <span>Crear Nuevo Análisis</span>
+          </Link>
+        </div>
+
+        {analyses.length === 0 ? (
+          <div className="p-6 text-center rounded-xl bg-slate-950/60 border border-dashed border-slate-800 space-y-2">
+            <FileCode className="w-8 h-8 text-slate-600 mx-auto" />
+            <p className="text-xs font-semibold text-slate-300">Aún no hay tarjetas de análisis guardadas para este partido.</p>
+            <p className="text-[11px] text-slate-500">Puedes crear un nuevo análisis etiquetado en vivo o por vídeo haciendo clic en &quot;Crear Nuevo Análisis&quot;.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {analyses.map((an) => (
+              <div key={an.id} className="p-4 rounded-xl bg-slate-950 border border-slate-800 hover:border-amber-500/40 space-y-3 transition-all flex flex-col justify-between shadow-lg">
+                <div>
+                  <div className="flex items-center justify-between text-[11px] text-slate-400 pb-2 border-b border-slate-800/60">
+                    <span className="font-mono text-slate-300">{new Date(an.updated_at || an.created_at).toLocaleDateString()}</span>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                      an.status === 'completed'
+                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                        : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                    }`}>
+                      {an.status === 'completed' ? 'Finalizado' : 'En progreso'}
+                    </span>
+                  </div>
+
+                  <h4 className="font-extrabold text-sm text-white mt-2.5 line-clamp-1">{an.title}</h4>
+                  <p className="text-xs text-slate-400 mt-1 flex items-center gap-1.5">
+                    <User className="w-3.5 h-3.5 text-slate-500" />
+                    <span>{an.analyst_name || 'Analista Principal'}</span>
+                  </p>
+
+                  <div className="flex items-center gap-2 mt-3 text-[11px] text-slate-300 font-mono">
+                    <span className="bg-slate-900 px-2 py-1 rounded border border-slate-800">
+                      {an.events?.length || 0} eventos
+                    </span>
+                    {an.video_type && (
+                      <span className="bg-slate-900 px-2 py-1 rounded border border-slate-800 text-sky-400 flex items-center gap-1">
+                        <Video className="w-3 h-3" />
+                        <span>{an.video_type === 'link' ? 'Vídeo URL' : an.video_type === 'local' ? 'Vídeo Local' : 'Sin vídeo'}</span>
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 pt-2 border-t border-slate-800/60">
+                  <button
+                    onClick={() => setActiveVisorAnalysis(an)}
+                    className="flex-1 py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-extrabold text-xs transition-colors flex items-center justify-center gap-1.5"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>Abrir Visor</span>
+                  </button>
+
+                  <Link
+                    href={`/botonera?match_id=${match.id}&analysis_id=${an.id}`}
+                    className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 transition-colors"
+                    title="Editar en Botonera"
+                  >
+                    <Edit3 className="w-4 h-4" />
+                  </Link>
+
+                  <button
+                    onClick={() => handleDeleteAnalysisCard(an.id)}
+                    className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-rose-400 border border-slate-700 transition-colors"
+                    title="Eliminar Tarjeta de Análisis"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* TAB 1: INTERACTIVE PITCH & TIMELINE */}
@@ -354,6 +519,15 @@ export default function PartidoDetailPage({ params }: { params: Promise<{ id: st
             </div>
           </div>
         </div>
+      )}
+      {/* Visor Modal when selecting an analysis card */}
+      {activeVisorAnalysis && match && (
+        <AnalysisVisor
+          match={match}
+          analysis={activeVisorAnalysis}
+          onClose={() => setActiveVisorAnalysis(null)}
+          onUpdateAnalysis={(updated) => handleUpdateAnalysisCard(updated)}
+        />
       )}
     </div>
   );

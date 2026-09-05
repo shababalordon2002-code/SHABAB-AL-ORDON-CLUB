@@ -49,12 +49,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // If user is signed in and trying to access login page
-  if (user && isLoginPage) {
-    const url = request.nextUrl.clone();
-    url.pathname = '/';
-    return NextResponse.redirect(url);
-  }
+  // Allow /login page to always be accessible (e.g. for account switching or re-authenticating)
 
   // If trying to access admin pages, verify admin role
   if (user && isAdminPage) {

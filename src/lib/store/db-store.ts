@@ -1,6 +1,17 @@
-import { Match, Player, PlayerMapping, Team, Competition, ImportLog, NormalizedEvent, BotoneraTemplate, ActiveBotoneraSession } from '@/types';
-import { saveBotoneraTemplateToSupabase, deleteBotoneraTemplateFromSupabase } from '@/lib/services/botonera-service';
-import { saveMatchesToSupabase } from '@/lib/services/matches-service';
+import { Match, Player, PlayerMapping, Team, Competition, ImportLog, NormalizedEvent, BotoneraTemplate, ActiveBotoneraSession, MatchAnalysis, MatchDashboard } from '@/types';
+import {
+  saveBotoneraTemplateToSupabase,
+  deleteBotoneraTemplateFromSupabase,
+  getBotoneraTemplatesFromSupabase,
+  saveAnalysisSessionToSupabase,
+  getAnalysisSessionFromSupabase,
+  getAllActiveSessionsFromSupabase,
+  deleteAnalysisSessionFromSupabase
+} from '@/lib/services/botonera-service';
+import { saveMatchesToSupabase, getMatchesFromSupabase } from '@/lib/services/matches-service';
+import { getPlayersFromSupabase } from '@/lib/services/players-service';
+import { getAnalysesFromSupabase, saveAnalysisToSupabase, deleteAnalysisFromSupabase } from '@/lib/services/analysis-service';
+import { getDashboardsFromSupabase, saveDashboardToSupabase, deleteDashboardFromSupabase } from '@/lib/services/dashboard-service';
 
 const STORAGE_KEYS = {
   MATCHES: 'sao_analytics_matches_v1',
@@ -12,7 +23,34 @@ const STORAGE_KEYS = {
   COMPETITIONS: 'sao_analytics_competitions_v1',
   BOTONERA_TEMPLATES: 'sao_analytics_botonera_templates_v1',
   BOTONERA_ACTIVE_SESSION: 'sao_analytics_active_session_v1',
+  MATCH_ANALYSES: 'sao_analytics_match_analyses_v1',
+  MATCH_DASHBOARDS: 'sao_analytics_match_dashboards_v1',
 };
+
+export const SEED_MATCH_ANALYSES: MatchAnalysis[] = [
+  {
+    id: 'analysis_demo_1',
+    match_id: 'match_demo_1',
+    title: 'Análisis Táctico Completo vs Al-Faisaly',
+    analyst_name: 'Analista Principal (SAO)',
+    status: 'completed',
+    created_at: '2026-09-01T20:45:00Z',
+    updated_at: '2026-09-01T20:45:00Z',
+    events: []
+  },
+  {
+    id: 'analysis_fs_EXAUVBT8_1',
+    match_id: 'match_fs_EXAUVBT8',
+    title: 'Análisis Vídeo 1ª Parte vs Al Ramtha',
+    analyst_name: 'Cuerpo Técnico SAO',
+    status: 'completed',
+    video_type: 'link',
+    video_url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    created_at: '2026-09-04T18:30:00Z',
+    updated_at: '2026-09-04T18:30:00Z',
+    events: []
+  }
+];
 
 // Initial Seed DEMO Botonera Templates (LongoMatch / Nacsport Style)
 export const SEED_BOTONERA_TEMPLATES: BotoneraTemplate[] = [
@@ -286,7 +324,12 @@ function getFromStorage<T>(key: string, defaultValue: T): T {
   if (typeof window === 'undefined') return defaultValue;
   try {
     const data = localStorage.getItem(key);
-    return data ? JSON.parse(data) : defaultValue;
+    if (!data) return defaultValue;
+    const parsed = JSON.parse(data);
+    if (Array.isArray(defaultValue) && Array.isArray(parsed) && parsed.length === 0 && defaultValue.length > 0) {
+      return defaultValue;
+    }
+    return parsed;
   } catch (e) {
     console.error(`Error reading ${key} from storage:`, e);
     return defaultValue;
@@ -306,6 +349,19 @@ export const dbStore = {
   // Matches
   getMatches(): Match[] {
     return getFromStorage(STORAGE_KEYS.MATCHES, SEED_MATCHES);
+  },
+
+  async syncMatchesFromSupabase(): Promise<Match[]> {
+    const remote = await getMatchesFromSupabase();
+    if (remote && remote.length > 0) {
+      const allLocal = this.getMatches();
+      const remoteIds = new Set(remote.map(m => m.id));
+      const localOnly = allLocal.filter(m => !remoteIds.has(m.id));
+      const merged = [...remote, ...localOnly];
+      setToStorage(STORAGE_KEYS.MATCHES, merged);
+      return merged;
+    }
+    return this.getMatches();
   },
 
   getMatchById(id: string): Match | undefined {
@@ -405,6 +461,19 @@ export const dbStore = {
     return list;
   },
 
+  async syncPlayersFromSupabase(): Promise<Player[]> {
+    const remote = await getPlayersFromSupabase();
+    if (remote && remote.length > 0) {
+      const allLocal = this.getPlayers();
+      const remoteIds = new Set(remote.map(p => p.id));
+      const localOnly = allLocal.filter(p => !remoteIds.has(p.id));
+      const merged = [...remote, ...localOnly];
+      setToStorage(STORAGE_KEYS.PLAYERS, merged);
+      return merged;
+    }
+    return this.getPlayers();
+  },
+
   savePlayer(player: Player): void {
     const players = this.getPlayers();
     const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -481,6 +550,21 @@ export const dbStore = {
     return getFromStorage(STORAGE_KEYS.BOTONERA_TEMPLATES, SEED_BOTONERA_TEMPLATES);
   },
 
+  async syncBotoneraTemplatesFromSupabase(): Promise<BotoneraTemplate[]> {
+    const remoteTemplates = await getBotoneraTemplatesFromSupabase();
+    if (remoteTemplates && remoteTemplates.length > 0) {
+      setToStorage(STORAGE_KEYS.BOTONERA_TEMPLATES, remoteTemplates);
+      return remoteTemplates;
+    }
+    const current = this.getBotoneraTemplates();
+    if (current && current.length > 0) {
+      current.forEach(t => {
+        saveBotoneraTemplateToSupabase(t).catch(() => {});
+      });
+    }
+    return current;
+  },
+
   saveBotoneraTemplate(template: BotoneraTemplate): void {
     const templates = this.getBotoneraTemplates();
     const idx = templates.findIndex(t => t.id === template.id);
@@ -513,21 +597,168 @@ export const dbStore = {
 
   resetBotoneraTemplates(): BotoneraTemplate[] {
     setToStorage(STORAGE_KEYS.BOTONERA_TEMPLATES, SEED_BOTONERA_TEMPLATES);
+    SEED_BOTONERA_TEMPLATES.forEach(t => {
+      saveBotoneraTemplateToSupabase(t).catch(() => {});
+    });
     return SEED_BOTONERA_TEMPLATES;
   },
 
-  // Active Session Persistence across Route Navigations & Tab Focus
+  // Active Session Persistence across Route Navigations, Tab Focus & Supabase Sync
   getActiveBotoneraSession(): ActiveBotoneraSession | null {
     return getFromStorage<ActiveBotoneraSession | null>(STORAGE_KEYS.BOTONERA_ACTIVE_SESSION, null);
   },
 
-  saveActiveBotoneraSession(session: ActiveBotoneraSession): void {
-    setToStorage(STORAGE_KEYS.BOTONERA_ACTIVE_SESSION, session);
+  async syncActiveSessionFromSupabase(matchId?: string): Promise<ActiveBotoneraSession | null> {
+    const remoteSession = await getAnalysisSessionFromSupabase(matchId);
+    if (remoteSession) {
+      setToStorage(STORAGE_KEYS.BOTONERA_ACTIVE_SESSION, remoteSession);
+      return remoteSession;
+    }
+    return this.getActiveBotoneraSession();
   },
 
-  clearActiveBotoneraSession(): void {
+  async getAllActiveSessions(): Promise<Record<string, ActiveBotoneraSession>> {
+    const remoteSessions = await getAllActiveSessionsFromSupabase();
+    const localSession = this.getActiveBotoneraSession();
+    if (localSession && localSession.selectedMatchId) {
+      remoteSessions[localSession.selectedMatchId] = localSession;
+    }
+    return remoteSessions;
+  },
+
+  _lastActiveSessionSupabaseSync: 0,
+
+  saveActiveBotoneraSession(session: ActiveBotoneraSession): void {
+    setToStorage(STORAGE_KEYS.BOTONERA_ACTIVE_SESSION, session);
+
+    // Sync active session asynchronously to Supabase (throttled to every 5s or when paused)
+    const now = Date.now();
+    if (now - (this._lastActiveSessionSupabaseSync || 0) > 5000 || !session.isTimerRunning) {
+      this._lastActiveSessionSupabaseSync = now;
+      saveAnalysisSessionToSupabase(session).catch(err => {
+        console.warn("Could not sync active session to Supabase:", err);
+      });
+    }
+  },
+
+  clearActiveBotoneraSession(matchId?: string): void {
+    const currentSession = this.getActiveBotoneraSession();
+    const targetMatchId = matchId || currentSession?.selectedMatchId;
+
     if (typeof window !== 'undefined') {
       localStorage.removeItem(STORAGE_KEYS.BOTONERA_ACTIVE_SESSION);
     }
+
+    if (targetMatchId) {
+      deleteAnalysisSessionFromSupabase(targetMatchId).catch(err => {
+        console.warn("Could not delete active session from Supabase:", err);
+      });
+    }
+  },
+
+  // Match Analyses Management
+  getAnalyses(matchId?: string): MatchAnalysis[] {
+    const list = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
+    if (!matchId) return list;
+    return list.filter(a => a.match_id === matchId);
+  },
+
+  getAnalysisById(id: string): MatchAnalysis | undefined {
+    const list = this.getAnalyses();
+    return list.find(a => a.id === id);
+  },
+
+  async syncAnalysesFromSupabase(matchId?: string): Promise<MatchAnalysis[]> {
+    const remote = await getAnalysesFromSupabase(matchId);
+    if (remote && remote.length > 0) {
+      const allLocal = this.getAnalyses();
+      const nonMatchLocal = matchId ? allLocal.filter(a => a.match_id !== matchId) : [];
+      const merged = [...remote, ...nonMatchLocal];
+      setToStorage(STORAGE_KEYS.MATCH_ANALYSES, merged);
+      return matchId ? remote : merged;
+    }
+    return this.getAnalyses(matchId);
+  },
+
+  saveAnalysis(analysis: MatchAnalysis): void {
+    const all = this.getAnalyses();
+    const idx = all.findIndex(a => a.id === analysis.id);
+    let updated: MatchAnalysis;
+    if (idx >= 0) {
+      updated = { ...analysis, updated_at: new Date().toISOString() };
+      all[idx] = updated;
+    } else {
+      updated = { ...analysis, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+      all.unshift(updated);
+    }
+    setToStorage(STORAGE_KEYS.MATCH_ANALYSES, all);
+
+    saveAnalysisToSupabase(updated).catch(err => {
+      console.warn("Could not sync analysis to Supabase:", err);
+    });
+  },
+
+  deleteAnalysis(id: string): void {
+    const all = this.getAnalyses();
+    const filtered = all.filter(a => a.id !== id);
+    setToStorage(STORAGE_KEYS.MATCH_ANALYSES, filtered);
+
+    deleteAnalysisFromSupabase(id).catch(err => {
+      console.warn("Could not delete analysis from Supabase:", err);
+    });
+  },
+
+  // Match Dashboards (pizarras configurables por partido)
+  getDashboards(matchId?: string): MatchDashboard[] {
+    const list = getFromStorage<MatchDashboard[]>(STORAGE_KEYS.MATCH_DASHBOARDS, []);
+    if (!matchId) return list;
+    return list.filter(d => d.match_id === matchId);
+  },
+
+  getDashboardById(id: string): MatchDashboard | undefined {
+    return this.getDashboards().find(d => d.id === id);
+  },
+
+  async syncDashboardsFromSupabase(matchId?: string): Promise<MatchDashboard[]> {
+    const remote = await getDashboardsFromSupabase(matchId);
+    if (remote && remote.length > 0) {
+      const allLocal = this.getDashboards();
+      const remoteIds = new Set(remote.map(d => d.id));
+      const localOnly = allLocal.filter(d => !remoteIds.has(d.id));
+      const merged = [...remote, ...localOnly];
+      setToStorage(STORAGE_KEYS.MATCH_DASHBOARDS, merged);
+      return matchId ? merged.filter(d => d.match_id === matchId) : merged;
+    }
+    return this.getDashboards(matchId);
+  },
+
+  saveDashboard(dashboard: MatchDashboard): void {
+    const all = this.getDashboards();
+    const idx = all.findIndex(d => d.id === dashboard.id);
+    const now = new Date().toISOString();
+    let updated: MatchDashboard;
+    if (idx >= 0) {
+      updated = { ...dashboard, updated_at: now };
+      all[idx] = updated;
+    } else {
+      updated = { ...dashboard, created_at: dashboard.created_at || now, updated_at: now };
+      all.unshift(updated);
+    }
+    setToStorage(STORAGE_KEYS.MATCH_DASHBOARDS, all);
+
+    saveDashboardToSupabase(updated).catch(err => {
+      console.warn("Could not sync dashboard to Supabase:", err);
+    });
+  },
+
+  deleteDashboard(id: string): void {
+    const filtered = this.getDashboards().filter(d => d.id !== id);
+    setToStorage(STORAGE_KEYS.MATCH_DASHBOARDS, filtered);
+
+    deleteDashboardFromSupabase(id).catch(err => {
+      console.warn("Could not delete dashboard from Supabase:", err);
+    });
   }
 };
+
+

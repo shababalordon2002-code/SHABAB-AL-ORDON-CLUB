@@ -164,7 +164,11 @@ export const Header: React.FC = () => {
           ) : (
             <Link
               href="/login"
-              className="flex items-center gap-2 px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-400 text-xs font-semibold rounded-xl border border-slate-700 transition-colors shadow-sm"
+              onClick={(e) => {
+                e.preventDefault();
+                window.location.href = '/login';
+              }}
+              className="flex items-center gap-2 px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-400 text-xs font-semibold rounded-xl border border-slate-700 transition-colors shadow-sm cursor-pointer"
             >
               <span>Iniciar Sesión</span>
             </Link>

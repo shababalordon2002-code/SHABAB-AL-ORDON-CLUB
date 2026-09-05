@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   UploadCloud,
   FolderOpen,
+  Calendar,
 } from 'lucide-react';
 import { Match, BotoneraTemplate, BotoneraProjectVideoType } from '@/types';
 
@@ -187,32 +188,96 @@ export const BotoneraSetupWizard: React.FC<BotoneraSetupWizardProps> = ({
                 Selecciona el partido que vas a analizar
               </p>
 
-              <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
+              <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
                 <button
+                  type="button"
                   onClick={() => setMatchId('free_session')}
-                  className={`w-full text-left p-3 rounded-xl border text-xs transition ${
+                  className={`w-full text-left p-3 rounded-xl border text-xs transition cursor-pointer ${
                     matchId === 'free_session'
                       ? 'bg-emerald-600/15 border-emerald-500/50 text-emerald-300'
                       : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700'
                   }`}
                 >
-                  ⚡ Sesión Libre (sin partido asignado)
+                  ⚡ <strong>Sesión Libre</strong> <span className="text-slate-500">(sin partido asignado)</span>
                 </button>
 
-                {matches.map((m) => (
-                  <button
-                    key={m.id}
-                    onClick={() => setMatchId(m.id)}
-                    className={`w-full text-left p-3 rounded-xl border text-xs transition ${
-                      matchId === m.id
-                        ? 'bg-emerald-600/15 border-emerald-500/50 text-emerald-300'
-                        : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700'
-                    }`}
-                  >
-                    ⚽ <strong>{m.home_team} vs {m.away_team}</strong>
-                    <span className="text-slate-500"> — {m.competition} • {m.date}</span>
-                  </button>
-                ))}
+                {matches.map((m) => {
+                  const isShababHome = m.home_team.toLowerCase().includes('shabab al ordon');
+                  const isShababAway = m.away_team.toLowerCase().includes('shabab al ordon');
+                  const isSelected = matchId === m.id;
+
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setMatchId(m.id)}
+                      className={`w-full text-left p-3 rounded-xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 cursor-pointer ${
+                        isSelected
+                          ? 'bg-emerald-600/15 border-emerald-500/60 ring-1 ring-emerald-500/40 text-white'
+                          : 'bg-slate-950/90 border-slate-800/80 text-slate-300 hover:border-slate-700 hover:bg-slate-900/60'
+                      }`}
+                    >
+                      <div className="space-y-1 flex-1 min-w-0">
+                        {/* Competition, Jornada/Round & Date */}
+                        <div className="flex items-center gap-2 flex-wrap text-[11px]">
+                          <span className="font-extrabold text-amber-400 flex items-center gap-1">
+                            <Trophy className="w-3 h-3" />
+                            <span>{m.competition}</span>
+                          </span>
+
+                          {m.round && (
+                            <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300 font-medium text-[10px]">
+                              {m.round}
+                            </span>
+                          )}
+
+                          <span className="text-slate-400 font-mono flex items-center gap-1 text-[10px]">
+                            <Calendar className="w-3 h-3 text-slate-500" />
+                            <span>{m.date} {m.time ? `• ${m.time}` : ''}</span>
+                          </span>
+                        </div>
+
+                        {/* Teams */}
+                        <div className="flex items-center gap-2 font-bold text-xs">
+                          <div className="flex items-center gap-1.5 truncate">
+                            {m.home_team_logo && (
+                              <img src={m.home_team_logo} alt="" className="w-4 h-4 object-contain rounded bg-slate-950 p-0.5 shrink-0" />
+                            )}
+                            <span className={isShababHome ? 'text-amber-400 font-extrabold' : 'text-slate-100'}>{m.home_team}</span>
+                          </div>
+
+                          <span className="font-mono text-slate-400 font-bold px-1.5 py-0.5 rounded bg-slate-900 text-[10px] border border-slate-800 shrink-0">
+                            {m.status === 'Finalizado' ? `${m.home_score} - ${m.away_score}` : 'vs'}
+                          </span>
+
+                          <div className="flex items-center gap-1.5 truncate">
+                            {m.away_team_logo && (
+                              <img src={m.away_team_logo} alt="" className="w-4 h-4 object-contain rounded bg-slate-950 p-0.5 shrink-0" />
+                            )}
+                            <span className={isShababAway ? 'text-amber-400 font-extrabold' : 'text-slate-100'}>{m.away_team}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Event count & Status */}
+                      <div className="flex items-center gap-2 shrink-0 text-[10px]">
+                        {m.event_count > 0 && (
+                          <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-400 font-mono">
+                            {m.event_count} evs
+                          </span>
+                        )}
+
+                        <span className={`px-2 py-0.5 rounded font-bold border ${
+                          m.status === 'Finalizado'
+                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                            : 'bg-slate-900 text-slate-400 border-slate-800'
+                        }`}>
+                          {m.status}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
 
                 {matches.length === 0 && (
                   <p className="text-[11px] text-slate-500 italic p-3">

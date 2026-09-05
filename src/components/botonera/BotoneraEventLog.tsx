@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { NormalizedEvent, BotoneraButton } from '@/types';
 import { getButtonColorHex } from './BotoneraPanelEditor';
+import { FullEventFormModal } from '@/components/analysis/FullEventFormModal';
 
 interface BotoneraEventLogProps {
   events: NormalizedEvent[];
@@ -393,111 +394,17 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
         </table>
       </div>
 
-      {/* Edit Event Modal */}
+      {/* Edit Event Modal with full campograma pitch canvas, vector arrow, zone, and descriptors */}
       {editingEvent && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl animate-fade-in">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <div className="flex items-center gap-2">
-                <Pencil className="w-4 h-4 text-amber-400" />
-                <h3 className="font-bold text-slate-100 text-sm">Editar Evento Registrado</h3>
-              </div>
-              <button
-                onClick={() => setEditingEvent(null)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-3 text-xs">
-              <div>
-                <label className="block text-slate-400 font-bold mb-1">Categoría / Tipo de Accion</label>
-                <input
-                  type="text"
-                  value={editCategory}
-                  onChange={(e) => setEditCategory(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 font-semibold focus:outline-none focus:border-amber-500/50"
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-400 font-bold mb-1">Jugador Asignado</label>
-                <input
-                  type="text"
-                  value={editPlayerName}
-                  onChange={(e) => setEditPlayerName(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 font-semibold focus:outline-none focus:border-amber-500/50"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-400 font-bold mb-1">Periodo</label>
-                  <select
-                    value={editPeriod}
-                    onChange={(e) => setEditPeriod(Number(e.target.value))}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 font-semibold focus:outline-none"
-                  >
-                    <option value={1}>1ª Parte</option>
-                    <option value={2}>2ª Parte</option>
-                    <option value={3}>Prórroga 1</option>
-                    <option value={4}>Prórroga 2</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-slate-400 font-bold mb-1">Tiempo (Min : Seg)</label>
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="number"
-                      min={0}
-                      value={editMin}
-                      onChange={(e) => setEditMin(Number(e.target.value))}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-slate-200 font-mono text-center focus:outline-none"
-                    />
-                    <span className="text-slate-500 font-bold">:</span>
-                    <input
-                      type="number"
-                      min={0}
-                      max={59}
-                      value={editSec}
-                      onChange={(e) => setEditSec(Number(e.target.value))}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-slate-200 font-mono text-center focus:outline-none"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-slate-400 font-bold mb-1">Resultado / Descriptores</label>
-                <input
-                  type="text"
-                  value={editOutcome}
-                  onChange={(e) => setEditOutcome(e.target.value)}
-                  placeholder="Ej: Éxito, Fallido, Cabeza, Pie Derecho..."
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 font-semibold focus:outline-none focus:border-amber-500/50"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
-              <button
-                onClick={() => setEditingEvent(null)}
-                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleSaveEdit}
-                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-extrabold text-xs transition flex items-center gap-1.5 shadow-lg shadow-emerald-950/40"
-              >
-                <Save className="w-3.5 h-3.5" />
-                <span>Guardar Cambios</span>
-              </button>
-            </div>
-          </div>
-        </div>
+        <FullEventFormModal
+          initialEvent={editingEvent}
+          onSave={(updated) => {
+            if (onUpdateEvent) onUpdateEvent(updated);
+            setEditingEvent(null);
+          }}
+          onClose={() => setEditingEvent(null)}
+          title="Editar Evento Registrado (Campograma & Descriptores)"
+        />
       )}
     </div>
   );

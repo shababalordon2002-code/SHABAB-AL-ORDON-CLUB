@@ -60,11 +60,11 @@ export default function JugadoresPage() {
 
   const loadData = async () => {
     let localPlayers = dbStore.getPlayers();
+    setPlayers(localPlayers);
     try {
-      const spPlayers = await getPlayersFromSupabase();
-      if (spPlayers && spPlayers.length > 0) {
-        spPlayers.forEach((p) => dbStore.savePlayer(p));
-        localPlayers = dbStore.getPlayers();
+      const synced = await dbStore.syncPlayersFromSupabase();
+      if (synced && synced.length > 0) {
+        localPlayers = synced;
       }
     } catch (e) {
       console.warn("Supabase load error:", e);

@@ -19,12 +19,12 @@
     --ring: 160 84% 39%;
   }
 
-  body {
-    background-color: #0b0f17;
-    color: #f1f5f9;
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-    min-height: 100vh;
-  }
+html, body {
+  background-color: #0b0f17 !important;
+  color: #f1f5f9 !important;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  min-height: 100vh;
+}
 }
 
 /* Custom scrollbars */
@@ -66,4 +66,22 @@
 
 .animate-slow-pan {
   animation: slow-pan 30s ease-in-out infinite alternate;
+}
+
+/* Controles de formulario de los dashboards */
+.input-dark {
+  width: 100%;
+  background: #020617;
+  border: 1px solid #1e293b;
+  border-radius: 0.5rem;
+  padding: 0.4rem 0.55rem;
+  font-size: 11px;
+  color: #e2e8f0;
+  outline: none;
+}
+.input-dark:focus {
+  border-color: rgba(16, 185, 129, 0.6);
+}
+.input-dark option {
+  background: #0f172a;
 }

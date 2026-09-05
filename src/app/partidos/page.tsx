@@ -13,25 +13,35 @@ import {
   Globe,
   FileCode2,
   ExternalLink,
-  AlertCircle
+  AlertCircle,
+  Radio,
+  PlayCircle
 } from 'lucide-react';
 import { dbStore } from '@/lib/store/db-store';
-import { Match } from '@/types';
+import { Match, ActiveBotoneraSession } from '@/types';
 
 export default function PartidosPage() {
   const [matches, setMatches] = useState<Match[]>([]);
+  const [activeSessionsMap, setActiveSessionsMap] = useState<Record<string, ActiveBotoneraSession>>({});
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('todos');
   const [importFilter, setImportFilter] = useState<string>('todos');
   const [isScraping, setIsScraping] = useState(false);
   const [scrapeMessage, setScrapeMessage] = useState<string | null>(null);
 
-  const loadMatches = () => {
+  const loadMatches = async () => {
     setMatches(dbStore.getMatches());
+    const synced = await dbStore.syncMatchesFromSupabase();
+    if (synced && synced.length > 0) {
+      setMatches(synced);
+    }
   };
 
   useEffect(() => {
     loadMatches();
+    dbStore.getAllActiveSessions().then((sessions) => {
+      if (sessions) setActiveSessionsMap(sessions);
+    });
   }, []);
 
   const handleScrapeFlashscore = async () => {
@@ -189,9 +199,12 @@ export default function PartidosPage() {
         {filteredMatches.map((m) => {
           const isShababHome = m.home_team.toLowerCase().includes('shabab al ordon');
           const isShababAway = m.away_team.toLowerCase().includes('shabab al ordon');
+          const activeSession = activeSessionsMap[m.id];
 
           return (
-            <div key={m.id} className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800/80 space-y-4 card-hover-effect relative flex flex-col justify-between shadow-xl">
+            <div key={m.id} className={`p-5 rounded-2xl bg-slate-900/90 border space-y-4 card-hover-effect relative flex flex-col justify-between shadow-xl ${
+              activeSession ? 'border-rose-500/60 ring-1 ring-rose-500/30' : 'border-slate-800/80'
+            }`}>
               <div>
                 {/* Top row: Date/Time + League & Round */}
                 <div className="flex items-center justify-between text-[11px] text-slate-400 pb-2.5 border-b border-slate-800/60 gap-2">
@@ -272,7 +285,9 @@ export default function PartidosPage() {
                 <div className="flex items-center justify-between text-xs">
                   <div className="flex items-center gap-1.5">
                     <FileCode2 className="w-3.5 h-3.5 text-slate-400" />
-                    <span className="text-slate-300 font-semibold">{m.event_count} eventos</span>
+                    <span className="text-slate-300 font-semibold">
+                      {activeSession?.events?.length ?? m.event_count} eventos
+                    </span>
                   </div>
 
                   <div className="flex items-center gap-1.5">
@@ -288,34 +303,53 @@ export default function PartidosPage() {
                       </a>
                     )}
 
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
-                      m.status === 'Finalizado'
-                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                        : 'bg-slate-800 text-slate-400 border-slate-700'
-                    }`}>
-                      {m.status === 'Finalizado' ? `Finalizado (${m.home_score}-${m.away_score})` : 'Programado'}
-                    </span>
+                    {activeSession ? (
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse flex items-center gap-1">
+                        <Radio className="w-3 h-3 text-rose-400" />
+                        <span>En marcha</span>
+                      </span>
+                    ) : (
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                        m.status === 'Finalizado'
+                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                          : 'bg-slate-800 text-slate-400 border-slate-700'
+                      }`}>
+                        {m.status === 'Finalizado' ? `Finalizado (${m.home_score}-${m.away_score})` : 'Programado'}
+                      </span>
+                    )}
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 pt-1">
-                  <Link
-                    href={`/partidos/${m.id}`}
-                    className="flex-1 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 text-center transition-colors flex items-center justify-center gap-1"
-                  >
-                    <span>Ver Detalle & Eventos</span>
-                    <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
-                  </Link>
-
-                  {m.import_status !== 'XML Importado' && (
+                <div className="flex flex-col gap-2 pt-1">
+                  {activeSession && (
                     <Link
-                      href={`/importar-xml?match_id=${m.id}`}
-                      className="p-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 transition-colors"
-                      title="Importar XML para este partido"
+                      href={`/botonera?match_id=${m.id}`}
+                      className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-rose-600 via-amber-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-slate-950 font-black text-xs shadow-md shadow-rose-950/40 transition-all flex items-center justify-center gap-1.5"
                     >
-                      <UploadCloud className="w-4 h-4" />
+                      <PlayCircle className="w-4 h-4 stroke-[2.5]" />
+                      <span>Entrar en el Análisis</span>
                     </Link>
                   )}
+
+                  <div className="flex items-center gap-2">
+                    <Link
+                      href={`/partidos/${m.id}`}
+                      className="flex-1 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 text-center transition-colors flex items-center justify-center gap-1"
+                    >
+                      <span>Ver Detalle & Eventos</span>
+                      <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+                    </Link>
+
+                    {m.import_status !== 'XML Importado' && (
+                      <Link
+                        href={`/importar-xml?match_id=${m.id}`}
+                        className="p-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 transition-colors"
+                        title="Importar XML para este partido"
+                      >
+                        <UploadCloud className="w-4 h-4" />
+                      </Link>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

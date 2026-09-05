@@ -24,7 +24,7 @@ export interface NormalizedEvent {
   end_y: number | null;     // pitch end y (0-100)
   outcome: string | null;   // "éxito", "fallido", etc.
   metadata: Record<string, any>; // información adicional
-  source: 'longomatch';
+  source: 'longomatch' | 'manual' | string;
   created_at: string;
   updated_at: string;
 }
@@ -57,6 +57,23 @@ export interface Match {
   p1_video_start_time?: number | null; // seconds in video when 1st half starts
   p2_video_start_time?: number | null; // seconds in video when 2nd half starts
   botonera_template_id?: string | null;
+}
+
+export interface MatchAnalysis {
+  id: string;
+  match_id: string;
+  title: string;
+  analyst_name?: string;
+  status: 'completed' | 'in_progress';
+  video_type?: BotoneraProjectVideoType | null;
+  video_url?: string | null;
+  video_source_name?: string | null;
+  p1_video_start_time?: number | null;
+  p2_video_start_time?: number | null;
+  botonera_template_id?: string | null;
+  events: NormalizedEvent[];
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Player {
@@ -245,3 +262,91 @@ export interface ActiveBotoneraSession {
 }
 
 
+
+/**
+ * Dashboards (Editor tipo Tableau / Power BI sobre los datos de la botonera)
+ */
+export type DashboardWidgetType =
+  | 'kpi'
+  | 'bar'          // barras horizontales
+  | 'column'       // barras verticales
+  | 'line'         // evolución temporal
+  | 'area'         // evolución temporal con relleno (soporta acumulado)
+  | 'pie'
+  | 'donut'
+  | 'table'
+  | 'matrix'       // tabla cruzada dimensión x desglose
+  | 'timeline'     // eventos sobre el eje de tiempo del partido
+  | 'pitch_points' // campograma: puntos
+  | 'pitch_arrows' // campograma: vectores/flechas
+  | 'pitch_heatmap'// campograma: mapa de calor por celdas
+  | 'pitch_zones'  // campograma: acumulado por zona registrada
+  | 'text';        // nota / título dentro de la pizarra
+
+export type DashboardMeasure =
+  | 'count'
+  | 'pct_of_total'
+  | 'success_rate'
+  | 'sum_duration'
+  | 'avg_duration'
+  | 'distinct_players';
+
+export type DashboardFieldKind = 'dimension' | 'time' | 'spatial';
+
+export interface DashboardFieldDef {
+  key: string;   // 'category' | 'event_type' | ... | 'desc:Resultado'
+  label: string;
+  kind: DashboardFieldKind;
+  source: 'builtin' | 'descriptor';
+  /** Un evento puede tener varios valores a la vez (descriptores) */
+  multiValue?: boolean;
+}
+
+export interface DashboardFilter {
+  id: string;
+  field: string;                 // DashboardFieldDef.key
+  operator: 'in' | 'not_in';
+  values: string[];
+}
+
+export interface DashboardWidget {
+  id: string;
+  type: DashboardWidgetType;
+  title: string;
+  subtitle?: string;
+  // Posición en la rejilla de la pizarra (unidades de rejilla)
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  dimension?: string;   // campo del eje principal
+  breakdown?: string;   // campo de series (apilado / agrupado / matriz)
+  measure: DashboardMeasure;
+  filters: DashboardFilter[];
+  limit?: number;                 // Top N categorías
+  sort?: 'value_desc' | 'value_asc' | 'label_asc' | 'natural';
+  showValues?: boolean;
+  showLegend?: boolean;
+  cumulative?: boolean;           // acumulativo en series temporales
+  timeBinMinutes?: number;        // tamaño del bin temporal (por defecto 5')
+  pitchOrientation?: 'horizontal' | 'vertical';
+  pitchBinsX?: number;
+  pitchBinsY?: number;
+  colorSlot?: number;             // índice fijo de la paleta categórica
+  text?: string;                  // contenido del widget de tipo 'text'
+}
+
+export interface MatchDashboard {
+  id: string;
+  match_id: string;
+  analysis_id?: string | null;   // null => todos los eventos del partido
+  name: string;
+  description?: string;
+  botonera_template_id?: string | null;
+  cols: number;                  // columnas de la rejilla (por defecto 12)
+  row_height: number;            // altura de fila en px (por defecto 40)
+  widgets: DashboardWidget[];
+  global_filters: DashboardFilter[];
+  created_at: string;
+  updated_at: string;
+}
