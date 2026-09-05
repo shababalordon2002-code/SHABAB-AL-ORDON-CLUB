@@ -20,7 +20,13 @@ import {
   Type,
   Layout,
   MousePointer,
-  RotateCcw
+  RotateCcw,
+  Users,
+  UserCheck,
+  AlertCircle,
+  Copy,
+  Clipboard,
+  Files
 } from 'lucide-react';
 import { BotoneraButton, BotoneraTemplate } from '@/types';
 import { dbStore } from '@/lib/store/db-store';
@@ -50,6 +56,81 @@ const COLOR_MAP: Record<string, { bg: string; border: string; text: string; hove
   zinc: { bg: 'bg-zinc-800/80', border: 'border-zinc-600', text: 'text-zinc-200', hover: 'hover:bg-zinc-800', ring: 'ring-zinc-400' },
 };
 
+export const EXPANDED_COLOR_OPTIONS = [
+  // Greens & Cyans
+  { key: 'emerald', name: 'Verde Esmeralda', hex: '#10b981' },
+  { key: 'mint', name: 'Menta Neón', hex: '#00e676' },
+  { key: 'lime', name: 'Lima Táctica', hex: '#84cc16' },
+  { key: 'green', name: 'Verde Campo', hex: '#22c55e' },
+  { key: 'teal', name: 'Teal Táctico', hex: '#14b8a6' },
+  { key: 'cyan', name: 'Cian Neón', hex: '#06b6d4' },
+  { key: 'sky', name: 'Cielo Claro', hex: '#0ea5e9' },
+
+  // Blues, Violets & Pinks
+  { key: 'blue', name: 'Azul Táctico', hex: '#3b82f6' },
+  { key: 'indigo', name: 'Índigo Profundo', hex: '#6366f1' },
+  { key: 'violet', name: 'Violeta Eléctrico', hex: '#8b5cf6' },
+  { key: 'purple', name: 'Púrpura Táctico', hex: '#a855f7' },
+  { key: 'fuchsia', name: 'Fucsia Neón', hex: '#d946ef' },
+  { key: 'pink', name: 'Rosa Neón', hex: '#ec4899' },
+  { key: 'rose', name: 'Rosa Fallo', hex: '#f43f5e' },
+
+  // Reds, Oranges, Ambers & Golds
+  { key: 'red', name: 'Rojo Alerta', hex: '#ef4444' },
+  { key: 'coral', name: 'Coral Intenso', hex: '#ff5722' },
+  { key: 'orange', name: 'Naranja Fuego', hex: '#f97316' },
+  { key: 'amber', name: 'Ámbar / Amarillo', hex: '#f59e0b' },
+  { key: 'yellow', name: 'Amarillo Neón', hex: '#eab308' },
+  { key: 'gold', name: 'Oro Táctico', hex: '#d97706' },
+  { key: 'bronze', name: 'Bronce Oscuro', hex: '#b45309' },
+
+  // Neutrals & Dark Shades
+  { key: 'slate', name: 'Gris Neutro', hex: '#64748b' },
+  { key: 'zinc', name: 'Cinc Oscuro', hex: '#71717a' },
+  { key: 'neutral', name: 'Gris Medio', hex: '#737373' },
+  { key: 'stone', name: 'Piedra Táctica', hex: '#78716c' },
+  { key: 'dark_slate', name: 'Pizarra Oscura', hex: '#334155' },
+  { key: 'charcoal', name: 'Carbón', hex: '#1f2937' },
+  { key: 'midnight', name: 'Medianoche', hex: '#0f172a' },
+];
+
+export function getButtonColorHex(colorStr: string): string {
+  if (!colorStr) return '#10b981';
+  if (colorStr.startsWith('#')) return colorStr;
+  const matched = EXPANDED_COLOR_OPTIONS.find(c => c.key === colorStr);
+  return matched ? matched.hex : '#10b981';
+}
+
+export function getTextColorStyle(colorStr: string): { color: string } {
+  if (!colorStr) return { color: '#60a5fa' };
+  if (colorStr.startsWith('#')) return { color: colorStr };
+  const hex = getButtonColorHex(colorStr);
+  return { color: hex || '#60a5fa' };
+}
+
+export function getButtonStyles(colorStr: string) {
+  if (!colorStr) colorStr = 'emerald';
+  
+  if (COLOR_MAP[colorStr]) {
+    const c = COLOR_MAP[colorStr];
+    return {
+      className: `${c.bg} ${c.border} ${c.text} ${c.hover}`,
+      style: {}
+    };
+  }
+
+  const hex = getButtonColorHex(colorStr);
+  return {
+    className: 'hover:brightness-125 transition-all text-white border shadow-md',
+    style: {
+      backgroundColor: `${hex}35`,
+      borderColor: `${hex}bb`,
+      color: '#ffffff',
+      boxShadow: `0 0 10px ${hex}25`
+    }
+  };
+}
+
 export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
   template,
   onUpdateTemplate,
@@ -77,13 +158,105 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
 
   // Selected Button for Editing Modals State
   const [selectedBtnId, setSelectedBtnId] = useState<string | null>(null);
+  const [selectedBtnIds, setSelectedBtnIds] = useState<string[]>([]);
+  const [clipboardButtons, setClipboardButtons] = useState<BotoneraButton[]>([]);
+  const [isSelectingBox, setIsSelectingBox] = useState<boolean>(false);
+  const [selectionBox, setSelectionBox] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
+
   const [editingButton, setEditingButton] = useState<BotoneraButton | null>(null);
+  const [editingHeaderId, setEditingHeaderId] = useState<string | null>(null);
   const [descriptorInputText, setDescriptorInputText] = useState('');
   const [isNewTemplateModalOpen, setIsNewTemplateModalOpen] = useState(false);
   const [isRenameModalOpen, setIsRenameModalOpen] = useState<boolean>(false);
   const [newTemplateName, setNewTemplateName] = useState<string>('');
   const [newTemplateDesc, setNewTemplateDesc] = useState<string>('');
   const [saveSuccessToast, setSaveSuccessToast] = useState<string | null>(null);
+
+  // Duplication, Copy, Paste & Delete Handlers
+  const handleDuplicateSelected = (idsToDuplicate?: string[]) => {
+    const activeIds = idsToDuplicate || (selectedBtnIds.length > 0 ? selectedBtnIds : selectedBtnId ? [selectedBtnId] : []);
+    if (activeIds.length === 0) return;
+
+    const targets = template.buttons.filter((b) => activeIds.includes(b.id));
+    if (targets.length === 0) return;
+
+    const now = Date.now();
+    const duplicated: BotoneraButton[] = targets.map((btn, index) => ({
+      ...JSON.parse(JSON.stringify(btn)),
+      id: `btn_dup_${now}_${index}_${Math.floor(Math.random() * 1000)}`,
+      name: btn.type === 'header' ? btn.name : `${btn.name} (Copia)`,
+      x: Math.min(82, (btn.x ?? 5) + 3),
+      y: Math.min(82, (btn.y ?? 5) + 3),
+    }));
+
+    const updatedTmpl = {
+      ...template,
+      buttons: [...template.buttons, ...duplicated],
+    };
+
+    onUpdateTemplate(updatedTmpl);
+    dbStore.saveBotoneraTemplate(updatedTmpl);
+
+    const newIds = duplicated.map((d) => d.id);
+    setSelectedBtnIds(newIds);
+    if (newIds.length === 1) setSelectedBtnId(newIds[0]);
+
+    setSaveSuccessToast(`👯 ${duplicated.length} elemento(s) duplicado(s)`);
+    setTimeout(() => setSaveSuccessToast(null), 2500);
+  };
+
+  const handleCopySelected = () => {
+    const activeIds = selectedBtnIds.length > 0 ? selectedBtnIds : selectedBtnId ? [selectedBtnId] : [];
+    if (activeIds.length === 0) return;
+
+    const targets = template.buttons.filter((b) => activeIds.includes(b.id));
+    if (targets.length === 0) return;
+
+    setClipboardButtons(JSON.parse(JSON.stringify(targets)));
+    setSaveSuccessToast(`📋 ${targets.length} elemento(s) copiado(s) al portapapeles`);
+    setTimeout(() => setSaveSuccessToast(null), 2500);
+  };
+
+  const handlePasteSelected = () => {
+    if (clipboardButtons.length === 0) return;
+
+    const now = Date.now();
+    const pasted: BotoneraButton[] = clipboardButtons.map((btn, index) => ({
+      ...JSON.parse(JSON.stringify(btn)),
+      id: `btn_paste_${now}_${index}_${Math.floor(Math.random() * 1000)}`,
+      x: Math.min(82, (btn.x ?? 5) + 4),
+      y: Math.min(82, (btn.y ?? 5) + 4),
+    }));
+
+    const updatedTmpl = {
+      ...template,
+      buttons: [...template.buttons, ...pasted],
+    };
+
+    onUpdateTemplate(updatedTmpl);
+    dbStore.saveBotoneraTemplate(updatedTmpl);
+
+    const newIds = pasted.map((p) => p.id);
+    setSelectedBtnIds(newIds);
+    if (newIds.length === 1) setSelectedBtnId(newIds[0]);
+
+    setSaveSuccessToast(`📑 ${pasted.length} elemento(s) pegado(s)`);
+    setTimeout(() => setSaveSuccessToast(null), 2500);
+  };
+
+  const handleDeleteSelected = () => {
+    const activeIds = selectedBtnIds.length > 0 ? selectedBtnIds : selectedBtnId ? [selectedBtnId] : [];
+    if (activeIds.length === 0) return;
+
+    const filtered = template.buttons.filter((b) => !activeIds.includes(b.id));
+    const updatedTmpl = { ...template, buttons: filtered };
+    onUpdateTemplate(updatedTmpl);
+    dbStore.saveBotoneraTemplate(updatedTmpl);
+
+    setSelectedBtnIds([]);
+    setSelectedBtnId(null);
+    setEditingButton(null);
+  };
 
   useEffect(() => {
     const loaded = dbStore.getBotoneraTemplates();
@@ -117,12 +290,41 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
     }
   }, [template.buttons]);
 
-  // Keyboard Shortcuts Listener
+  // Keyboard Shortcuts Listener (Timer, Triggers & Copy/Paste/Duplicate/Delete)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) {
         return;
+      }
+
+      if (isEditMode) {
+        const isCmdOrCtrl = e.ctrlKey || e.metaKey;
+        const key = e.key.toLowerCase();
+
+        if (isCmdOrCtrl && key === 'c') {
+          e.preventDefault();
+          handleCopySelected();
+          return;
+        }
+
+        if (isCmdOrCtrl && key === 'v') {
+          e.preventDefault();
+          handlePasteSelected();
+          return;
+        }
+
+        if (isCmdOrCtrl && key === 'd') {
+          e.preventDefault();
+          handleDuplicateSelected();
+          return;
+        }
+
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+          e.preventDefault();
+          handleDeleteSelected();
+          return;
+        }
       }
 
       if (e.code === 'Space') {
@@ -144,12 +346,16 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [template.buttons, activeDescriptors, isTimerRunning]);
+  }, [template.buttons, activeDescriptors, isTimerRunning, isEditMode, selectedBtnIds, selectedBtnId, clipboardButtons]);
 
   const handleButtonClick = (btn: BotoneraButton) => {
     if (isEditMode) {
       setSelectedBtnId(btn.id);
       return;
+    }
+
+    if (btn.type === 'header' || btn.type === 'text') {
+      return; // Visual grouping titles do not trigger events
     }
 
     if (btn.type === 'descriptor') {
@@ -167,18 +373,33 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
   };
 
   // --- FREEFORM DRAG & DROP ENGINE (POWERPOINT STYLE) ---
+  const [initialStatesMap, setInitialStatesMap] = useState<Map<string, { x: number; y: number; w: number; h: number }>>(new Map());
+
   const handleStartDrag = (e: React.MouseEvent, btn: BotoneraButton) => {
     if (!isEditMode) return;
     e.stopPropagation();
+
+    const isMulti = e.shiftKey || e.ctrlKey || e.metaKey;
+    let currentSelected = selectedBtnIds;
+    if (!isMulti && !selectedBtnIds.includes(btn.id)) {
+      currentSelected = [btn.id];
+      setSelectedBtnIds([btn.id]);
+    } else if (isMulti && !selectedBtnIds.includes(btn.id)) {
+      currentSelected = [...selectedBtnIds, btn.id];
+      setSelectedBtnIds(currentSelected);
+    }
     setSelectedBtnId(btn.id);
+
     setDraggingBtnId(btn.id);
     setDragStartPos({ x: e.clientX, y: e.clientY });
-    setInitialBtnState({
-      x: btn.x ?? 5,
-      y: btn.y ?? 5,
-      w: btn.w ?? 22,
-      h: btn.h ?? 15,
+
+    const map = new Map<string, { x: number; y: number; w: number; h: number }>();
+    template.buttons.forEach((b) => {
+      if (currentSelected.includes(b.id) || b.id === btn.id) {
+        map.set(b.id, { x: b.x ?? 5, y: b.y ?? 5, w: b.w ?? 20, h: b.h ?? 15 });
+      }
     });
+    setInitialStatesMap(map);
   };
 
   // --- RESIZE HANDLE ENGINE (POWERPOINT STYLE) ---
@@ -186,6 +407,7 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
     if (!isEditMode) return;
     e.stopPropagation();
     setSelectedBtnId(btn.id);
+    setSelectedBtnIds([btn.id]);
     setResizingBtnId(btn.id);
     setDragStartPos({ x: e.clientX, y: e.clientY });
     setInitialBtnState({
@@ -196,9 +418,66 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
     });
   };
 
+  // --- MARQUEE BOX SELECTION ON CANVAS BACKGROUND ---
+  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isEditMode) return;
+    if (e.target !== canvasRef.current) return;
+
+    if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      setSelectedBtnIds([]);
+      setSelectedBtnId(null);
+    }
+
+    if (canvasRef.current) {
+      const rect = canvasRef.current.getBoundingClientRect();
+      const startXPct = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+      const startYPct = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+
+      setIsSelectingBox(true);
+      setSelectionBox({
+        startX: startXPct,
+        startY: startYPct,
+        currentX: startXPct,
+        currentY: startYPct,
+      });
+    }
+  };
+
   const handleMouseMove = (e: React.MouseEvent) => {
     if (!canvasRef.current) return;
     const canvasRect = canvasRef.current.getBoundingClientRect();
+
+    const currentXPct = Math.max(0, Math.min(100, ((e.clientX - canvasRect.left) / canvasRect.width) * 100));
+    const currentYPct = Math.max(0, Math.min(100, ((e.clientY - canvasRect.top) / canvasRect.height) * 100));
+
+    // Handle Rubberband Selection Marquee Box
+    if (isSelectingBox && selectionBox) {
+      setSelectionBox({
+        ...selectionBox,
+        currentX: currentXPct,
+        currentY: currentYPct,
+      });
+
+      const boxL = Math.min(selectionBox.startX, currentXPct);
+      const boxR = Math.max(selectionBox.startX, currentXPct);
+      const boxT = Math.min(selectionBox.startY, currentYPct);
+      const boxB = Math.max(selectionBox.startY, currentYPct);
+
+      const intersectingIds = template.buttons
+        .filter((btn) => {
+          const btnL = btn.x ?? 5;
+          const btnR = (btn.x ?? 5) + (btn.w ?? 20);
+          const btnT = btn.y ?? 5;
+          const btnB = (btn.y ?? 5) + (btn.h ?? 15);
+
+          return btnL < boxR && btnR > boxL && btnT < boxB && btnB > boxT;
+        })
+        .map((b) => b.id);
+
+      setSelectedBtnIds(intersectingIds);
+      if (intersectingIds.length === 1) setSelectedBtnId(intersectingIds[0]);
+      return;
+    }
 
     if (draggingBtnId) {
       const deltaXPixels = e.clientX - dragStartPos.x;
@@ -207,16 +486,20 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
       const deltaXPct = (deltaXPixels / canvasRect.width) * 100;
       const deltaYPct = (deltaYPixels / canvasRect.height) * 100;
 
-      let newX = Math.round(initialBtnState.x + deltaXPct);
-      let newY = Math.round(initialBtnState.y + deltaYPct);
+      const activeIds = selectedBtnIds.includes(draggingBtnId) ? selectedBtnIds : [draggingBtnId];
 
-      // Snap to 1% grid and clamp within canvas boundary
-      newX = Math.min(100 - initialBtnState.w, Math.max(0, newX));
-      newY = Math.min(100 - initialBtnState.h, Math.max(0, newY));
+      const updatedButtons = template.buttons.map((b) => {
+        if (activeIds.includes(b.id)) {
+          const init = initialStatesMap.get(b.id) || { x: b.x ?? 5, y: b.y ?? 5, w: b.w ?? 22, h: b.h ?? 15 };
+          let newX = Math.round(init.x + deltaXPct);
+          let newY = Math.round(init.y + deltaYPct);
 
-      const updatedButtons = template.buttons.map((b) =>
-        b.id === draggingBtnId ? { ...b, x: newX, y: newY } : b
-      );
+          newX = Math.min(100 - init.w, Math.max(0, newX));
+          newY = Math.min(100 - init.h, Math.max(0, newY));
+          return { ...b, x: newX, y: newY };
+        }
+        return b;
+      });
 
       onUpdateTemplate({ ...template, buttons: updatedButtons });
     } else if (resizingBtnId) {
@@ -242,9 +525,11 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
   };
 
   const handleMouseUp = () => {
-    if (draggingBtnId || resizingBtnId) {
+    if (draggingBtnId || resizingBtnId || isSelectingBox) {
       setDraggingBtnId(null);
       setResizingBtnId(null);
+      setIsSelectingBox(false);
+      setSelectionBox(null);
       dbStore.saveBotoneraTemplate(template);
     }
   };
@@ -325,7 +610,8 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
     }
   };
 
-  const handleAddButtonToCanvas = (type: 'category' | 'descriptor') => {
+  const handleAddButtonToCanvas = (type: 'category' | 'descriptor' | 'header') => {
+    const isHeader = type === 'header';
     const isCat = type === 'category';
     const count = template.buttons.length;
 
@@ -336,18 +622,18 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
 
     const newBtn: BotoneraButton = {
       id: `btn_${Date.now()}`,
-      name: isCat ? 'Nueva Acción' : 'Nueva Etiqueta',
-      category: isCat ? 'Ataque' : 'General',
+      name: isHeader ? 'FASE DE ATAQUE' : isCat ? 'NUEVA ACCIÓN' : 'NUEVA ETIQUETA',
+      category: isHeader ? 'Título' : isCat ? 'Ataque' : 'General',
       type: type,
-      color: isCat ? 'emerald' : 'amber',
+      color: isHeader ? 'blue' : isCat ? 'emerald' : 'amber',
       keyShortcut: '',
       leadTime: 5,
       lagTime: 5,
-      x: Math.min(78, 3 + col * 24),
+      x: Math.min(75, 3 + col * 24),
       y: Math.min(80, 4 + row * 18),
-      w: isCat ? 22 : 18,
-      h: isCat ? 15 : 12,
-      fontSize: 'md',
+      w: isHeader ? 35 : isCat ? 22 : 18,
+      h: isHeader ? 9 : isCat ? 15 : 12,
+      fontSize: isHeader ? 'xl' : 'md',
     };
 
     const updatedTmpl = { ...template, buttons: [...template.buttons, newBtn] };
@@ -476,32 +762,86 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
         </div>
       )}
 
-      {/* EDIT MODE TOOLBAR INSTRUCTIONS */}
+      {/* EDIT MODE TOOLBAR INSTRUCTIONS & CLIPBOARD CONTROLS */}
       {isEditMode && (
         <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex flex-wrap items-center justify-between gap-3 text-xs text-amber-300">
           <div className="flex items-center gap-2">
-            <MousePointer className="w-4 h-4 text-amber-400 animate-bounce" />
+            <MousePointer className="w-4 h-4 text-amber-400 animate-bounce shrink-0" />
             <span>
-              <strong>PIZARRA INTERACTIVA TIPO POWERPOINT:</strong> Haz clic y <strong>arrastra los botones libremente</strong> por la pantalla. Estira el <strong>tirador inferior derecho (↘)</strong> para cambiar el tamaño del botón en grande.
+              <strong>PIZARRA TIPO POWERPOINT:</strong> Arrastra objetos, selecciona con ratón o <kbd className="px-1 py-0.5 rounded bg-slate-900 border border-slate-700 text-[10px]">Shift</kbd>, y usa <kbd className="px-1 py-0.5 rounded bg-slate-900 border border-slate-700 text-[10px]">Ctrl+C</kbd> / <kbd className="px-1 py-0.5 rounded bg-slate-900 border border-slate-700 text-[10px]">Ctrl+V</kbd> para copiar/pegar, o <kbd className="px-1 py-0.5 rounded bg-slate-900 border border-slate-700 text-[10px]">Ctrl+D</kbd> para duplicar.
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Quick Objects Creation */}
             <button
               onClick={() => handleAddButtonToCanvas('category')}
-              className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs flex items-center gap-1 shadow"
+              className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs flex items-center gap-1 shadow"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>+ Añadir Botón Acción</span>
+              <span>+ Acción</span>
             </button>
 
             <button
               onClick={() => handleAddButtonToCanvas('descriptor')}
-              className="px-3 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1 shadow"
+              className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1 shadow"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>+ Añadir Etiqueta</span>
+              <span>+ Etiqueta</span>
             </button>
+
+            <button
+              onClick={() => handleAddButtonToCanvas('header')}
+              className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1 shadow border border-indigo-400/40"
+            >
+              <Type className="w-3.5 h-3.5" />
+              <span>+ Título</span>
+            </button>
+
+            {/* Separator Divider */}
+            <div className="h-4 w-px bg-slate-700/80 mx-1" />
+
+            {/* Copy / Paste / Duplicate / Delete Actions */}
+            <button
+              onClick={handleCopySelected}
+              disabled={selectedBtnIds.length === 0 && !selectedBtnId}
+              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1 border border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition"
+              title="Copiar selección al portapapeles (Ctrl+C)"
+            >
+              <Copy className="w-3.5 h-3.5 text-sky-400" />
+              <span>Copiar</span>
+            </button>
+
+            <button
+              onClick={handlePasteSelected}
+              disabled={clipboardButtons.length === 0}
+              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1 border border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition"
+              title="Pegar elementos copiados (Ctrl+V)"
+            >
+              <Clipboard className="w-3.5 h-3.5 text-amber-400" />
+              <span>Pegar {clipboardButtons.length > 0 ? `(${clipboardButtons.length})` : ''}</span>
+            </button>
+
+            <button
+              onClick={() => handleDuplicateSelected()}
+              disabled={selectedBtnIds.length === 0 && !selectedBtnId}
+              className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-xs font-bold flex items-center gap-1 border border-amber-500/40 disabled:opacity-40 disabled:cursor-not-allowed transition"
+              title="Duplicar selección al instante (Ctrl+D)"
+            >
+              <Files className="w-3.5 h-3.5 text-amber-400" />
+              <span>Duplicar</span>
+            </button>
+
+            {(selectedBtnIds.length > 0 || selectedBtnId) && (
+              <button
+                onClick={handleDeleteSelected}
+                className="px-2.5 py-1 rounded-lg bg-red-950/60 hover:bg-red-900/80 text-red-400 text-xs font-bold flex items-center gap-1 border border-red-500/40 transition"
+                title="Eliminar elementos seleccionados (Supr / Delete)"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Borrar ({selectedBtnIds.length || 1})</span>
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -540,6 +880,7 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
       {/* MAIN POWERPOINT FREEFORM CANVAS BOARD */}
       <div
         ref={canvasRef}
+        onMouseDown={handleCanvasMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         className={`relative w-full min-h-[550px] aspect-[16/9] bg-slate-950 rounded-2xl border-2 overflow-hidden shadow-2xl transition-colors ${
@@ -548,9 +889,22 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
             : 'border-slate-800'
         }`}
       >
+        {/* Rubberband Box Selection Visual Overlay */}
+        {isSelectingBox && selectionBox && (
+          <div
+            style={{
+              left: `${Math.min(selectionBox.startX, selectionBox.currentX)}%`,
+              top: `${Math.min(selectionBox.startY, selectionBox.currentY)}%`,
+              width: `${Math.abs(selectionBox.currentX - selectionBox.startX)}%`,
+              height: `${Math.abs(selectionBox.currentY - selectionBox.startY)}%`,
+            }}
+            className="absolute border-2 border-amber-400 bg-amber-400/20 pointer-events-none rounded-xl z-50"
+          />
+        )}
+
         {template.buttons.length === 0 ? (
           /* EMPTY WHITEBOARD STATE */
-          <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center space-y-4">
+          <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center space-y-4 pointer-events-none">
             <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
               <Layout className="w-8 h-8 stroke-[1.5]" />
             </div>
@@ -561,13 +915,13 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
               </p>
             </div>
 
-            <div className="flex items-center gap-3 pt-2">
+            <div className="flex flex-wrap items-center justify-center gap-3 pt-2 pointer-events-auto">
               <button
                 onClick={() => handleAddButtonToCanvas('category')}
                 className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-lg"
               >
                 <Plus className="w-4 h-4 stroke-[2.5]" />
-                <span>+ Añadir Primer Botón de Acción</span>
+                <span>+ Botón Acción</span>
               </button>
 
               <button
@@ -575,16 +929,25 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                 className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-lg"
               >
                 <Plus className="w-4 h-4 stroke-[2.5]" />
-                <span>+ Añadir Etiqueta Descriptor</span>
+                <span>+ Etiqueta</span>
+              </button>
+
+              <button
+                onClick={() => handleAddButtonToCanvas('header')}
+                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg border border-indigo-400/40"
+              >
+                <Type className="w-4 h-4" />
+                <span>+ Título / Agrupador</span>
               </button>
             </div>
           </div>
         ) : (
           <>
             {template.buttons.map((btn) => {
-            const colors = COLOR_MAP[btn.color] || COLOR_MAP.emerald;
+            const styles = getButtonStyles(btn.color);
             const isClicking = lastClickedButtonId === btn.id;
-            const isSelected = selectedBtnId === btn.id;
+            const isSelected = selectedBtnId === btn.id || selectedBtnIds.includes(btn.id);
+            const isHeader = btn.type === 'header' || btn.type === 'text';
             const isDescriptor = btn.type === 'descriptor';
             const tagVal = btn.outcome || btn.subTag || btn.name;
             const isTagActive = isDescriptor && activeDescriptors.includes(tagVal);
@@ -592,8 +955,119 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
             // Freeform canvas relative positioning (% of canvas)
             const posX = btn.x ?? 5;
             const posY = btn.y ?? 5;
-            const widthPct = btn.w ?? (isDescriptor ? 18 : 22);
-            const heightPct = btn.h ?? (isDescriptor ? 12 : 15);
+            const widthPct = btn.w ?? (isHeader ? 32 : isDescriptor ? 18 : 22);
+            const heightPct = btn.h ?? (isHeader ? 9 : isDescriptor ? 12 : 15);
+
+            const fontSizeClass =
+              btn.fontSize === '2xl'
+                ? 'text-2xl'
+                : btn.fontSize === 'xl'
+                ? 'text-xl'
+                : btn.fontSize === 'lg'
+                ? 'text-lg'
+                : btn.fontSize === 'sm'
+                ? 'text-xs'
+                : 'text-sm';
+
+            if (isHeader) {
+              const isEditingThisHeader = editingHeaderId === btn.id;
+              const textColorStyle = getTextColorStyle(btn.color);
+
+              return (
+                <div
+                  key={btn.id}
+                  style={{
+                    left: `${posX}%`,
+                    top: `${posY}%`,
+                    width: `${widthPct}%`,
+                    height: `${heightPct}%`,
+                  }}
+                  onMouseDown={(e) => {
+                    if (isEditMode) handleStartDrag(e, btn);
+                  }}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    if (isEditMode) setEditingHeaderId(btn.id);
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (isEditMode) setSelectedBtnId(btn.id);
+                  }}
+                  className={`absolute flex items-center justify-center select-none transition-all ${
+                    isEditMode
+                      ? 'cursor-grab active:cursor-grabbing border border-dashed border-amber-400/50 hover:border-amber-400 rounded-xl p-1 bg-slate-950/20'
+                      : 'pointer-events-none'
+                  } ${isSelected && isEditMode ? 'ring-2 ring-amber-400 ring-offset-2 ring-offset-slate-950 rounded-xl z-20' : ''}`}
+                >
+                  {isEditingThisHeader ? (
+                    <input
+                      type="text"
+                      value={btn.name}
+                      autoFocus
+                      onBlur={() => setEditingHeaderId(null)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') setEditingHeaderId(null);
+                      }}
+                      onChange={(e) => {
+                        const updated = template.buttons.map((b) =>
+                          b.id === btn.id ? { ...b, name: e.target.value } : b
+                        );
+                        const updatedTmpl = { ...template, buttons: updated };
+                        onUpdateTemplate(updatedTmpl);
+                        dbStore.saveBotoneraTemplate(updatedTmpl);
+                      }}
+                      className="w-full bg-slate-950/95 border-2 border-amber-400 text-amber-300 font-black uppercase text-center focus:outline-none rounded-xl px-2 py-1 shadow-2xl z-50"
+                      style={{ fontSize: btn.fontSize === '2xl' ? '1.5rem' : btn.fontSize === 'xl' ? '1.25rem' : '1rem' }}
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-center px-1 pointer-events-none">
+                      <span
+                        style={textColorStyle}
+                        className={`font-black uppercase tracking-widest block break-words drop-shadow text-center ${fontSizeClass}`}
+                      >
+                        {btn.name}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* POWERPOINT SELECTION & RESIZE HANDLES IN EDIT MODE */}
+                  {isEditMode && (
+                    <>
+                      {/* Top Left Quick Duplicate Button */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDuplicateSelected([btn.id]);
+                        }}
+                        className="absolute -top-2 -left-2 p-1 rounded-full bg-slate-800 text-amber-300 font-bold border border-amber-400/50 shadow-lg hover:bg-amber-500 hover:text-slate-950 hover:scale-110 transition z-50 cursor-pointer"
+                        title="Duplicar este título al instante"
+                      >
+                        <Files className="w-3 h-3" />
+                      </button>
+
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingButton(btn);
+                        }}
+                        className="absolute -top-2 -right-2 p-1 rounded-full bg-amber-500 text-slate-950 font-bold shadow-lg hover:scale-110 transition z-50 cursor-pointer"
+                        title="Editar Formato y Color de Texto"
+                      >
+                        <Pencil className="w-3 h-3" />
+                      </button>
+
+                      <div
+                        onMouseDown={(e) => handleStartResize(e, btn)}
+                        className="absolute -bottom-2 -right-2 w-5 h-5 rounded-full bg-amber-400 border-2 border-slate-950 cursor-se-resize flex items-center justify-center text-[10px] text-slate-950 font-bold shadow-lg hover:scale-125 transition z-50"
+                        title="Estirar Área de Texto"
+                      >
+                        ↘
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            }
 
             return (
               <div
@@ -603,6 +1077,7 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                   top: `${posY}%`,
                   width: `${widthPct}%`,
                   height: `${heightPct}%`,
+                  ...styles.style
                 }}
                 onMouseDown={(e) => {
                   if (isEditMode) handleStartDrag(e, btn);
@@ -615,48 +1090,43 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                     setSelectedBtnId(btn.id);
                   }
                 }}
-                className={`absolute p-3 rounded-2xl border flex flex-col justify-between transition-shadow duration-75 select-none shadow-xl ${
+                className={`absolute p-2.5 rounded-2xl border flex flex-col items-center justify-center text-center transition-shadow duration-75 select-none shadow-xl ${
                   isTagActive
                     ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-amber-950/50 ring-4 ring-amber-400 z-30'
-                    : `${colors.bg} ${colors.border} ${colors.text} ${colors.hover}`
+                    : styles.className
                 } ${isClicking ? 'scale-95 ring-4 ring-emerald-400' : ''} ${
                   isEditMode ? 'cursor-grab active:cursor-grabbing hover:border-amber-400' : 'cursor-pointer'
-                } ${isSelected && isEditMode ? 'ring-2 ring-amber-400 z-40 shadow-2xl' : 'z-10'}`}
+                } ${isSelected && isEditMode ? 'ring-2 ring-amber-400 ring-offset-2 ring-offset-slate-950 border-amber-400 z-20' : ''}`}
               >
-                {/* Object Header: Name & Key Shortcut */}
-                <div className="flex items-start justify-between gap-1 w-full pointer-events-none">
-                  <div className="space-y-0.5 min-w-0 pr-1">
-                    <span className="font-extrabold text-sm leading-tight tracking-tight block break-words">
-                      {btn.name}
-                    </span>
-                    <span className="text-[10px] opacity-75 font-semibold block break-words">
-                      {btn.category}
-                    </span>
-                  </div>
+                {/* Optional Key Shortcut Pill (Top Right) */}
+                {btn.keyShortcut && (
+                  <span className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-slate-950/80 text-slate-200 border border-slate-700/60 pointer-events-none z-10">
+                    [{btn.keyShortcut}]
+                  </span>
+                )}
 
-                  {btn.keyShortcut && (
-                    <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-950/90 text-slate-200 border border-slate-700/80 shrink-0">
-                      [{btn.keyShortcut}]
-                    </span>
-                  )}
-                </div>
-
-                {/* Object Footer Info */}
-                <div className="flex items-center justify-between mt-1 text-[10px] opacity-85 border-t border-white/10 pt-1 pointer-events-none">
-                  <span className="font-mono text-[9px] flex items-center gap-0.5">
-                    {btn.type === 'category' ? (
-                      <>
-                        <Clock className="w-2.5 h-2.5" /> -{btn.leadTime}s / +{btn.lagTime}s
-                      </>
-                    ) : (
-                      'Etiqueta'
-                    )}
+                {/* Centered Uppercase Button Title */}
+                <div className="flex flex-col items-center justify-center text-center w-full h-full pointer-events-none px-1">
+                  <span className={`font-extrabold leading-snug tracking-wider block break-words uppercase ${fontSizeClass}`}>
+                    {btn.name}
                   </span>
                 </div>
 
                 {/* POWERPOINT SELECTION & RESIZE HANDLES IN EDIT MODE */}
                 {isEditMode && (
                   <>
+                    {/* Top Left Quick Duplicate Button */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDuplicateSelected([btn.id]);
+                      }}
+                      className="absolute -top-2 -left-2 p-1 rounded-full bg-slate-800 text-amber-300 font-bold border border-amber-400/50 shadow-lg hover:bg-amber-500 hover:text-slate-950 hover:scale-110 transition z-50 cursor-pointer"
+                      title="Duplicar este elemento al instante"
+                    >
+                      <Files className="w-3 h-3" />
+                    </button>
+
                     {/* Top Right Quick Edit Button */}
                     <button
                       onClick={(e) => {
@@ -927,7 +1397,7 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
       {/* BUTTON CHARACTERISTICS EDITOR MODAL */}
       {editingButton && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-md w-full shadow-2xl space-y-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-xl w-full shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-800 pb-2">
               <h3 className="font-bold text-slate-100 text-sm flex items-center gap-2">
                 <Pencil className="w-4 h-4 text-emerald-400" /> Configurar Objeto de Botonera
@@ -937,9 +1407,9 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
               </button>
             </div>
 
-            <form onSubmit={handleSaveEditedButton} className="space-y-3">
+            <form onSubmit={handleSaveEditedButton} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-400 mb-1">Nombre del Botón:</label>
+                <label className="block text-xs font-semibold text-slate-400 mb-1">Nombre del Botón / Evento:</label>
                 <input
                   type="text"
                   required
@@ -949,16 +1419,32 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-400 mb-1">Tipo de Botón:</label>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1">Tipo de Objeto:</label>
                   <select
                     value={editingButton.type}
                     onChange={(e) => setEditingButton({ ...editingButton, type: e.target.value as any })}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-emerald-500 font-bold"
+                  >
+                    <option value="category">Categoría (Evento)</option>
+                    <option value="descriptor">Descriptor Directo</option>
+                    <option value="header">🔤 Título / Agrupador</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1">Tamaño Texto:</label>
+                  <select
+                    value={editingButton.fontSize || 'md'}
+                    onChange={(e) => setEditingButton({ ...editingButton, fontSize: e.target.value as any })}
                     className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-emerald-500"
                   >
-                    <option value="category">Categoría (Acción)</option>
-                    <option value="descriptor">Descriptor (Etiqueta)</option>
+                    <option value="sm">Pequeño (S)</option>
+                    <option value="md">Mediano (M)</option>
+                    <option value="lg">Grande (L)</option>
+                    <option value="xl">Extra Grande (XL)</option>
+                    <option value="2xl">Gigante (2XL)</option>
                   </select>
                 </div>
 
@@ -976,33 +1462,44 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
               </div>
 
               <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-400 mb-1">Color del Botón:</label>
-                  <select
-                    value={editingButton.color}
-                    onChange={(e) => setEditingButton({ ...editingButton, color: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-emerald-500"
-                  >
-                    <option value="emerald">Verde Esmeralda</option>
-                    <option value="amber">Ámbar / Amarillo</option>
-                    <option value="red">Rojo Alerta</option>
-                    <option value="rose">Rosa / Fallo</option>
-                    <option value="blue">Azul</option>
-                    <option value="cyan">Cian</option>
-                    <option value="orange">Naranja</option>
-                    <option value="purple">Púrpura</option>
-                    <option value="indigo">Índigo</option>
-                    <option value="pink">Rosa Neón</option>
-                    <option value="sky">Cielo</option>
-                    <option value="violet">Violeta</option>
-                    <option value="slate">Gris Neutro</option>
-                  </select>
-                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-bold text-slate-300 mb-1.5 flex items-center justify-between">
+                    <span>Categoría Táctica del Botón:</span>
+                    <span className="text-[10px] text-amber-400 font-mono">
+                      Categoría actual: <strong>{editingButton.category || 'Sin categoría'}</strong>
+                    </span>
+                  </label>
+                  
+                  {/* Quick Tactical Category Buttons */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 mb-2">
+                    {[
+                      { key: 'Ataque', label: '⚽ Ataque', color: 'border-emerald-500/60 text-emerald-300 bg-emerald-500/20' },
+                      { key: 'Defensa', label: '🛡️ Defensa', color: 'border-blue-500/60 text-blue-300 bg-blue-500/20' },
+                      { key: 'Transición', label: '⚡ Transición', color: 'border-amber-500/60 text-amber-300 bg-amber-500/20' },
+                      { key: 'ABP', label: '🎯 ABP', color: 'border-purple-500/60 text-purple-300 bg-purple-500/20' },
+                    ].map((cat) => {
+                      const isSelected = editingButton.category === cat.key;
+                      return (
+                        <button
+                          key={cat.key}
+                          type="button"
+                          onClick={() => setEditingButton({ ...editingButton, category: cat.key })}
+                          className={`px-2.5 py-1.5 rounded-xl text-xs font-extrabold border transition-all flex items-center justify-between cursor-pointer ${
+                            isSelected
+                              ? `${cat.color} ring-1 ring-white/60 shadow-lg shadow-black/40 scale-[1.02]`
+                              : 'bg-slate-950 border-slate-800 text-slate-400 hover:bg-slate-900 hover:text-slate-200'
+                          }`}
+                        >
+                          <span>{cat.label}</span>
+                          {isSelected && <CheckCircle2 className="w-3.5 h-3.5 text-white stroke-[3]" />}
+                        </button>
+                      );
+                    })}
+                  </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-400 mb-1">Categoría Nombre:</label>
                   <input
                     type="text"
+                    placeholder="O escribe una categoría personalizada..."
                     value={editingButton.category}
                     onChange={(e) => setEditingButton({ ...editingButton, category: e.target.value })}
                     className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-emerald-500"
@@ -1010,82 +1507,367 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-emerald-400 mb-1">Ubicación en Campograma:</label>
-                <select
-                  value={editingButton.pitchRequired || 'none'}
-                  onChange={(e) => setEditingButton({ ...editingButton, pitchRequired: e.target.value as any })}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-emerald-500/40 text-emerald-300 font-semibold text-xs focus:outline-none focus:border-emerald-400"
-                >
-                  <option value="none">⚡ Sin Campograma (Registrar evento inmediatamente)</option>
-                  <option value="point">📍 Punto Único (X, Y)</option>
-                  <option value="vector">🏹 Vector / Flecha (Punto Origen ➔ Destino)</option>
-                  <option value="zone">🔷 Zona Táctica (Área Rival, Zona 14, etc.)</option>
-                </select>
+              {/* TABLA Y PALETA DE COLORES CON RUEDA DE COLOR NATIVA E INPUT DE COLOR PERSONALIZADO */}
+              <div className="space-y-3 p-3.5 rounded-2xl bg-slate-950 border border-slate-800">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                    <Palette className="w-4 h-4 text-amber-400" /> Tabla de Colores Tácticos (28 Opciones + Selector Libre):
+                  </label>
+                  <span className="text-[11px] font-mono font-bold text-slate-300 flex items-center gap-1">
+                    <span
+                      className="w-3 h-3 rounded-full border border-white/60 inline-block"
+                      style={{ backgroundColor: getButtonColorHex(editingButton.color) }}
+                    />
+                    <span>{getButtonColorHex(editingButton.color).toUpperCase()}</span>
+                  </span>
+                </div>
+
+                {/* Grid Visual of 28 Color Swatches (4 Rows x 7 Cols) */}
+                <div className="grid grid-cols-7 gap-1.5 pt-1">
+                  {EXPANDED_COLOR_OPTIONS.map((c) => {
+                    const currentHex = getButtonColorHex(editingButton.color);
+                    const isSelected = editingButton.color === c.key || currentHex.toLowerCase() === c.hex.toLowerCase();
+                    return (
+                      <button
+                        key={c.key}
+                        type="button"
+                        onClick={() => setEditingButton({ ...editingButton, color: c.key })}
+                        title={c.name}
+                        className={`h-8 rounded-xl transition-all transform flex items-center justify-center relative cursor-pointer shadow-md ${
+                          isSelected
+                            ? 'scale-110 ring-2 ring-white ring-offset-2 ring-offset-slate-950 z-10'
+                            : 'hover:scale-105 opacity-80 hover:opacity-100'
+                        }`}
+                        style={{ backgroundColor: c.hex }}
+                      >
+                        {isSelected && (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-slate-950 stroke-[3] filter drop-shadow" />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Custom Native Color Picker Wheel & Custom HEX Input */}
+                <div className="pt-2 border-t border-slate-800/80 flex items-center gap-3">
+                  <div className="flex items-center gap-2 flex-1">
+                    <label className="text-[11px] font-bold text-slate-400 shrink-0">Selector de Color Personalizado:</label>
+                    <div className="relative flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={getButtonColorHex(editingButton.color)}
+                        onChange={(e) => setEditingButton({ ...editingButton, color: e.target.value })}
+                        className="w-8 h-8 rounded-lg cursor-pointer bg-transparent border border-slate-700 p-0 overflow-hidden"
+                        title="Abrir paleta cromática completa / Rueda de color"
+                      />
+                      <input
+                        type="text"
+                        placeholder="#FF5722"
+                        value={editingButton.color}
+                        onChange={(e) => setEditingButton({ ...editingButton, color: e.target.value })}
+                        className="w-24 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-xs font-mono font-bold text-amber-300 focus:outline-none focus:border-amber-400"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Visual Live Object Preview */}
+                <div className="mt-2 p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-slate-400">Previsualización:</span>
+                  {editingButton.type === 'header' ? (
+                    <div className="px-4 py-2 flex items-center justify-center">
+                      <span
+                        style={getTextColorStyle(editingButton.color)}
+                        className="font-black uppercase tracking-widest text-lg drop-shadow"
+                      >
+                        {editingButton.name || 'TÍTULO DE EJEMPLO'}
+                      </span>
+                    </div>
+                  ) : (
+                    <div
+                      className="px-4 py-2 rounded-xl font-bold text-xs border shadow-lg transition-all flex items-center gap-2"
+                      style={{
+                        backgroundColor: `${getButtonColorHex(editingButton.color)}35`,
+                        borderColor: getButtonColorHex(editingButton.color),
+                        color: '#ffffff',
+                        boxShadow: `0 0 12px ${getButtonColorHex(editingButton.color)}30`
+                      }}
+                    >
+                      <div
+                        className="w-3.5 h-3.5 rounded-full shadow-inner border border-white/60"
+                        style={{ backgroundColor: getButtonColorHex(editingButton.color) }}
+                      />
+                      <span className="uppercase tracking-wider">{ (editingButton.name || 'Botón de Ejemplo').toUpperCase() }</span>
+                      {editingButton.keyShortcut && (
+                        <span className="px-1.5 py-0.5 rounded bg-slate-950/80 text-[10px] font-mono border border-slate-700">
+                          [{editingButton.keyShortcut}]
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
 
+              {/* 1. SELECCIÓN DE REGISTRO ESPACIAL / CAMPOGRAMA */}
+              {editingButton.type !== 'header' && (
+                <div className="p-3 rounded-xl bg-slate-950 border border-emerald-500/30 space-y-2">
+                  <label className="block text-xs font-bold text-emerald-400">
+                    📍 Modo de Registro de Datos en Campograma:
+                  </label>
+                  <select
+                    value={editingButton.pitchRequired || 'none'}
+                    onChange={(e) => setEditingButton({ ...editingButton, pitchRequired: e.target.value as any })}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-emerald-500/40 text-emerald-300 font-semibold text-xs focus:outline-none focus:border-emerald-400"
+                  >
+                  <option value="none">⚡ Sin Campograma (Registrar evento directamente)</option>
+                  <option value="point_full">📍 Punto Único en Campo Entero (X, Y)</option>
+                  <option value="point_half">📌 Punto Único en Medio Campo (Área Rival)</option>
+                  <option value="vector_arrow">🏹 Flechas / Vector (Origen ➔ Destino)</option>
+                  <option value="zone_bandas_centro">↔️ Zonas: Bandas - Centro (3 pasillos)</option>
+                  <option value="zone_3_hitos">📶 Zonas: 3 Zonas (Inicio - Canalización - Finalización / Alta - Media - Baja)</option>
+                  <option value="zone_4_zonas">📊 Zonas: 4 Zonas Horizontales</option>
+                  <option value="zone_remate">🎯 Zonas: Zonas de Remate (Área grande, pequeña, borde, laterales)</option>
+                  <option value="zone_counter">🔢 Zonas: Conteo de Cantidad por Zona</option>
+                </select>
+                <p className="text-[10px] text-slate-400 italic">
+                  Define la interfaz del campograma que aparecerá al hacer clic en este botón durante la observación en directo.
+                </p>
+              </div>
+            )}
+
+              {/* 2. DESCRIPTORES ESTRUCTURADOS (TIPO Y POSIBILIDADES 100% EDITABLES) */}
               {editingButton.type === 'category' && (
-                <div className="pt-2 border-t border-slate-800">
-                  <label className="block text-xs font-semibold text-slate-400 mb-2">Descriptores asociados al botón (Opcional):</label>
-                  <div className="flex gap-2 mb-2">
-                    <input
-                      type="text"
-                      placeholder="Escribe un descriptor (ej: Pérdida, Presión...)"
-                      value={descriptorInputText}
-                      onChange={(e) => setDescriptorInputText(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          const val = descriptorInputText.trim();
-                          if (val && !editingButton.descriptors?.includes(val)) {
-                            setEditingButton({
-                              ...editingButton,
-                              descriptors: [...(editingButton.descriptors || []), val]
-                            });
-                            setDescriptorInputText('');
-                          }
-                        }
-                      }}
-                      className="flex-1 px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-emerald-500"
-                    />
+                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <label className="text-xs font-bold text-amber-400 block">
+                        🏷️ Descriptores del Evento (Tipos y Posibilidades):
+                      </label>
+                      <span className="text-[10px] text-slate-400">100% Personalizable: añade tus propios tipos y opciones sin textos predeterminados.</span>
+                    </div>
                     <button
                       type="button"
                       onClick={() => {
-                        const val = descriptorInputText.trim();
-                        if (val && !editingButton.descriptors?.includes(val)) {
-                          setEditingButton({
-                            ...editingButton,
-                            descriptors: [...(editingButton.descriptors || []), val]
-                          });
-                          setDescriptorInputText('');
-                        }
+                        const newGrp = {
+                          id: `grp_${Date.now()}`,
+                          type: '',
+                          options: []
+                        };
+                        const current = editingButton.descriptorGroups || [];
+                        setEditingButton({
+                          ...editingButton,
+                          descriptorGroups: [...current, newGrp]
+                        });
                       }}
-                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-xs font-bold text-slate-950 shadow"
+                      className="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[11px] font-bold hover:bg-amber-500/30 transition flex items-center gap-1 shrink-0"
                     >
-                      Añadir
+                      <Plus className="w-3 h-3" /> + Añadir Tipo Descriptor
                     </button>
                   </div>
-                  <div className="flex flex-wrap gap-1.5 max-h-[80px] overflow-y-auto">
-                    {editingButton.descriptors?.map(desc => (
-                      <span key={desc} className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[11px] font-bold">
-                        {desc}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setEditingButton({
-                              ...editingButton,
-                              descriptors: editingButton.descriptors?.filter(d => d !== desc)
-                            });
-                          }}
-                          className="hover:text-amber-100"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      </span>
-                    ))}
-                    {(!editingButton.descriptors || editingButton.descriptors.length === 0) && (
-                      <span className="text-[10px] text-slate-500 italic">No hay descriptores. Al pulsar este botón no se preguntará nada adicional.</span>
-                    )}
+
+                  {/* List of Descriptor Groups */}
+                  {editingButton.descriptorGroups && editingButton.descriptorGroups.length > 0 ? (
+                    <div className="space-y-3">
+                      {editingButton.descriptorGroups.map((grp, grpIdx) => (
+                        <div key={grp.id} className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              placeholder="Escribe el nombre del tipo de descriptor..."
+                              value={grp.type}
+                              autoFocus={!grp.type}
+                              onChange={(e) => {
+                                const updatedGrps = [...editingButton.descriptorGroups!];
+                                updatedGrps[grpIdx].type = e.target.value;
+                                setEditingButton({ ...editingButton, descriptorGroups: updatedGrps });
+                              }}
+                              className="flex-1 px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-xs text-amber-300 font-bold focus:outline-none focus:border-amber-400 placeholder:font-normal placeholder:text-slate-600"
+                            />
+                            
+                            {/* Obligatorio vs Opcional Toggle */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const updatedGrps = [...editingButton.descriptorGroups!];
+                                updatedGrps[grpIdx].required = !updatedGrps[grpIdx].required;
+                                setEditingButton({ ...editingButton, descriptorGroups: updatedGrps });
+                              }}
+                              className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition flex items-center gap-1 shrink-0 ${
+                                grp.required
+                                  ? 'bg-red-500/20 text-red-300 border-red-500/50 ring-1 ring-red-500/30'
+                                  : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-200'
+                              }`}
+                              title={grp.required ? "Este descriptor es OBLIGATORIO de responder" : "Este descriptor es OPCIONAL"}
+                            >
+                              {grp.required ? '⚠️ Obligatorio' : '⚪ Opcional'}
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const updatedGrps = editingButton.descriptorGroups!.filter((_, i) => i !== grpIdx);
+                                setEditingButton({ ...editingButton, descriptorGroups: updatedGrps });
+                              }}
+                              className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition"
+                              title="Eliminar este grupo descriptor"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+
+                          {/* Options / Posibilidades pills */}
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <label className="text-[10px] text-slate-400 font-semibold">
+                                Posibilidades / Opciones para &quot;{grp.type || 'Este tipo'}&quot;:
+                              </label>
+                              {grp.options.length > 0 && (
+                                <span className="text-[10px] text-slate-500">{grp.options.length} opciones creadas (haz clic para editar texto)</span>
+                              )}
+                            </div>
+
+                            <div className="flex flex-wrap gap-1.5">
+                              {grp.options.map((opt, optIdx) => (
+                                <span key={optIdx} className="flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-md bg-slate-800 text-slate-200 border border-slate-700 text-[11px] focus-within:border-amber-400">
+                                  <input
+                                    type="text"
+                                    value={opt}
+                                    onChange={(e) => {
+                                      const updatedGrps = [...editingButton.descriptorGroups!];
+                                      updatedGrps[grpIdx].options[optIdx] = e.target.value;
+                                      setEditingButton({ ...editingButton, descriptorGroups: updatedGrps });
+                                    }}
+                                    className="bg-transparent border-none text-slate-200 text-[11px] focus:outline-none min-w-[50px] max-w-[150px]"
+                                    style={{ width: `${Math.max(opt.length, 5)}ch` }}
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const updatedGrps = [...editingButton.descriptorGroups!];
+                                      updatedGrps[grpIdx].options = updatedGrps[grpIdx].options.filter((_, i) => i !== optIdx);
+                                      setEditingButton({ ...editingButton, descriptorGroups: updatedGrps });
+                                    }}
+                                    className="p-0.5 hover:text-red-400 transition rounded"
+                                    title="Eliminar esta opción"
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+
+                            {/* Add Option Input */}
+                            <div className="flex gap-1.5 pt-1">
+                              <input
+                                type="text"
+                                id={`input_opt_${grp.id}`}
+                                placeholder="Escribe nueva posibilidad y pulsa Enter..."
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    const val = (e.target as HTMLInputElement).value.trim();
+                                    if (val) {
+                                      const updatedGrps = [...editingButton.descriptorGroups!];
+                                      updatedGrps[grpIdx].options.push(val);
+                                      setEditingButton({ ...editingButton, descriptorGroups: updatedGrps });
+                                      (e.target as HTMLInputElement).value = '';
+                                    }
+                                  }
+                                }}
+                                className="flex-1 px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-amber-400 placeholder:text-slate-600"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const el = document.getElementById(`input_opt_${grp.id}`) as HTMLInputElement;
+                                  if (el && el.value.trim()) {
+                                    const updatedGrps = [...editingButton.descriptorGroups!];
+                                    updatedGrps[grpIdx].options.push(el.value.trim());
+                                    setEditingButton({ ...editingButton, descriptorGroups: updatedGrps });
+                                    el.value = '';
+                                  }
+                                }}
+                                className="px-2.5 py-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30 rounded-lg text-xs font-bold transition flex items-center gap-1 shrink-0"
+                              >
+                                <Plus className="w-3 h-3" /> + Añadir Opción
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-center">
+                      <p className="text-[11px] text-slate-400 mb-2">
+                        No hay grupos de descriptores configurados para este botón.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const newGrp = {
+                            id: `grp_${Date.now()}`,
+                            type: '',
+                            options: []
+                          };
+                          setEditingButton({
+                            ...editingButton,
+                            descriptorGroups: [newGrp]
+                          });
+                        }}
+                        className="px-3 py-1.5 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold hover:bg-amber-500/30 transition inline-flex items-center gap-1"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> Crear primer descriptor en blanco
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 3. REQUISITO DE SELECCIÓN DE JUGADOR */}
+              {editingButton.type === 'category' && (
+                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                  <label className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5" /> Requisito de Selección de Jugador:
+                  </label>
+                  <div className="grid grid-cols-3 gap-1.5 text-xs font-semibold">
+                    <button
+                      type="button"
+                      onClick={() => setEditingButton({ ...editingButton, playerRequiredMode: 'none' })}
+                      className={`p-2 rounded-xl border text-center transition flex flex-col items-center gap-1 ${
+                        (!editingButton.playerRequiredMode || editingButton.playerRequiredMode === 'none')
+                          ? 'bg-slate-800 border-slate-700 text-slate-200 font-bold'
+                          : 'bg-slate-950 border-slate-800 text-slate-500 hover:bg-slate-900'
+                      }`}
+                    >
+                      <span>🚫 Ninguno</span>
+                      <span className="text-[9px] font-normal text-slate-500">Sin selector</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setEditingButton({ ...editingButton, playerRequiredMode: 'optional' })}
+                      className={`p-2 rounded-xl border text-center transition flex flex-col items-center gap-1 ${
+                        editingButton.playerRequiredMode === 'optional'
+                          ? 'bg-amber-500/20 border-amber-500/80 text-amber-300 font-bold'
+                          : 'bg-slate-950 border-slate-800 text-slate-500 hover:bg-slate-900'
+                      }`}
+                    >
+                      <span>👤 Opcional</span>
+                      <span className="text-[9px] font-normal text-slate-500">Se puede omitir</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setEditingButton({ ...editingButton, playerRequiredMode: 'required' })}
+                      className={`p-2 rounded-xl border text-center transition flex flex-col items-center gap-1 ${
+                        editingButton.playerRequiredMode === 'required'
+                          ? 'bg-red-500/20 border-red-500/80 text-red-300 font-black ring-1 ring-red-500/40'
+                          : 'bg-slate-950 border-slate-800 text-slate-500 hover:bg-slate-900'
+                      }`}
+                    >
+                      <span>⚠️ Obligatorio</span>
+                      <span className="text-[9px] font-normal text-slate-400">Requerido</span>
+                    </button>
                   </div>
                 </div>
               )}
@@ -1117,7 +1899,7 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                 </div>
               )}
 
-              <div className="flex items-center justify-between pt-2">
+              <div className="flex items-center justify-between pt-2 border-t border-slate-800">
                 <button
                   type="button"
                   onClick={() => handleDeleteButton(editingButton.id)}

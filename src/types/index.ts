@@ -51,6 +51,12 @@ export interface Match {
   round?: string;
   flashscore_url?: string;
   flashscore_mid?: string;
+  video_type?: BotoneraProjectVideoType | null;
+  video_url?: string | null;
+  video_source_name?: string | null;
+  p1_video_start_time?: number | null; // seconds in video when 1st half starts
+  p2_video_start_time?: number | null; // seconds in video when 2nd half starts
+  botonera_template_id?: string | null;
 }
 
 export interface Player {
@@ -60,6 +66,11 @@ export interface Player {
   position: string;
   team_id: string;
   team_name: string;
+  photo_url?: string;
+  age?: number;
+  nationality?: string;
+  flag_url?: string;
+  market_value?: string;
   is_demo?: boolean;
 }
 
@@ -144,13 +155,33 @@ export interface ParsedXMLAnalysis {
 /**
  * LongoMatch / Nacsport Style Botonera Dashboard Types
  */
-export type PitchRequiredType = 'none' | 'point' | 'vector' | 'zone';
+export type PitchRequiredType =
+  | 'none'
+  | 'point'
+  | 'point_full'
+  | 'point_half'
+  | 'vector'
+  | 'vector_arrow'
+  | 'zone'
+  | 'zone_bandas_centro'
+  | 'zone_3_hitos'
+  | 'zone_4_zonas'
+  | 'zone_remate'
+  | 'zone_counter';
+
+export interface DescriptorGroup {
+  id: string;
+  type: string; // Nombre del tipo de descriptor (e.g. "Resultado", "Superficie de contacto", "Presión")
+  options: string[]; // Posibilidades u opciones (e.g. ["Fuera", "Poste", "Parada", "Gol"])
+  allowMultiple?: boolean;
+  required?: boolean; // Si la selección de al menos 1 opción en este grupo es OBLIGATORIA
+}
 
 export interface BotoneraButton {
   id: string;
   name: string;
   category: string;
-  type: 'category' | 'descriptor';
+  type: 'category' | 'descriptor' | 'header' | 'text';
   color: string; // Tailwind color class or hex (e.g. "emerald", "blue", "amber", "red", "purple", "cyan")
   keyShortcut?: string; // e.g. "P", "T", "R", "F", "1", "2"
   leadTime: number; // seconds before click (default: 5)
@@ -164,8 +195,11 @@ export interface BotoneraButton {
   w?: number; // Freeform Canvas Width in % (e.g. 20%)
   h?: number; // Freeform Canvas Height in % (e.g. 15%)
   fontSize?: 'sm' | 'md' | 'lg' | 'xl' | '2xl';
-  pitchRequired?: PitchRequiredType; // 'none' | 'point' | 'vector' | 'zone'
-  descriptors?: string[]; // Predefined descriptors (labels) for this button
+  pitchRequired?: PitchRequiredType;
+  pitchViewMode?: 'full' | 'half'; // Campo entero vs Medio campo
+  playerRequiredMode?: 'none' | 'optional' | 'required'; // 'none' (Desactivado), 'optional' (Opcional), 'required' (Obligatorio)
+  descriptors?: string[]; // Predefined flat descriptors (legacy)
+  descriptorGroups?: DescriptorGroup[]; // Dynamic Descriptor Groups (Tipo -> Posibilidades)
 }
 
 export interface BotoneraTemplate {
@@ -205,6 +239,8 @@ export interface ActiveBotoneraSession {
   videoType?: BotoneraProjectVideoType | null;
   videoSourceName?: string | null; // local file name, when videoType === 'local'
   videoUrl?: string | null;        // youtube/link URL, when videoType === 'link'
+  p1VideoStartSeconds?: number | null; // video timestamp in seconds for 1st half start
+  p2VideoStartSeconds?: number | null; // video timestamp in seconds for 2nd half start
   botoneraTemplateId?: string | null;
 }
 

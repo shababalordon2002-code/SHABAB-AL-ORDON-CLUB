@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
-import { PictureInPicture2, ExternalLink, Minimize2, Maximize2, Video as VideoIcon, ArrowLeftRight, Clock, RotateCcw, CheckCircle2 } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { PictureInPicture2, ExternalLink, Minimize2, Maximize2, Video as VideoIcon, ArrowLeftRight, Clock, RotateCcw, CheckCircle2, Pencil, Check, X, Crosshair, SkipForward, CircleDashed } from 'lucide-react';
 import { BotoneraProjectVideoType } from '@/types';
 
 interface BotoneraVideoPlayerProps {
@@ -19,6 +19,18 @@ interface BotoneraVideoPlayerProps {
   periodVideoOffsets?: Record<number, number>;
   /** Called when the user wants to reset a period's sync offset so it can be re-recorded */
   onClearPeriodOffset?: (period: number) => void;
+  /** Called when the user manually edits a period's video start offset (in seconds) */
+  onUpdatePeriodOffset?: (period: number, newTimeSeconds: number) => void;
+  /** Called when the user clicks the Edit Video / Link button */
+  onEditVideoSettings?: () => void;
+  /** Period currently being tagged — highlighted in the sync bar */
+  currentPeriod?: number;
+  /** Marks the period start using the live playhead of the video */
+  onCapturePeriodOffset?: (period: number) => void;
+  /** Moves the video to an absolute video time (seconds) */
+  onSeekVideoToTime?: (seconds: number) => void;
+  /** Live playhead of the video, used to prefill the manual editor */
+  getCurrentVideoTime?: () => number;
 }
 
 // Converts common YouTube URL formats (watch, youtu.be, shorts, already-embed) into an embeddable URL.
@@ -64,11 +76,21 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
   onIframeRef,
   periodVideoOffsets = {},
   onClearPeriodOffset,
+  onUpdatePeriodOffset,
+  onEditVideoSettings,
+  currentPeriod,
+  onCapturePeriodOffset,
+  onSeekVideoToTime,
+  getCurrentVideoTime,
 }) => {
   const fmtVideoTime = (secs: number) => {
-    const m = Math.floor(secs / 60);
-    const s = Math.floor(secs % 60);
-    return `${m}:${String(s).padStart(2, '0')}`;
+    const total = Math.max(0, Math.floor(secs));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    return h > 0
+      ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+      : `${m}:${String(s).padStart(2, '0')}`;
   };
 
   const PERIOD_LABELS: Record<number, string> = {
@@ -78,14 +100,61 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
     4: 'ET 2',
   };
 
-  const periodEntries = Object.entries(periodVideoOffsets)
-    .map(([p, t]) => ({ period: Number(p), time: t }))
-    .sort((a, b) => a.period - b.period);
+  // 1ª y 2ª parte siempre visibles; prórrogas solo si están marcadas o en curso
+  const visiblePeriods = Array.from(
+    new Set<number>([
+      1,
+      2,
+      ...Object.keys(periodVideoOffsets).map(Number),
+      ...(currentPeriod ? [currentPeriod] : []),
+    ])
+  ).sort((a, b) => a - b);
 
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [localObjectUrl, setLocalObjectUrl] = useState<string | null>(null);
+  const [editingPeriod, setEditingPeriod] = useState<number | null>(null);
+  const [editingPeriodValue, setEditingPeriodValue] = useState<string>('');
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const popoutRef = useRef<Window | null>(null);
+
+  // Ref callbacks must be stable: an inline arrow changes identity on every render,
+  // so React would detach (null) and re-attach the element each time, making the
+  // chrono ↔ video coupling in the parent flicker off/on several times per second.
+  const attachVideoRef = useCallback((el: HTMLVideoElement | null) => {
+    (videoRef as React.MutableRefObject<HTMLVideoElement | null>).current = el;
+    onVideoRef?.(el);
+  }, [onVideoRef]);
+
+  const attachIframeRef = useCallback((el: HTMLIFrameElement | null) => {
+    onIframeRef?.(el);
+  }, [onIframeRef]);
+
+  // Accepts "90" (seconds), "12:30" (mm:ss) and "1:12:30" (h:mm:ss)
+  const parseMinSec = (val: string): number | null => {
+    const trimmed = val.trim();
+    if (/^\d+$/.test(trimmed)) return parseInt(trimmed, 10);
+    const hms = trimmed.match(/^(\d{1,2}):([0-5]?\d):([0-5]?\d)$/);
+    if (hms) return parseInt(hms[1], 10) * 3600 + parseInt(hms[2], 10) * 60 + parseInt(hms[3], 10);
+    const ms = trimmed.match(/^(\d{1,3}):([0-5]?\d)$/);
+    if (ms) return parseInt(ms[1], 10) * 60 + parseInt(ms[2], 10);
+    return null;
+  };
+
+  const handleStartPeriodEdit = (p: number) => {
+    const existing = periodVideoOffsets[p];
+    const prefill = existing !== undefined ? existing : (getCurrentVideoTime?.() ?? 0);
+    setEditingPeriodValue(fmtVideoTime(prefill));
+    setEditingPeriod(p);
+  };
+
+  const handleConfirmPeriodEdit = (p: number) => {
+    const parsed = parseMinSec(editingPeriodValue);
+    if (parsed !== null && onUpdatePeriodOffset) {
+      onUpdatePeriodOffset(p, Math.max(0, parsed));
+    }
+    setEditingPeriod(null);
+  };
 
   // Build/cleanup the blob URL for a local file
   useEffect(() => {
@@ -100,6 +169,7 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
   if (videoType === 'none') return null;
 
   const popupStateRef = useRef({ time: 0, playing: false, shouldRestore: false });
+  const popupVideoRef = useRef<HTMLVideoElement | null>(null);
 
   const monitorPopOutWindow = (win: Window | null, isLocal: boolean) => {
     if (!win) return;
@@ -112,6 +182,12 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
             popupStateRef.current.time = popupVideo.currentTime;
             popupStateRef.current.playing = !popupVideo.paused;
             popupStateRef.current.shouldRestore = true;
+            // The popup is same-origin (written by us), so the parent can drive
+            // and read it exactly like the embedded player.
+            if (popupVideoRef.current !== popupVideo) {
+              popupVideoRef.current = popupVideo;
+              onVideoRef?.(popupVideo);
+            }
           }
         } catch {
           // ignore cross-origin or DOM errors
@@ -120,6 +196,10 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
 
       if (win.closed) {
         clearInterval(interval);
+        if (popupVideoRef.current) {
+          popupVideoRef.current = null;
+          onVideoRef?.(null);
+        }
         if (onTogglePopOut) onTogglePopOut(false);
       }
     }, 200);
@@ -215,6 +295,17 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5">
+          {onEditVideoSettings && (
+            <button
+              onClick={onEditVideoSettings}
+              title="Editar o cambiar el archivo/enlace de vídeo para este partido"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold transition cursor-pointer"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+              <span>Editar Vídeo</span>
+            </button>
+          )}
+
           {videoType === 'local' && (
             <button
               onClick={handlePictureInPicture}
@@ -244,56 +335,133 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
         </div>
       </div>
 
-      {/* Period sync markers bar — shown only when at least one period has a recorded offset */}
-      {periodEntries.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 px-3 py-2 bg-slate-950/80 border-b border-slate-800/80">
-          <span className="flex items-center gap-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-            <Clock className="w-3 h-3 text-emerald-500" />
-            Sync vídeo:
+      {/* ── Sincronización vídeo ↔ partido ──────────────────────────────────
+          Siempre visible: aquí se fija (o corrige) en qué minuto del vídeo
+          arranca cada parte. Con esa marca el cronómetro pasa a ir en función
+          de la reproducción del vídeo. */}
+      <div className="px-3 py-2 bg-slate-950/80 border-b border-slate-800/80 space-y-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Clock className="w-3 h-3 text-emerald-500" />
+          <span className="text-[10px] font-bold text-slate-300 uppercase tracking-wider">
+            Inicio de cada parte en el vídeo
           </span>
-          {periodEntries.map(({ period, time }) => (
-            <span
-              key={period}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/60 border border-emerald-700/50 text-emerald-300"
-            >
-              <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-              <span className="text-[11px] font-black">{PERIOD_LABELS[period] ?? `Parte ${period}`}</span>
-              <span className="text-[11px] font-mono text-emerald-200">empieza en</span>
-              <span className="text-[11px] font-black font-mono text-emerald-100">{fmtVideoTime(time)}</span>
-              {onClearPeriodOffset && (
-                <button
-                  onClick={() => onClearPeriodOffset(period)}
-                  title={`Resetear sync de ${PERIOD_LABELS[period] ?? `Parte ${period}`}`}
-                  className="ml-0.5 p-0.5 rounded hover:bg-red-900/50 text-emerald-500 hover:text-red-400 transition"
-                >
-                  <RotateCcw className="w-2.5 h-2.5" />
-                </button>
-              )}
-            </span>
-          ))}
-
-          {/* Pending periods not yet captured */}
-          {[1, 2].filter(p => !(p in periodVideoOffsets)).map(p => (
-            <span
-              key={p}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700/60 text-slate-500"
-            >
-              <span className="text-[11px] font-semibold">{PERIOD_LABELS[p]}</span>
-              <span className="text-[10px] italic">— pulsa PLAY para capturar</span>
-            </span>
-          ))}
+          <span className="text-[10px] text-slate-500">
+            — marca el saque inicial y el crono irá en función del vídeo
+          </span>
         </div>
-      )}
 
+        <div className="flex flex-wrap items-center gap-2">
+          {visiblePeriods.map((p) => {
+            const time = periodVideoOffsets[p];
+            const isSet = time !== undefined;
+            const isEditing = editingPeriod === p;
+            const isCurrent = currentPeriod === p;
+
+            return (
+              <span
+                key={p}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition ${
+                  isSet
+                    ? 'bg-emerald-950/60 border-emerald-700/50 text-emerald-300'
+                    : 'bg-slate-900 border-slate-700/60 text-slate-400'
+                } ${isCurrent ? 'ring-1 ring-emerald-400/70' : ''}`}
+              >
+                {isSet ? (
+                  <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                ) : (
+                  <CircleDashed className="w-3 h-3 text-slate-500" />
+                )}
+                <span className="text-[11px] font-black">{PERIOD_LABELS[p] ?? `Parte ${p}`}</span>
+                <span className="text-[11px] text-slate-500">empieza en</span>
+
+                {isEditing ? (
+                  <div className="flex items-center gap-1">
+                    <input
+                      autoFocus
+                      type="text"
+                      value={editingPeriodValue}
+                      onChange={(e) => setEditingPeriodValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleConfirmPeriodEdit(p);
+                        if (e.key === 'Escape') setEditingPeriod(null);
+                      }}
+                      placeholder="mm:ss"
+                      title="Formato mm:ss o h:mm:ss (minuto del vídeo, no del partido)"
+                      className="w-20 px-1.5 py-0.5 rounded bg-slate-950 border border-amber-400 text-amber-300 font-mono text-[11px] font-bold text-center focus:outline-none"
+                    />
+                    <button
+                      onClick={() => handleConfirmPeriodEdit(p)}
+                      className="p-1 rounded bg-emerald-600 text-slate-950"
+                      title="Guardar minutaje"
+                    >
+                      <Check className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={() => setEditingPeriod(null)}
+                      className="p-1 rounded bg-slate-800 text-slate-300"
+                      title="Cancelar"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => handleStartPeriodEdit(p)}
+                      title="Editar a mano el minuto del vídeo en el que arranca esta parte"
+                      className={`flex items-center gap-1 px-1.5 py-0.5 rounded font-black font-mono text-[11px] border cursor-pointer transition ${
+                        isSet
+                          ? 'bg-slate-900 hover:bg-slate-800 text-emerald-100 border-emerald-500/40'
+                          : 'bg-slate-950 hover:bg-slate-900 text-slate-400 border-slate-700 italic'
+                      }`}
+                    >
+                      <span>{isSet ? fmtVideoTime(time) : '--:--'}</span>
+                      <Pencil className={`w-2.5 h-2.5 ${isSet ? 'text-emerald-400' : 'text-amber-400'}`} />
+                    </button>
+
+                    {onCapturePeriodOffset && (
+                      <button
+                        onClick={() => onCapturePeriodOffset(p)}
+                        title={`Marcar aquí: usar el minuto actual del vídeo como inicio de ${PERIOD_LABELS[p] ?? `Parte ${p}`}`}
+                        className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-900/50 hover:bg-sky-800/70 border border-sky-600/50 text-sky-300 hover:text-sky-100 text-[10px] font-bold transition"
+                      >
+                        <Crosshair className="w-2.5 h-2.5" />
+                        Marcar aquí
+                      </button>
+                    )}
+
+                    {isSet && onSeekVideoToTime && (
+                      <button
+                        onClick={() => onSeekVideoToTime(time)}
+                        title={`Llevar el vídeo al inicio de ${PERIOD_LABELS[p] ?? `Parte ${p}`}`}
+                        className="p-0.5 rounded hover:bg-emerald-800/60 text-emerald-400 hover:text-emerald-200 transition"
+                      >
+                        <SkipForward className="w-3 h-3" />
+                      </button>
+                    )}
+
+                    {isSet && onClearPeriodOffset && (
+                      <button
+                        onClick={() => onClearPeriodOffset(p)}
+                        title={`Borrar la marca de ${PERIOD_LABELS[p] ?? `Parte ${p}`}`}
+                        className="p-0.5 rounded hover:bg-red-900/50 text-emerald-500 hover:text-red-400 transition"
+                      >
+                        <RotateCcw className="w-2.5 h-2.5" />
+                      </button>
+                    )}
+                  </>
+                )}
+              </span>
+            );
+          })}
+        </div>
+      </div>
 
       {!isCollapsed && (
         <div className="aspect-video bg-black">
           {videoType === 'local' && localObjectUrl && (
             <video
-              ref={(el) => {
-                (videoRef as React.MutableRefObject<HTMLVideoElement | null>).current = el;
-                onVideoRef?.(el);
-              }}
+              ref={attachVideoRef}
               src={localObjectUrl}
               controls
               className="w-full h-full"
@@ -318,7 +486,7 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
 
           {videoType === 'link' && videoUrl && (
             <iframe
-              ref={(el) => { onIframeRef?.(el); }}
+              ref={attachIframeRef}
               src={toEmbedUrl(videoUrl)}
               className="w-full h-full"
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"

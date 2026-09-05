@@ -19,7 +19,8 @@ import {
   Save,
   PlayCircle,
 } from 'lucide-react';
-import { NormalizedEvent } from '@/types';
+import { NormalizedEvent, BotoneraButton } from '@/types';
+import { getButtonColorHex } from './BotoneraPanelEditor';
 
 interface BotoneraEventLogProps {
   events: NormalizedEvent[];
@@ -30,6 +31,8 @@ interface BotoneraEventLogProps {
   onExportJson: () => void;
   /** Called when the user clicks the ▶ button to seek the video to 12s before this event */
   onSeekToEvent?: (event: NormalizedEvent) => void;
+  /** Buttons of the active botonera, used to paint each row with its button colour */
+  buttons?: BotoneraButton[];
 }
 
 export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
@@ -40,9 +43,12 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
   onExportXml,
   onExportJson,
   onSeekToEvent,
+  buttons = [],
 }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  // Fila desplegada: categoría, coordenadas y demás detalles solo al hacer clic
+  const [expandedEventId, setExpandedEventId] = useState<string | null>(null);
   
   // Edit Event State
   const [editingEvent, setEditingEvent] = useState<NormalizedEvent | null>(null);
@@ -55,15 +61,36 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
 
   // Filter events
   const filteredEvents = events.filter((e) => {
+    const q = searchQuery.toLowerCase();
     const matchesSearch =
-      e.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      e.player_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (e.outcome && e.outcome.toLowerCase().includes(searchQuery.toLowerCase()));
+      e.category.toLowerCase().includes(q) ||
+      (e.event_type || '').toLowerCase().includes(q) ||
+      e.player_name.toLowerCase().includes(q) ||
+      (e.subcategory || '').toLowerCase().includes(q) ||
+      (e.outcome && e.outcome.toLowerCase().includes(q));
 
     const matchesCategory = selectedCategory === 'all' || e.category === selectedCategory;
 
     return matchesSearch && matchesCategory;
   });
+
+  /** Descriptores marcados en el evento (los nuevos van en metadata, los viejos en subcategory) */
+  const getDescriptors = (evt: NormalizedEvent): string[] => {
+    const fromMeta = evt.metadata?.descriptors;
+    if (Array.isArray(fromMeta) && fromMeta.length > 0) return fromMeta;
+    if (evt.subcategory) return evt.subcategory.split(',').map((d) => d.trim()).filter(Boolean);
+    return [];
+  };
+
+  /** Color del botón que generó el evento, para pintar la fila igual que la botonera */
+  const getEventColor = (evt: NormalizedEvent): string => {
+    const stored = evt.metadata?.buttonColor;
+    if (typeof stored === 'string' && stored) return getButtonColorHex(stored);
+    const match = buttons.find(
+      (b) => b.name === evt.event_type || b.name === evt.category || b.category === evt.category
+    );
+    return getButtonColorHex(match?.color || 'emerald');
+  };
 
   const formatMinSec = (timestampSec: number | null) => {
     if (timestampSec === null) return '--:--';
@@ -189,83 +216,178 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
             <tr>
               <th className="p-2.5">Tiempo</th>
               <th className="p-2.5">Periodo</th>
-              <th className="p-2.5">Categoría / Evento</th>
+              <th className="p-2.5">Evento</th>
               <th className="p-2.5">Jugador</th>
-              <th className="p-2.5">Resultado / Descriptores</th>
-              <th className="p-2.5">Coordenadas</th>
+              <th className="p-2.5">Descriptores</th>
               <th className="p-2.5 text-right">Acciones</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/60 bg-slate-900/60 font-medium">
             {filteredEvents.length === 0 ? (
               <tr>
-                <td colSpan={7} className="p-6 text-center text-slate-500 text-xs italic">
+                <td colSpan={6} className="p-6 text-center text-slate-500 text-xs italic">
                   No hay eventos registrados aún. Usa la botonera o atajos de teclado para marcar acciones del partido.
                 </td>
               </tr>
             ) : (
-              filteredEvents.map((evt) => (
-                <tr key={evt.event_id} className="hover:bg-slate-800/50 transition">
-                  <td className="p-2.5 font-mono text-emerald-400 font-bold">
-                    {formatMinSec(evt.timestamp)}
-                  </td>
-                  <td className="p-2.5">
-                    <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300 font-bold">
-                      {evt.period === 1 ? '1ª Parte' : evt.period === 2 ? '2ª Parte' : `ET ${evt.period}`}
-                    </span>
-                  </td>
-                  <td className="p-2.5 font-bold text-slate-100">{evt.category}</td>
-                  <td className="p-2.5 font-semibold text-slate-300">
-                    {evt.player_name || 'Sin asignar'}
-                  </td>
-                  <td className="p-2.5">
-                    {evt.outcome ? (
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                        {evt.outcome}
-                      </span>
-                    ) : (
-                      <span className="text-slate-500 text-[10px]">-</span>
-                    )}
-                  </td>
-                  <td className="p-2.5 font-mono text-[10px] text-slate-400">
-                    {evt.x !== null ? (
-                      <span>
-                        ({evt.x}, {evt.y})
-                        {evt.end_x !== null && ` ➔ (${evt.end_x}, ${evt.end_y})`}
-                      </span>
-                    ) : evt.metadata?.zone ? (
-                      <span className="text-blue-400 font-semibold">{evt.metadata.zone}</span>
-                    ) : (
-                      '-'
-                    )}
-                  </td>
-                  <td className="p-2.5 text-right flex items-center justify-end gap-1.5">
-                    {onSeekToEvent && (
-                      <button
-                        onClick={() => onSeekToEvent(evt)}
-                        className="p-1 rounded bg-emerald-900/40 hover:bg-emerald-600/50 text-emerald-500 hover:text-emerald-300 border border-emerald-700/40 hover:border-emerald-500/60 transition"
-                        title={`▶ Ir al vídeo (-12s del evento en t=${formatMinSec(evt.timestamp)})`}
+              filteredEvents.map((evt) => {
+                const color = getEventColor(evt);
+                const descriptors = getDescriptors(evt);
+                const isExpanded = expandedEventId === evt.event_id;
+
+                return (
+                  <React.Fragment key={evt.event_id}>
+                    <tr
+                      onClick={() => setExpandedEventId(isExpanded ? null : evt.event_id)}
+                      title="Clic para ver categoría, coordenadas y detalles"
+                      className="cursor-pointer transition hover:brightness-125"
+                      style={{ backgroundColor: `${color}1f` }}
+                    >
+                      <td
+                        className="p-2.5 font-mono font-bold text-slate-100"
+                        style={{ borderLeft: `4px solid ${color}` }}
                       >
-                        <PlayCircle className="w-3.5 h-3.5" />
-                      </button>
+                        {formatMinSec(evt.timestamp)}
+                      </td>
+                      <td className="p-2.5">
+                        <span className="px-2 py-0.5 rounded text-[10px] bg-slate-950/60 text-slate-300 font-bold">
+                          {evt.period === 1 ? '1ª Parte' : evt.period === 2 ? '2ª Parte' : `ET ${evt.period}`}
+                        </span>
+                      </td>
+
+                      {/* Nombre del botón pulsado */}
+                      <td className="p-2.5">
+                        <span className="flex items-center gap-1.5 font-black text-slate-50">
+                          <span
+                            className="w-2 h-2 rounded-full shrink-0"
+                            style={{ backgroundColor: color }}
+                          />
+                          {evt.event_type || evt.category}
+                          <ChevronDown
+                            className={`w-3 h-3 text-slate-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                          />
+                        </span>
+                      </td>
+
+                      <td className="p-2.5 font-semibold text-slate-200">
+                        {evt.player_name || 'Sin asignar'}
+                      </td>
+
+                      {/* Descriptores marcados */}
+                      <td className="p-2.5">
+                        {descriptors.length > 0 ? (
+                          <span className="flex flex-wrap gap-1">
+                            {descriptors.map((d, i) => (
+                              <span
+                                key={`${evt.event_id}_d${i}`}
+                                className="px-1.5 py-0.5 rounded text-[10px] font-bold border"
+                                style={{
+                                  backgroundColor: `${color}26`,
+                                  borderColor: `${color}80`,
+                                  color: '#e2e8f0',
+                                }}
+                              >
+                                {d}
+                              </span>
+                            ))}
+                          </span>
+                        ) : evt.outcome ? (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                            {evt.outcome}
+                          </span>
+                        ) : (
+                          <span className="text-slate-500 text-[10px]">-</span>
+                        )}
+                      </td>
+
+                      <td className="p-2.5 text-right">
+                        <span
+                          className="flex items-center justify-end gap-1.5"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {onSeekToEvent && (
+                            <button
+                              onClick={() => onSeekToEvent(evt)}
+                              className="p-1 rounded bg-slate-950/50 hover:bg-emerald-600/50 text-emerald-400 hover:text-emerald-200 border border-emerald-700/40 hover:border-emerald-500/60 transition"
+                              title={`▶ Ir al vídeo (-12s del evento en t=${formatMinSec(evt.timestamp)})`}
+                            >
+                              <PlayCircle className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleStartEdit(evt)}
+                            className="p-1 rounded bg-slate-950/50 hover:bg-amber-500/20 text-slate-300 hover:text-amber-300 border border-slate-700 transition"
+                            title="Editar este evento"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => onDeleteEvent(evt.event_id)}
+                            className="p-1 rounded bg-slate-950/50 hover:bg-red-900/60 text-slate-300 hover:text-red-300 border border-slate-700 transition"
+                            title="Eliminar este evento"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </span>
+                      </td>
+                    </tr>
+
+                    {/* Detalle desplegable: categoría, coordenadas y metadatos */}
+                    {isExpanded && (
+                      <tr style={{ backgroundColor: `${color}0f` }}>
+                        <td colSpan={6} className="px-3 pb-3 pt-1">
+                          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-[11px] bg-slate-950/70 border border-slate-800 rounded-xl px-3 py-2">
+                            <span className="flex items-center gap-1.5">
+                              <Tag className="w-3 h-3 text-slate-500" />
+                              <span className="text-slate-500 font-bold uppercase tracking-wide">Categoría:</span>
+                              <span className="text-slate-200 font-bold">{evt.category || '-'}</span>
+                            </span>
+
+                            <span className="flex items-center gap-1.5">
+                              <MapPin className="w-3 h-3 text-slate-500" />
+                              <span className="text-slate-500 font-bold uppercase tracking-wide">Coordenadas:</span>
+                              <span className="text-slate-200 font-mono">
+                                {evt.x !== null ? (
+                                  <>
+                                    ({evt.x}, {evt.y})
+                                    {evt.end_x !== null && ` ➔ (${evt.end_x}, ${evt.end_y})`}
+                                  </>
+                                ) : evt.metadata?.zone ? (
+                                  <span className="text-blue-400 font-semibold">{evt.metadata.zone}</span>
+                                ) : (
+                                  '-'
+                                )}
+                              </span>
+                            </span>
+
+                            <span className="flex items-center gap-1.5">
+                              <User className="w-3 h-3 text-slate-500" />
+                              <span className="text-slate-500 font-bold uppercase tracking-wide">Equipo:</span>
+                              <span className="text-slate-200">{evt.team_name || '-'}</span>
+                            </span>
+
+                            <span className="flex items-center gap-1.5">
+                              <Clock className="w-3 h-3 text-slate-500" />
+                              <span className="text-slate-500 font-bold uppercase tracking-wide">Ventana:</span>
+                              <span className="text-slate-200 font-mono">
+                                -{evt.metadata?.leadTime ?? 0}s / +{evt.metadata?.lagTime ?? 0}s
+                              </span>
+                            </span>
+
+                            {evt.outcome && (
+                              <span className="flex items-center gap-1.5">
+                                <CheckCircle className="w-3 h-3 text-slate-500" />
+                                <span className="text-slate-500 font-bold uppercase tracking-wide">Resultado:</span>
+                                <span className="text-amber-300 font-bold">{evt.outcome}</span>
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
                     )}
-                    <button
-                      onClick={() => handleStartEdit(evt)}
-                      className="p-1 rounded bg-slate-800 hover:bg-amber-500/20 text-slate-400 hover:text-amber-300 border border-slate-700 transition"
-                      title="Editar este evento"
-                    >
-                      <Pencil className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => onDeleteEvent(evt.event_id)}
-                      className="p-1 rounded bg-slate-800 hover:bg-red-900/60 text-slate-400 hover:text-red-300 border border-slate-700 transition"
-                      title="Eliminar este evento"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </td>
-                </tr>
-              ))
+                  </React.Fragment>
+                );
+              })
             )}
           </tbody>
         </table>

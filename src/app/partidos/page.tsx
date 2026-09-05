@@ -10,12 +10,9 @@ import {
   CheckCircle2,
   Clock,
   ChevronRight,
-  PlusCircle,
-  FileCode2,
   Globe,
-  RefreshCw,
+  FileCode2,
   ExternalLink,
-  Download,
   AlertCircle
 } from 'lucide-react';
 import { dbStore } from '@/lib/store/db-store';
@@ -39,7 +36,7 @@ export default function PartidosPage() {
 
   const handleScrapeFlashscore = async () => {
     setIsScraping(true);
-    setScrapeMessage('Conectando con Flashscore y realizando scraping de partidos...');
+    setScrapeMessage('Conectando con Flashscore y extrayendo partidos con sus marcadores oficiales...');
 
     try {
       const res = await fetch('/api/scrape-matches', {
@@ -58,7 +55,7 @@ export default function PartidosPage() {
         });
 
         loadMatches();
-        setScrapeMessage(`¡Éxito! Se han descargado e importado ${data.matches.length} partidos desde Flashscore.`);
+        setScrapeMessage(`¡Éxito! Se han descargado y actualizado ${data.matches.length} partidos con sus marcadores de Flashscore.`);
       } else {
         setScrapeMessage(`Error: ${data.error || 'No se pudieron descargar partidos'}`);
       }
@@ -92,11 +89,11 @@ export default function PartidosPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-extrabold text-white flex items-center gap-2">
-            <Trophy className="w-5 h-5 text-emerald-400" />
+            <Trophy className="w-5 h-5 text-amber-400" />
             <span>Gestión de Partidos</span>
           </h1>
           <p className="text-xs text-slate-400">
-            Registro de encuentros, sincronización de Flashscore con web scraping y vinculación XML de LongoMatch.
+            Registro de encuentros, sincronización de marcadores de Flashscore e importación de datos.
           </p>
         </div>
 
@@ -104,15 +101,15 @@ export default function PartidosPage() {
           <button
             onClick={handleScrapeFlashscore}
             disabled={isScraping}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-bold text-xs shadow-md shadow-sky-950/40 transition-all cursor-pointer"
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-bold text-xs shadow-md shadow-sky-950/40 transition-all cursor-pointer"
           >
             <Globe className={`w-4 h-4 ${isScraping ? 'animate-spin' : ''}`} />
-            <span>{isScraping ? 'Descargando de Flashscore...' : 'Descargar Flashscore (Scraping)'}</span>
+            <span>{isScraping ? 'Sincronizando de Flashscore...' : 'Sincronizar Flashscore (Resultados)'}</span>
           </button>
 
           <Link
             href="/importar-xml"
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs shadow-md shadow-emerald-950/40 transition-all"
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-red-600 to-amber-500 hover:from-red-500 hover:to-amber-400 text-slate-950 font-bold text-xs shadow-md shadow-red-950/40 transition-all"
           >
             <UploadCloud className="w-4 h-4 stroke-[2.5]" />
             <span>Importar XML</span>
@@ -154,7 +151,7 @@ export default function PartidosPage() {
             placeholder="Buscar rival, liga o jornada..."
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
-            className="w-full pl-9 pr-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+            className="w-full pl-9 pr-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500"
           />
         </div>
 
@@ -168,7 +165,7 @@ export default function PartidosPage() {
           <select
             value={statusFilter}
             onChange={e => setStatusFilter(e.target.value)}
-            className="py-1.5 px-3 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
+            className="py-1.5 px-3 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-amber-500"
           >
             <option value="todos">Todos los estados</option>
             <option value="Finalizado">Finalizados</option>
@@ -178,7 +175,7 @@ export default function PartidosPage() {
           <select
             value={importFilter}
             onChange={e => setImportFilter(e.target.value)}
-            className="py-1.5 px-3 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
+            className="py-1.5 px-3 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-amber-500"
           >
             <option value="todos">Estado XML (Todos)</option>
             <option value="XML Importado">XML Importado</option>
@@ -189,128 +186,141 @@ export default function PartidosPage() {
 
       {/* Matches Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {filteredMatches.map((m) => (
-          <div key={m.id} className="p-5 rounded-xl bg-slate-900/90 border border-slate-800/80 space-y-4 card-hover-effect relative flex flex-col justify-between">
-            <div>
-              {/* Top row: Date/Time + League & Round */}
-              <div className="flex items-center justify-between text-[11px] text-slate-400 pb-2 border-b border-slate-800/60 gap-2">
-                <div className="flex items-center gap-1.5 font-mono text-slate-300">
-                  <Clock className="w-3 h-3 text-sky-400" />
-                  <span>{m.date} {m.time ? `• ${m.time}` : ''}</span>
-                </div>
-                
-                <span className="font-semibold text-emerald-400 text-right truncate" title={`${m.competition} ${m.round ? '- ' + m.round : ''}`}>
-                  {m.competition} {m.round ? `• ${m.round}` : ''}
-                </span>
-              </div>
+        {filteredMatches.map((m) => {
+          const isShababHome = m.home_team.toLowerCase().includes('shabab al ordon');
+          const isShababAway = m.away_team.toLowerCase().includes('shabab al ordon');
 
-              {/* Teams with Logos & Score */}
-              <div className="py-4 space-y-3">
-                {/* Home Team */}
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2.5 overflow-hidden">
-                    {m.home_team_logo ? (
-                      <img 
-                        src={m.home_team_logo} 
-                        alt={m.home_team} 
-                        className="w-6 h-6 object-contain shrink-0 rounded bg-slate-950 p-0.5"
-                        onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }}
-                      />
-                    ) : (
-                      <div className="w-6 h-6 rounded bg-slate-800 flex items-center justify-center text-[10px] font-bold text-slate-400 shrink-0">
-                        {m.home_team.substring(0, 2).toUpperCase()}
-                      </div>
-                    )}
-                    <span className={`font-bold text-xs truncate ${m.home_team.toLowerCase().includes('shabab al ordon') ? 'text-emerald-400' : 'text-slate-200'}`}>
-                      {m.home_team}
+          return (
+            <div key={m.id} className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800/80 space-y-4 card-hover-effect relative flex flex-col justify-between shadow-xl">
+              <div>
+                {/* Top row: Date/Time + League & Round */}
+                <div className="flex items-center justify-between text-[11px] text-slate-400 pb-2.5 border-b border-slate-800/60 gap-2">
+                  <div className="flex items-center gap-1.5 font-mono text-slate-300">
+                    <Clock className="w-3.5 h-3.5 text-amber-400" />
+                    <span>{m.date} {m.time ? `• ${m.time}` : ''}</span>
+                  </div>
+                  
+                  <span className="font-semibold text-amber-400 text-right truncate" title={`${m.competition} ${m.round ? '- ' + m.round : ''}`}>
+                    {m.competition} {m.round ? `• ${m.round}` : ''}
+                  </span>
+                </div>
+
+                {/* Teams with Logos & Scores */}
+                <div className="py-4 space-y-3">
+                  {/* Home Team */}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2.5 overflow-hidden">
+                      {m.home_team_logo ? (
+                        <img 
+                          src={m.home_team_logo} 
+                          alt={m.home_team} 
+                          className="w-6 h-6 object-contain shrink-0 rounded bg-slate-950 p-0.5"
+                          onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }}
+                        />
+                      ) : (
+                        <div className="w-6 h-6 rounded bg-slate-800 flex items-center justify-center text-[10px] font-bold text-slate-400 shrink-0">
+                          {m.home_team.substring(0, 2).toUpperCase()}
+                        </div>
+                      )}
+                      <span className={`font-bold text-xs truncate ${isShababHome ? 'text-amber-400' : 'text-slate-200'}`}>
+                        {m.home_team}
+                      </span>
+                    </div>
+
+                    <span className={`font-mono text-base font-black px-2.5 py-0.5 rounded-lg border shrink-0 ${
+                      m.status === 'Finalizado' 
+                        ? 'bg-slate-950 text-amber-400 border-amber-500/30' 
+                        : 'bg-slate-950 text-slate-500 border-slate-800'
+                    }`}>
+                      {m.status === 'Finalizado' ? m.home_score : '-'}
                     </span>
                   </div>
 
-                  <span className="font-mono text-base font-black text-white px-2 py-0.5 rounded bg-slate-950 border border-slate-800 shrink-0">
-                    {m.home_score}
-                  </span>
-                </div>
+                  {/* Away Team */}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2.5 overflow-hidden">
+                      {m.away_team_logo ? (
+                        <img 
+                          src={m.away_team_logo} 
+                          alt={m.away_team} 
+                          className="w-6 h-6 object-contain shrink-0 rounded bg-slate-950 p-0.5"
+                          onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }}
+                        />
+                      ) : (
+                        <div className="w-6 h-6 rounded bg-slate-800 flex items-center justify-center text-[10px] font-bold text-slate-400 shrink-0">
+                          {m.away_team.substring(0, 2).toUpperCase()}
+                        </div>
+                      )}
+                      <span className={`font-bold text-xs truncate ${isShababAway ? 'text-amber-400' : 'text-slate-200'}`}>
+                        {m.away_team}
+                      </span>
+                    </div>
 
-                {/* Away Team */}
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2.5 overflow-hidden">
-                    {m.away_team_logo ? (
-                      <img 
-                        src={m.away_team_logo} 
-                        alt={m.away_team} 
-                        className="w-6 h-6 object-contain shrink-0 rounded bg-slate-950 p-0.5"
-                        onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }}
-                      />
-                    ) : (
-                      <div className="w-6 h-6 rounded bg-slate-800 flex items-center justify-center text-[10px] font-bold text-slate-400 shrink-0">
-                        {m.away_team.substring(0, 2).toUpperCase()}
-                      </div>
-                    )}
-                    <span className={`font-bold text-xs truncate ${m.away_team.toLowerCase().includes('shabab al ordon') ? 'text-emerald-400' : 'text-slate-200'}`}>
-                      {m.away_team}
+                    <span className={`font-mono text-base font-black px-2.5 py-0.5 rounded-lg border shrink-0 ${
+                      m.status === 'Finalizado' 
+                        ? 'bg-slate-950 text-amber-400 border-amber-500/30' 
+                        : 'bg-slate-950 text-slate-500 border-slate-800'
+                    }`}>
+                      {m.status === 'Finalizado' ? m.away_score : '-'}
                     </span>
                   </div>
-
-                  <span className="font-mono text-base font-black text-white px-2 py-0.5 rounded bg-slate-950 border border-slate-800 shrink-0">
-                    {m.away_score}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Bottom Row */}
-            <div className="space-y-3 pt-3 border-t border-slate-800/60">
-              <div className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-1.5">
-                  <FileCode2 className="w-3.5 h-3.5 text-slate-400" />
-                  <span className="text-slate-300 font-semibold">{m.event_count} eventos</span>
-                </div>
-
-                <div className="flex items-center gap-1.5">
-                  {m.flashscore_url && (
-                    <a
-                      href={m.flashscore_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="p-1 rounded bg-sky-950/60 hover:bg-sky-900/80 text-sky-400 border border-sky-800/60 transition-colors"
-                      title="Ver en Flashscore"
-                    >
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
-                  )}
-
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
-                    m.import_status === 'XML Importado'
-                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                      : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
-                  }`}>
-                    {m.import_status}
-                  </span>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 pt-1">
-                <Link
-                  href={`/partidos/${m.id}`}
-                  className="flex-1 py-2 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 text-center transition-colors flex items-center justify-center gap-1"
-                >
-                  <span>Ver Detalle & Eventos</span>
-                  <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
-                </Link>
+              {/* Bottom Row */}
+              <div className="space-y-3 pt-3 border-t border-slate-800/60">
+                <div className="flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-1.5">
+                    <FileCode2 className="w-3.5 h-3.5 text-slate-400" />
+                    <span className="text-slate-300 font-semibold">{m.event_count} eventos</span>
+                  </div>
 
-                {m.import_status !== 'XML Importado' && (
+                  <div className="flex items-center gap-1.5">
+                    {m.flashscore_url && (
+                      <a
+                        href={m.flashscore_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="p-1.5 rounded-lg bg-sky-950/60 hover:bg-sky-900/80 text-sky-400 border border-sky-800/60 transition-colors"
+                        title="Ver resultado en Flashscore"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </a>
+                    )}
+
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                      m.status === 'Finalizado'
+                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                        : 'bg-slate-800 text-slate-400 border-slate-700'
+                    }`}>
+                      {m.status === 'Finalizado' ? `Finalizado (${m.home_score}-${m.away_score})` : 'Programado'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 pt-1">
                   <Link
-                    href={`/importar-xml?match_id=${m.id}`}
-                    className="p-2 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 transition-colors"
-                    title="Importar XML para este partido"
+                    href={`/partidos/${m.id}`}
+                    className="flex-1 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 text-center transition-colors flex items-center justify-center gap-1"
                   >
-                    <UploadCloud className="w-4 h-4" />
+                    <span>Ver Detalle & Eventos</span>
+                    <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
                   </Link>
-                )}
+
+                  {m.import_status !== 'XML Importado' && (
+                    <Link
+                      href={`/importar-xml?match_id=${m.id}`}
+                      className="p-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 transition-colors"
+                      title="Importar XML para este partido"
+                    >
+                      <UploadCloud className="w-4 h-4" />
+                    </Link>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

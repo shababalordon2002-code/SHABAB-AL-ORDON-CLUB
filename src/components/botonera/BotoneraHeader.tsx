@@ -157,8 +157,8 @@ export const BotoneraHeader: React.FC<BotoneraHeaderProps> = ({
               <h2 className="font-extrabold text-slate-100 text-sm tracking-wide">
                 BOTONERA DE REGISTRO EN DIRECTO
               </h2>
-              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                LongoMatch Engine
+              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                Live Analytics Engine
               </span>
             </div>
             <p className="text-xs text-slate-400">

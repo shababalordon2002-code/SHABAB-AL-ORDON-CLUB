@@ -1,0 +1,133 @@
+'use client';
+
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import { User } from '@supabase/supabase-js';
+import { createClient } from '@/lib/supabase/client';
+import { UserProfile } from '@/types/auth';
+
+interface AuthContextType {
+  user: User | null;
+  profile: UserProfile | null;
+  loading: boolean;
+  isAdmin: boolean;
+  signOut: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
+}
+
+const AuthContext = createContext<AuthContextType>({
+  user: null,
+  profile: null,
+  loading: true,
+  isAdmin: false,
+  signOut: async () => {},
+  refreshProfile: async () => {},
+});
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const supabase = createClient();
+
+  const fetchProfile = async (currentUser: User) => {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', currentUser.id)
+        .single();
+
+      if (error || !data) {
+        // Fallback profile if profiles table is missing or row not created yet
+        const fallbackProfile: UserProfile = {
+          id: currentUser.id,
+          email: currentUser.email || '',
+          full_name: (currentUser.user_metadata?.full_name as string) || currentUser.email?.split('@')[0] || 'Usuario',
+          role: (currentUser.user_metadata?.role as any) || 'user',
+          created_at: currentUser.created_at || new Date().toISOString(),
+        };
+        setProfile(fallbackProfile);
+      } else {
+        setProfile(data as UserProfile);
+      }
+    } catch {
+      // Fallback profile on any network/Supabase exception
+      const fallbackProfile: UserProfile = {
+        id: currentUser.id,
+        email: currentUser.email || '',
+        full_name: (currentUser.user_metadata?.full_name as string) || currentUser.email?.split('@')[0] || 'Usuario',
+        role: (currentUser.user_metadata?.role as any) || 'user',
+        created_at: currentUser.created_at || new Date().toISOString(),
+      };
+      setProfile(fallbackProfile);
+    }
+  };
+
+  useEffect(() => {
+    const initializeAuth = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const currentUser = session?.user ?? null;
+        setUser(currentUser);
+
+        if (currentUser) {
+          await fetchProfile(currentUser);
+        }
+      } catch {
+        // Quiet initialization failure handling
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    initializeAuth();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      const currentUser = session?.user ?? null;
+      setUser(currentUser);
+
+      if (currentUser) {
+        await fetchProfile(currentUser);
+      } else {
+        setProfile(null);
+      }
+      setLoading(false);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  const signOut = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+    setProfile(null);
+    window.location.href = '/login';
+  };
+
+  const refreshProfile = async () => {
+    if (user) {
+      await fetchProfile(user);
+    }
+  };
+
+  const isAdmin = profile?.role === 'admin';
+
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        profile,
+        loading,
+        isAdmin,
+        signOut,
+        refreshProfile,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
+}
+
+export const useAuth = () => useContext(AuthContext);

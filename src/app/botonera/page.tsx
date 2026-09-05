@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { dbStore, SEED_BOTONERA_TEMPLATES } from '@/lib/store/db-store';
+import { getBotoneraTemplatesFromSupabase } from '@/lib/services/botonera-service';
 import { Match, Player, NormalizedEvent, BotoneraTemplate, BotoneraButton, BotoneraProjectVideoType } from '@/types';
 import { setRecordingLocked } from '@/lib/recording-lock';
 
@@ -13,7 +14,7 @@ import { BotoneraEventLog } from '@/components/botonera/BotoneraEventLog';
 import { BotoneraSetupWizard } from '@/components/botonera/BotoneraSetupWizard';
 import { BotoneraVideoPlayer, toEmbedUrl } from '@/components/botonera/BotoneraVideoPlayer';
 import { BotoneraLiveStats } from '@/components/botonera/BotoneraLiveStats';
-import { BotoneraStopwatch } from '@/components/botonera/BotoneraStopwatch';
+import { BotoneraStopwatch, PERIOD_BASE_SECONDS } from '@/components/botonera/BotoneraStopwatch';
 import { BotoneraEventModal } from '@/components/botonera/BotoneraEventModal';
 import { Compass, Flame, Sliders, PlayCircle, Trophy, CheckCircle2, FileCode2, Save, Radio, Pencil, Ban, X, Home } from 'lucide-react';
 
@@ -66,6 +67,96 @@ export default function BotoneraPage() {
   // Last known currentTime (seconds) of the YouTube player, updated via postMessage listener.
   // Used to capture the video position when PLAY is pressed on the stopwatch.
   const youtubeCurrentTimeRef = useRef<number>(0);
+  // Same elements kept in state so the sync effects re-run when the player mounts/unmounts
+  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
+  const [iframeEl, setIframeEl] = useState<HTMLIFrameElement | null>(null);
+  // True once the YouTube player has answered the 'listening' handshake with real
+  // playback telemetry. Until then the chrono keeps its own clock as a fallback.
+  const [hasYouTubeSignal, setHasYouTubeSignal] = useState(false);
+  const hasYouTubeSignalRef = useRef(false);
+
+  // --- Chrono ↔ Video coupling ---------------------------------------------
+  // Once the current period has its start captured, the chrono stops running on its
+  // own clock and becomes a projection of the video playhead:
+  //   matchTime = (videoTime - periodVideoOffsets[period]) + PERIOD_BASE_SECONDS[period]
+  // so pausing, rewinding or forwarding the video moves the chrono with it.
+  const periodBase = PERIOD_BASE_SECONDS[period] ?? 0;
+  const hasVideoSync = period in periodVideoOffsets;
+  // videoEl also points at the pop-out window's <video> while the video is on a
+  // second monitor, so the coupling survives "Sacar Ventana".
+  const isVideoDriven = hasVideoSync && (!!videoEl || (!!iframeEl && hasYouTubeSignal));
+
+  // YouTube IFrame Player API instance (null for local video / until it is ready)
+  const ytPlayerRef = useRef<any>(null);
+
+  const matchTimeFromVideoTime = (videoTime: number): number | null => {
+    const offset = periodVideoOffsets[period];
+    if (offset === undefined) return null;
+    return Math.max(0, Math.floor(videoTime - offset + periodBase));
+  };
+
+  const videoTimeFromMatchTime = (matchSeconds: number): number | null => {
+    const offset = periodVideoOffsets[period];
+    if (offset === undefined) return null;
+    return Math.max(0, offset + (matchSeconds - periodBase));
+  };
+
+  /** Live playhead of the attached player (local exact, YouTube via postMessage telemetry). */
+  const getCurrentVideoTime = (): number => {
+    if (videoElementRef.current) return videoElementRef.current.currentTime;
+    const time = ytPlayerRef.current?.getCurrentTime?.();
+    if (typeof time === 'number' && !Number.isNaN(time)) return time;
+    return youtubeCurrentTimeRef.current;
+  };
+
+  /** True/false if we can read the player, null when there is no player attached. */
+  const getVideoIsPlaying = (): boolean | null => {
+    if (videoElementRef.current) return !videoElementRef.current.paused;
+    const state = ytPlayerRef.current?.getPlayerState?.();
+    if (typeof state === 'number') return state === 1; // 1 = PLAYING
+    return null;
+  };
+
+  /** Moves the attached player (local <video> or YouTube iframe) to a video time. */
+  const seekVideoTo = (videoTime: number, alsoPlay = false) => {
+    if (videoElementRef.current) {
+      videoElementRef.current.currentTime = videoTime;
+      if (alsoPlay && videoElementRef.current.paused) videoElementRef.current.play().catch(() => {});
+    } else if (ytPlayerRef.current?.seekTo) {
+      ytPlayerRef.current.seekTo(videoTime, true);
+      if (alsoPlay) ytPlayerRef.current.playVideo?.();
+    } else if (iframeElementRef.current?.contentWindow) {
+      const win = iframeElementRef.current.contentWindow;
+      win.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [videoTime, true] }), '*');
+      if (alsoPlay) win.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
+    }
+  };
+
+  /** Starts/stops the attached player without touching the chrono state. */
+  const setVideoPlaying = (playing: boolean) => {
+    if (videoElementRef.current) {
+      if (playing) videoElementRef.current.play().catch(() => {});
+      else videoElementRef.current.pause();
+    } else if (ytPlayerRef.current?.playVideo) {
+      if (playing) ytPlayerRef.current.playVideo();
+      else ytPlayerRef.current.pauseVideo?.();
+    } else if (iframeElementRef.current?.contentWindow) {
+      iframeElementRef.current.contentWindow.postMessage(
+        JSON.stringify({ event: 'command', func: playing ? 'playVideo' : 'pauseVideo', args: [] }),
+        '*'
+      );
+    }
+  };
+
+  // Mirrors of the coupling state, read by the (globally registered) YouTube message listener
+  const videoDrivenRef = useRef(false);
+  const periodOffsetRef = useRef<number | null>(null);
+  const periodBaseRef = useRef(0);
+  useEffect(() => {
+    videoDrivenRef.current = isVideoDriven;
+    periodOffsetRef.current = periodVideoOffsets[period] ?? null;
+    periodBaseRef.current = periodBase;
+  }, [isVideoDriven, periodVideoOffsets, period, periodBase]);
 
   // Load Initial Data & Restore Active Tagging Session from dbStore
   useEffect(() => {
@@ -122,10 +213,12 @@ export default function BotoneraPage() {
     return () => setRecordingLocked(false);
   }, [pageMode, isSessionConfigured]);
 
-  // Background Timer Tick Interval Engine
+  // Background Timer Tick Interval Engine.
+  // Only used while the chrono is NOT slaved to the video (no sync captured yet,
+  // video popped out, or no video at all) — otherwise the video playhead drives it.
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null;
-    if (isTimerRunning) {
+    if (isTimerRunning && !isVideoDriven) {
       interval = setInterval(() => {
         setTimerSeconds((prev) => prev + 1);
       }, 1000);
@@ -135,7 +228,115 @@ export default function BotoneraPage() {
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isTimerRunning]);
+  }, [isTimerRunning, isVideoDriven]);
+
+  // Local <video>: the chrono follows play / pause / seek / rate of the player.
+  useEffect(() => {
+    if (!isVideoDriven || !videoEl) return;
+
+    const syncFromVideo = () => {
+      const matchTime = matchTimeFromVideoTime(videoEl.currentTime);
+      if (matchTime !== null) setTimerSeconds(matchTime);
+    };
+    const handlePlay = () => { syncFromVideo(); setIsTimerRunning(true); };
+    const handlePause = () => { syncFromVideo(); setIsTimerRunning(false); };
+
+    videoEl.addEventListener('timeupdate', syncFromVideo);
+    videoEl.addEventListener('seeking', syncFromVideo);
+    videoEl.addEventListener('seeked', syncFromVideo);
+    videoEl.addEventListener('play', handlePlay);
+    videoEl.addEventListener('playing', handlePlay);
+    videoEl.addEventListener('pause', handlePause);
+    videoEl.addEventListener('ended', handlePause);
+
+    // Align immediately with whatever the player is doing right now
+    syncFromVideo();
+    setIsTimerRunning(!videoEl.paused);
+
+    return () => {
+      videoEl.removeEventListener('timeupdate', syncFromVideo);
+      videoEl.removeEventListener('seeking', syncFromVideo);
+      videoEl.removeEventListener('seeked', syncFromVideo);
+      videoEl.removeEventListener('play', handlePlay);
+      videoEl.removeEventListener('playing', handlePlay);
+      videoEl.removeEventListener('pause', handlePause);
+      videoEl.removeEventListener('ended', handlePause);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isVideoDriven, videoEl, period, periodVideoOffsets, periodBase]);
+
+  // YouTube: el crono sigue al reproductor vía IFrame Player API.
+  // El handshake por postMessage a pelo se pierde si el iframe aún no está listo
+  // (y entonces el crono deja de seguir al vídeo sin avisar); la API oficial da
+  // eventos fiables de play/pause/seek y getCurrentTime().
+  useEffect(() => {
+    if (videoType !== 'link' || !iframeEl) return;
+
+    let cancelled = false;
+    let poll: ReturnType<typeof setInterval> | null = null;
+
+    const readTime = () => {
+      const time = ytPlayerRef.current?.getCurrentTime?.();
+      if (typeof time !== 'number' || Number.isNaN(time)) return;
+      youtubeCurrentTimeRef.current = time;
+      if (videoDrivenRef.current && periodOffsetRef.current !== null) {
+        setTimerSeconds(
+          Math.max(0, Math.floor(time - periodOffsetRef.current + periodBaseRef.current))
+        );
+      }
+    };
+
+    const attachPlayer = () => {
+      const YT = (window as any).YT;
+      if (cancelled || !YT?.Player || ytPlayerRef.current) return;
+
+      ytPlayerRef.current = new YT.Player(iframeEl, {
+        events: {
+          onReady: () => {
+            if (cancelled) return;
+            hasYouTubeSignalRef.current = true;
+            setHasYouTubeSignal(true);
+            readTime();
+          },
+          onStateChange: (event: any) => {
+            if (cancelled) return;
+            readTime();
+            // Sin el inicio de la parte marcado el crono es manual: buscar el
+            // saque inicial moviendo el vídeo no debe arrancarlo.
+            if (!videoDrivenRef.current) return;
+            // 1 = PLAYING, 2 = PAUSED, 0 = ENDED
+            if (event.data === 1) setIsTimerRunning(true);
+            else if (event.data === 2 || event.data === 0) setIsTimerRunning(false);
+          },
+        },
+      });
+
+      poll = setInterval(readTime, 250);
+    };
+
+    if ((window as any).YT?.Player) {
+      attachPlayer();
+    } else {
+      const previousCallback = (window as any).onYouTubeIframeAPIReady;
+      (window as any).onYouTubeIframeAPIReady = () => {
+        previousCallback?.();
+        attachPlayer();
+      };
+      if (!document.getElementById('youtube-iframe-api')) {
+        const tag = document.createElement('script');
+        tag.id = 'youtube-iframe-api';
+        tag.src = 'https://www.youtube.com/iframe_api';
+        document.body.appendChild(tag);
+      }
+    }
+
+    return () => {
+      cancelled = true;
+      if (poll) clearInterval(poll);
+      // No llamamos a player.destroy(): eliminaría el <iframe> que React controla.
+      ytPlayerRef.current = null;
+    };
+  }, [videoType, iframeEl]);
 
   // Sync Active Tagging Session State to LocalStorage / dbStore
   useEffect(() => {
@@ -216,9 +417,26 @@ export default function BotoneraPage() {
       try {
         const data = typeof event.data === 'string' ? JSON.parse(event.data) : null;
         if (!data) return;
-        // YouTube infoDelivery: carries currentTime
+        // YouTube infoDelivery: carries currentTime and playerState
         if (data.event === 'infoDelivery' && typeof data.info?.currentTime === 'number') {
           youtubeCurrentTimeRef.current = data.info.currentTime;
+          if (!hasYouTubeSignalRef.current) {
+            hasYouTubeSignalRef.current = true;
+            setHasYouTubeSignal(true);
+          }
+
+          // While the chrono is slaved to the video, project the playhead onto match time
+          if (videoDrivenRef.current && periodOffsetRef.current !== null) {
+            setTimerSeconds(
+              Math.max(0, Math.floor(data.info.currentTime - periodOffsetRef.current + periodBaseRef.current))
+            );
+          }
+        }
+        // Player state: 1 = playing, 2 = paused, 0 = ended
+        if (data.event === 'infoDelivery' && typeof data.info?.playerState === 'number' && videoDrivenRef.current) {
+          const state = data.info.playerState;
+          if (state === 1) setIsTimerRunning(true);
+          else if (state === 2 || state === 0) setIsTimerRunning(false);
         }
         // Also handle the onReady event to start listening
         if (data.event === 'onReady' || data.info === 1 /* playing */) {
@@ -237,15 +455,20 @@ export default function BotoneraPage() {
   }, []);
 
   // When the iframe ref is first set, tell YouTube to start broadcasting infoDelivery messages
-  const handleIframeRef = (el: HTMLIFrameElement | null) => {
+  const handleIframeRef = useCallback((el: HTMLIFrameElement | null) => {
     iframeElementRef.current = el;
+    setIframeEl(el);
+    if (!el) {
+      hasYouTubeSignalRef.current = false;
+      setHasYouTubeSignal(false);
+    }
     if (el?.contentWindow) {
       // Small delay to let the iframe finish its initial handshake
       setTimeout(() => {
         el.contentWindow?.postMessage(JSON.stringify({ event: 'listening' }), '*');
       }, 500);
     }
-  };
+  }, []);
 
   const formatTime = (totalSec: number) => {
     const mins = Math.floor(totalSec / 60);
@@ -253,18 +476,72 @@ export default function BotoneraPage() {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const [isEditVideoModalOpen, setIsEditVideoModalOpen] = useState(false);
+  const [editVideoType, setEditVideoType] = useState<BotoneraProjectVideoType>('link');
+  const [editVideoUrl, setEditVideoUrl] = useState('');
+  const [editVideoFile, setEditVideoFile] = useState<File | null>(null);
+
   const handleSelectMatch = (matchId: string) => {
     setSelectedMatchId(matchId);
     if (matchId !== 'free_session') {
       const matchEvents = dbStore.getNormalizedEvents(matchId);
       setEvents(matchEvents);
+
+      const targetMatch = dbStore.getMatchById(matchId);
+      if (targetMatch) {
+        if (targetMatch.video_type) setVideoType(targetMatch.video_type);
+        if (targetMatch.video_url) setVideoUrl(targetMatch.video_url);
+        if (targetMatch.video_source_name) setVideoSourceName(targetMatch.video_source_name);
+
+        const offsets: Record<number, number> = {};
+        if (targetMatch.p1_video_start_time != null) offsets[1] = targetMatch.p1_video_start_time;
+        if (targetMatch.p2_video_start_time != null) offsets[2] = targetMatch.p2_video_start_time;
+        setPeriodVideoOffsets(offsets);
+
+        if (targetMatch.botonera_template_id) {
+          const t = dbStore.getBotoneraTemplates().find((x) => x.id === targetMatch.botonera_template_id);
+          if (t) setTemplate(t);
+        }
+
+        if (targetMatch.video_type || targetMatch.p1_video_start_time != null || matchEvents.length > 0) {
+          setIsSessionConfigured(true);
+        }
+      }
     } else {
       setEvents([]);
     }
   };
 
+  const handleVideoRef = useCallback((el: HTMLVideoElement | null) => {
+    videoElementRef.current = el;
+    setVideoEl(el);
+  }, []);
+
+  /**
+   * PLAY / PAUSE of the chrono also drives the video transport, so both always
+   * move together. When the chrono is video-driven the player's own play/pause
+   * events are the source of truth and will confirm (or correct) this state.
+   */
   const handleToggleTimer = () => {
-    setIsTimerRunning(!isTimerRunning);
+    const videoIsPlaying = getVideoIsPlaying();
+    // Con el crono ligado al vídeo manda el estado REAL del reproductor, para que
+    // el botón nunca quede invertido respecto a lo que se ve en pantalla.
+    const willRun = isVideoDriven && videoIsPlaying !== null ? !videoIsPlaying : !isTimerRunning;
+    setVideoPlaying(willRun);
+    setIsTimerRunning(willRun);
+  };
+
+  /**
+   * Manual chrono changes (-10s / +10s / editing mm:ss) move the video too when
+   * the current period is synced, so the video never drifts from the chrono.
+   */
+  const handleTimerChange = (seconds: number, seekVideo = true) => {
+    const target = Math.max(0, seconds);
+    if (seekVideo && isVideoDriven) {
+      const videoTime = videoTimeFromMatchTime(target);
+      if (videoTime !== null) seekVideoTo(videoTime);
+    }
+    setTimerSeconds(target);
   };
 
   const handleResetTimer = () => {
@@ -274,12 +551,58 @@ export default function BotoneraPage() {
     dbStore.clearActiveBotoneraSession();
   };
 
+  const handleUpdatePeriodOffset = (p: number, newTimeSec: number) => {
+    const updatedOffsets = { ...periodVideoOffsets, [p]: newTimeSec };
+    setPeriodVideoOffsets(updatedOffsets);
+
+    // Editing the start of the period being tagged re-bases the chrono right away
+    if (p === period && !isVideoPoppedOut && (videoEl || iframeEl)) {
+      const base = PERIOD_BASE_SECONDS[p] ?? 0;
+      setTimerSeconds(Math.max(0, Math.floor(getCurrentVideoTime() - newTimeSec + base)));
+    }
+
+    if (selectedMatchId && selectedMatchId !== 'free_session') {
+      const m = dbStore.getMatchById(selectedMatchId);
+      if (m) {
+        dbStore.saveMatch({
+          ...m,
+          p1_video_start_time: updatedOffsets[1] ?? m.p1_video_start_time,
+          p2_video_start_time: updatedOffsets[2] ?? m.p2_video_start_time,
+          video_type: videoType || m.video_type,
+          video_url: videoUrl || m.video_url,
+          video_source_name: videoSourceName || m.video_source_name,
+          botonera_template_id: template?.id || m.botonera_template_id,
+        });
+      }
+    }
+  };
+
+  /** Removes a period start marker (chrono falls back to its own clock for that period). */
+  const handleClearPeriodOffset = (p: number) => {
+    const updatedOffsets = { ...periodVideoOffsets };
+    delete updatedOffsets[p];
+    setPeriodVideoOffsets(updatedOffsets);
+
+    if (selectedMatchId && selectedMatchId !== 'free_session') {
+      const m = dbStore.getMatchById(selectedMatchId);
+      if (m) {
+        dbStore.saveMatch({
+          ...m,
+          p1_video_start_time: updatedOffsets[1] ?? null,
+          p2_video_start_time: updatedOffsets[2] ?? null,
+        });
+      }
+    }
+  };
+
+  /** "Marcar aquí": uses the live playhead as the start of a period. */
+  const handleCapturePeriodOffset = (p: number) => {
+    handleUpdatePeriodOffset(p, getCurrentVideoTime());
+  };
+
   /**
    * Called by BotoneraStopwatch when the user presses PLAY (not pause).
    * Records the video's currentTime as the start offset for the current period.
-   * - Local HTML5 video: reads currentTime directly from the <video> element.
-   * - YouTube iframe: reads the last known time from youtubeCurrentTimeRef
-   *   (kept up-to-date by the window 'message' listener above).
    * Only records ONCE per period — pausing and resuming does NOT overwrite the offset.
    */
   const handleTimerStarted = () => {
@@ -287,8 +610,63 @@ export default function BotoneraPage() {
       const videoTime =
         videoElementRef.current?.currentTime   // local video: exact
         ?? youtubeCurrentTimeRef.current;      // YouTube: last postMessage update
-      setPeriodVideoOffsets((prev) => ({ ...prev, [period]: videoTime }));
+
+      const updatedOffsets = { ...periodVideoOffsets, [period]: videoTime };
+      setPeriodVideoOffsets(updatedOffsets);
+
+      if (selectedMatchId && selectedMatchId !== 'free_session') {
+        const m = dbStore.getMatchById(selectedMatchId);
+        if (m) {
+          dbStore.saveMatch({
+            ...m,
+            p1_video_start_time: updatedOffsets[1] ?? m.p1_video_start_time,
+            p2_video_start_time: updatedOffsets[2] ?? m.p2_video_start_time,
+            video_type: videoType || m.video_type,
+            video_url: videoUrl || m.video_url,
+            video_source_name: videoSourceName || m.video_source_name,
+            botonera_template_id: template?.id || m.botonera_template_id,
+          });
+        }
+      }
     }
+  };
+
+  const handleOpenEditVideoModal = () => {
+    setEditVideoType(videoType || 'link');
+    setEditVideoUrl(videoUrl || '');
+    setEditVideoFile(null);
+    setIsEditVideoModalOpen(true);
+  };
+
+  const handleSaveVideoSettings = (e: React.FormEvent) => {
+    e.preventDefault();
+    setVideoType(editVideoType);
+    if (editVideoType === 'link') {
+      setVideoUrl(editVideoUrl);
+      setVideoSourceName(null);
+      setVideoFile(null);
+    } else if (editVideoType === 'local' && editVideoFile) {
+      setVideoFile(editVideoFile);
+      setVideoSourceName(editVideoFile.name);
+      setVideoUrl(null);
+    }
+
+    if (selectedMatchId && selectedMatchId !== 'free_session') {
+      const m = dbStore.getMatchById(selectedMatchId);
+      if (m) {
+        dbStore.saveMatch({
+          ...m,
+          video_type: editVideoType,
+          video_url: editVideoType === 'link' ? editVideoUrl : m.video_url,
+          video_source_name: editVideoType === 'local' && editVideoFile ? editVideoFile.name : m.video_source_name,
+          p1_video_start_time: periodVideoOffsets[1] ?? m.p1_video_start_time,
+          p2_video_start_time: periodVideoOffsets[2] ?? m.p2_video_start_time,
+          botonera_template_id: template?.id || m.botonera_template_id,
+        });
+      }
+    }
+
+    setIsEditVideoModalOpen(false);
   };
 
   /**
@@ -300,7 +678,8 @@ export default function BotoneraPage() {
     const evtPeriod = evt.period ?? 1;
     const offset = periodVideoOffsets[evtPeriod] ?? 0;
     const matchTimestamp = evt.timestamp ?? 0;
-    const targetVideoTime = Math.max(0, offset + matchTimestamp - 12);
+    const evtBase = PERIOD_BASE_SECONDS[evtPeriod] ?? 0;
+    const targetVideoTime = Math.max(0, offset + (matchTimestamp - evtBase) - 12);
 
     if (videoType === 'local' && videoElementRef.current?.src) {
       const src = videoElementRef.current.src;
@@ -345,20 +724,9 @@ export default function BotoneraPage() {
    * Used by the "Ir al vídeo" button in the stopwatch.
    */
   const handleSeekVideoToNow = () => {
-    const offset = periodVideoOffsets[period];
-    if (offset === undefined) return;
-    const targetVideoTime = Math.max(0, offset + timerSeconds);
-
-    if (videoElementRef.current) {
-      videoElementRef.current.currentTime = targetVideoTime;
-      if (videoElementRef.current.paused) {
-        videoElementRef.current.play().catch(() => {});
-      }
-    } else if (iframeElementRef.current?.contentWindow) {
-      const win = iframeElementRef.current.contentWindow;
-      win.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [targetVideoTime, true] }), '*');
-      win.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
-    }
+    const targetVideoTime = videoTimeFromMatchTime(timerSeconds);
+    if (targetVideoTime === null) return;
+    seekVideoTo(targetVideoTime, true);
   };
 
   const handleAddPlayer = (newPlayer: Player) => {
@@ -368,28 +736,32 @@ export default function BotoneraPage() {
 
   // Event Trigger Callback when analyst clicks a category button
   const handleTriggerEvent = (btn: BotoneraButton, activeDescriptors: string[]) => {
-    const hasDescriptors = btn.descriptors && btn.descriptors.length > 0;
+    const hasFlatDescriptors = btn.descriptors && btn.descriptors.length > 0;
+    const hasGroupDescriptors = btn.descriptorGroups && btn.descriptorGroups.length > 0;
+    const hasDescriptors = hasFlatDescriptors || hasGroupDescriptors;
     const hasPitch = btn.pitchRequired && btn.pitchRequired !== 'none';
+    const hasPlayerRequirement = btn.playerRequiredMode && btn.playerRequiredMode !== 'none';
 
-    if (hasDescriptors || hasPitch) {
+    if (hasDescriptors || hasPitch || hasPlayerRequirement) {
       setEventModalData({ button: btn, activeDescriptors });
     } else {
       commitEvent(btn, activeDescriptors);
     }
   };
 
-  const commitEvent = (btn: BotoneraButton, descriptorsToSave: string[], pitchData?: any) => {
-    const selectedPlayer = players.find((p) => p.id === selectedPlayerId);
+  const commitEvent = (btn: BotoneraButton, descriptorsToSave: string[], pitchData?: any, overridePlayerId?: string | null) => {
+    const targetPlayerId = overridePlayerId !== undefined ? overridePlayerId : selectedPlayerId;
+    const activePlayer = players.find((p) => p.id === targetPlayerId);
     let outcomeVal = descriptorsToSave.find((d) => ['Éxito', 'Fallido', 'Gol', 'A puerta', 'Fuera'].includes(d)) || null;
 
     const newEvt: NormalizedEvent = {
       event_id: `evt_tag_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
       source_event_id: `src_${Date.now()}`,
       match_id: selectedMatchId === 'free_session' ? 'free_session' : selectedMatchId,
-      team_id: selectedPlayer ? selectedPlayer.team_id : 'team_shabab_al_ordon',
-      team_name: selectedPlayer ? selectedPlayer.team_name : 'Shabab Al Ordon Club',
-      player_id: selectedPlayer ? selectedPlayer.id : null,
-      player_name: selectedPlayer ? selectedPlayer.name : 'Jugador Sin Asignar',
+      team_id: activePlayer ? activePlayer.team_id : 'team_shabab_al_ordon',
+      team_name: activePlayer ? activePlayer.team_name : 'Shabab Al Ordon Club',
+      player_id: activePlayer ? activePlayer.id : null,
+      player_name: activePlayer ? activePlayer.name : 'Jugador Sin Asignar',
       event_type: btn.name,
       category: btn.category || btn.name,
       subcategory: descriptorsToSave.join(', ') || null,
@@ -408,6 +780,9 @@ export default function BotoneraPage() {
         lagTime: btn.lagTime,
         descriptors: descriptorsToSave,
         zone: pitchData?.selectedZone ?? null,
+        buttonId: btn.id,
+        buttonName: btn.name,
+        buttonColor: btn.color,
       },
       source: 'longomatch',
       created_at: new Date().toISOString(),
@@ -667,16 +1042,16 @@ export default function BotoneraPage() {
                   videoSourceName={videoSourceName}
                   isPoppedOut={false}
                   onTogglePopOut={(popped) => setIsVideoPoppedOut(popped)}
-                  onVideoRef={(el) => { videoElementRef.current = el; }}
+                  onVideoRef={handleVideoRef}
                   onIframeRef={handleIframeRef}
                   periodVideoOffsets={periodVideoOffsets}
-                  onClearPeriodOffset={(p) =>
-                    setPeriodVideoOffsets((prev) => {
-                      const next = { ...prev };
-                      delete next[p];
-                      return next;
-                    })
-                  }
+                  onClearPeriodOffset={handleClearPeriodOffset}
+                  onUpdatePeriodOffset={handleUpdatePeriodOffset}
+                  onEditVideoSettings={handleOpenEditVideoModal}
+                  currentPeriod={period}
+                  onCapturePeriodOffset={handleCapturePeriodOffset}
+                  onSeekVideoToTime={(t) => seekVideoTo(t)}
+                  getCurrentVideoTime={getCurrentVideoTime}
                 />
 
                 {/* Feed de Eventos — directamente debajo del vídeo */}
@@ -688,6 +1063,7 @@ export default function BotoneraPage() {
                   onExportXml={handleExportXml}
                   onExportJson={handleExportJson}
                   onSeekToEvent={handleSeekToEvent}
+                  buttons={template?.buttons || []}
                 />
               </div>
 
@@ -699,13 +1075,14 @@ export default function BotoneraPage() {
                   period={period}
                   onPeriodChange={setPeriod}
                   timerSeconds={timerSeconds}
-                  onTimerChange={setTimerSeconds}
+                  onTimerChange={handleTimerChange}
                   isTimerRunning={isTimerRunning}
                   onToggleTimer={handleToggleTimer}
                   onResetTimer={handleResetTimer}
                   onTimerStarted={handleTimerStarted}
                   onSeekVideoToNow={handleSeekVideoToNow}
-                  hasVideoSync={period in periodVideoOffsets}
+                  hasVideoSync={hasVideoSync}
+                  isVideoDriven={isVideoDriven}
                 />
 
                 {/* 2. Botonera — ocupa todo el ancho de la columna derecha */}
@@ -745,13 +1122,14 @@ export default function BotoneraPage() {
                   period={period}
                   onPeriodChange={setPeriod}
                   timerSeconds={timerSeconds}
-                  onTimerChange={setTimerSeconds}
+                  onTimerChange={handleTimerChange}
                   isTimerRunning={isTimerRunning}
                   onToggleTimer={handleToggleTimer}
                   onResetTimer={handleResetTimer}
                   onTimerStarted={handleTimerStarted}
                   onSeekVideoToNow={handleSeekVideoToNow}
-                  hasVideoSync={period in periodVideoOffsets}
+                  hasVideoSync={hasVideoSync}
+                  isVideoDriven={isVideoDriven}
                 />
 
                 {/* Banner informativo si el vídeo está en ventana aparte */}
@@ -805,6 +1183,7 @@ export default function BotoneraPage() {
                   onExportXml={handleExportXml}
                   onExportJson={handleExportJson}
                   onSeekToEvent={handleSeekToEvent}
+                  buttons={template?.buttons || []}
                 />
 
                 <BotoneraLiveStats events={events} />
@@ -826,7 +1205,7 @@ export default function BotoneraPage() {
             period={period}
             onPeriodChange={setPeriod}
             timerSeconds={timerSeconds}
-            onTimerChange={setTimerSeconds}
+            onTimerChange={handleTimerChange}
             isTimerRunning={isTimerRunning}
             onToggleTimer={handleToggleTimer}
             onResetTimer={handleResetTimer}
@@ -961,14 +1340,113 @@ export default function BotoneraPage() {
         </div>
       )}
 
-      {/* ----------------- EVENT TAGGING MODAL (DESCRIPTORS + PITCH) ----------------- */}
+      {/* ----------------- EVENT TAGGING MODAL (DESCRIPTORS + JUGADOR + PITCH) ----------------- */}
       {eventModalData && (
         <BotoneraEventModal
           button={eventModalData.button}
           initialGlobalDescriptors={eventModalData.activeDescriptors}
-          onSave={(finalDescriptors, pitchData) => commitEvent(eventModalData.button, finalDescriptors, pitchData)}
+          players={players}
+          selectedPlayerId={selectedPlayerId}
+          onSave={(finalDescriptors, pitchData, modalPlayerId) =>
+            commitEvent(eventModalData.button, finalDescriptors, pitchData, modalPlayerId)
+          }
           onCancel={() => setEventModalData(null)}
         />
+      )}
+
+      {/* ----------------- EDIT VIDEO SETTINGS MODAL ----------------- */}
+      {isEditVideoModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-md w-full shadow-2xl space-y-4 animate-fade-in">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+              <h3 className="font-bold text-slate-100 text-sm flex items-center gap-2">
+                <Pencil className="w-4 h-4 text-emerald-400" /> Editar Enlace / Vídeo de Partido
+              </h3>
+              <button onClick={() => setIsEditVideoModalOpen(false)} className="text-slate-400 hover:text-slate-200">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveVideoSettings} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 mb-1">Origen del Vídeo:</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditVideoType('link')}
+                    className={`p-2.5 rounded-xl border text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                      editVideoType === 'link'
+                        ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
+                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:bg-slate-900'
+                    }`}
+                  >
+                    <span>🔗 Enlace (YouTube)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditVideoType('local')}
+                    className={`p-2.5 rounded-xl border text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                      editVideoType === 'local'
+                        ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
+                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:bg-slate-900'
+                    }`}
+                  >
+                    <span>📁 Archivo Local</span>
+                  </button>
+                </div>
+              </div>
+
+              {editVideoType === 'link' ? (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1">URL de YouTube / Vídeo:</label>
+                  <input
+                    type="url"
+                    required
+                    placeholder="https://www.youtube.com/watch?v=..."
+                    value={editVideoUrl}
+                    onChange={(e) => setEditVideoUrl(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1">Seleccionar Archivo de Vídeo MP4/MKV:</label>
+                  <input
+                    type="file"
+                    accept="video/*"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files[0]) {
+                        setEditVideoFile(e.target.files[0]);
+                      }
+                    }}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-emerald-500"
+                  />
+                  {videoSourceName && (
+                    <p className="text-[10px] text-amber-400 mt-1 font-mono">
+                      Archivo cargado actualmente: {videoSourceName}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsEditVideoModalOpen(false)}
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 text-slate-300 text-xs font-semibold"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-slate-950 text-xs font-bold shadow cursor-pointer"
+                >
+                  Guardar Vídeo en Partido
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );
