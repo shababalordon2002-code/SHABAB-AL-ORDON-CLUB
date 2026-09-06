@@ -32,6 +32,7 @@ export default function BotoneraPage() {
   const [savedAnalyses, setSavedAnalyses] = useState<MatchAnalysis[]>([]);
   const [activeVisorAnalysis, setActiveVisorAnalysis] = useState<MatchAnalysis | null>(null);
   const [deleteConfirmAnalysis, setDeleteConfirmAnalysis] = useState<MatchAnalysis | null>(null);
+  const [editingAnalysisId, setEditingAnalysisId] = useState<string | null>(null);
 
   // Botonera Template State (Static initial state for SSR / Hydration safety)
   const [template, setTemplate] = useState<BotoneraTemplate>(SEED_BOTONERA_TEMPLATES[0]);
@@ -73,9 +74,37 @@ export default function BotoneraPage() {
   // Last known currentTime (seconds) of the YouTube player, updated via postMessage listener.
   // Used to capture the video position when PLAY is pressed on the stopwatch.
   const youtubeCurrentTimeRef = useRef<number>(0);
+  // Play/pausa conocido del reproductor de enlace, por si la API no lo da fiable
+  const youtubeIsPlayingRef = useRef<boolean>(false);
   // Same elements kept in state so the sync effects re-run when the player mounts/unmounts
   const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
   const [iframeEl, setIframeEl] = useState<HTMLIFrameElement | null>(null);
+
+  // Blob URL del vídeo local: lo crea la página, no el reproductor, porque la
+  // ventana emergente también lo usa y debe sobrevivir al desmontaje del <video>
+  // incrustado al cambiar de layout.
+  const [localObjectUrl, setLocalObjectUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (videoType === 'local' && videoFile) {
+      const url = URL.createObjectURL(videoFile);
+      setLocalObjectUrl(url);
+      return () => URL.revokeObjectURL(url);
+    }
+    setLocalObjectUrl(null);
+  }, [videoType, videoFile]);
+
+  // --- Vídeo en ventana externa ("Sacar Ventana") ---------------------------
+  // La ventana la abre y la vigila la página: el reproductor incrustado se
+  // desmonta al reordenarse el layout, así que no puede ser él quien recuerde
+  // por dónde iba el vídeo ni quien mantenga el crono atado a la reproducción.
+  const popoutWinRef = useRef<Window | null>(null);
+  const popoutMonitorRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const popoutIframeWinRef = useRef<Window | null>(null);
+  const popoutStateRef = useRef<{ time: number; playing: boolean }>({ time: 0, playing: false });
+  const popoutHasSignalRef = useRef(false);
+  const [popoutHasSignal, setPopoutHasSignal] = useState(false);
+  // Minuto (y estado) con el que el reproductor incrustado debe re-arrancar al volver
+  const [embeddedResume, setEmbeddedResume] = useState<{ at: number; play: boolean } | null>(null);
   // True once the YouTube player has answered the 'listening' handshake with real
   // playback telemetry. Until then the chrono keeps its own clock as a fallback.
   const [hasYouTubeSignal, setHasYouTubeSignal] = useState(false);
@@ -90,7 +119,9 @@ export default function BotoneraPage() {
   const hasVideoSync = Object.keys(periodVideoOffsets).length > 0;
   // videoEl also points at the pop-out window's <video> while the video is on a
   // second monitor, so the coupling survives "Sacar Ventana".
-  const isVideoDriven = hasVideoSync && (!!videoEl || (!!iframeEl && hasYouTubeSignal));
+  // La ventana externa cuenta como reproductor: con el vídeo en otro monitor el
+  // crono sigue proyectando su playhead.
+  const isVideoDriven = hasVideoSync && (!!videoEl || (!!iframeEl && hasYouTubeSignal) || popoutHasSignal);
 
   // YouTube IFrame Player API instance (null for local video / until it is ready)
   const ytPlayerRef = useRef<any>(null);
@@ -125,16 +156,33 @@ export default function BotoneraPage() {
   /** Live playhead of the attached player (local exact, YouTube via postMessage telemetry). */
   const getCurrentVideoTime = (): number => {
     if (videoElementRef.current) return videoElementRef.current.currentTime;
-    const time = ytPlayerRef.current?.getCurrentTime?.();
-    if (typeof time === 'number' && !Number.isNaN(time)) return time;
-    return youtubeCurrentTimeRef.current;
+    // Enlace sacado a otra ventana: el playhead lo reporta esa ventana.
+    if (popoutIframeWinRef.current) return popoutStateRef.current.time;
+    const apiTime = ytPlayerRef.current?.getCurrentTime?.();
+    const streamTime = youtubeCurrentTimeRef.current;
+    // Un 0 de la API mientras el flujo de mensajes reporta otro minuto significa
+    // que la API no está enganchada del todo: ese 0 abría la ventana emergente
+    // al principio del vídeo en vez de por donde iba.
+    if (typeof apiTime === 'number' && Number.isFinite(apiTime) && (apiTime > 0 || streamTime <= 0)) {
+      return apiTime;
+    }
+    // Último recurso: con el crono ligado al vídeo, el minutaje que se ve en pantalla
+    // ya es una proyección fiel del playhead, así que sirve para volver a él.
+    if (streamTime <= 0 && isVideoDriven) {
+      const fromChrono = videoTimeFromMatchTime(timerSeconds);
+      if (fromChrono !== null) return fromChrono;
+    }
+    return streamTime;
   };
 
   /** True/false if we can read the player, null when there is no player attached. */
   const getVideoIsPlaying = (): boolean | null => {
     if (videoElementRef.current) return !videoElementRef.current.paused;
+    if (popoutIframeWinRef.current) return popoutStateRef.current.playing;
     const state = ytPlayerRef.current?.getPlayerState?.();
-    if (typeof state === 'number') return state === 1; // 1 = PLAYING
+    // -1 (sin empezar) tras haber recibido telemetría real = API sin enganchar
+    if (typeof state === 'number' && state !== -1) return state === 1; // 1 = PLAYING
+    if (hasYouTubeSignalRef.current) return youtubeIsPlayingRef.current;
     return null;
   };
 
@@ -143,6 +191,10 @@ export default function BotoneraPage() {
     if (videoElementRef.current) {
       videoElementRef.current.currentTime = videoTime;
       if (alsoPlay && videoElementRef.current.paused) videoElementRef.current.play().catch(() => {});
+    } else if (popoutIframeWinRef.current) {
+      const win = popoutIframeWinRef.current;
+      win.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [videoTime, true] }), '*');
+      if (alsoPlay) win.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
     } else if (ytPlayerRef.current?.seekTo) {
       ytPlayerRef.current.seekTo(videoTime, true);
       if (alsoPlay) ytPlayerRef.current.playVideo?.();
@@ -158,6 +210,11 @@ export default function BotoneraPage() {
     if (videoElementRef.current) {
       if (playing) videoElementRef.current.play().catch(() => {});
       else videoElementRef.current.pause();
+    } else if (popoutIframeWinRef.current) {
+      popoutIframeWinRef.current.postMessage(
+        JSON.stringify({ event: 'command', func: playing ? 'playVideo' : 'pauseVideo', args: [] }),
+        '*'
+      );
     } else if (ytPlayerRef.current?.playVideo) {
       if (playing) ytPlayerRef.current.playVideo();
       else ytPlayerRef.current.pauseVideo?.();
@@ -178,6 +235,57 @@ export default function BotoneraPage() {
     periodRef.current = period;
     periodVideoOffsetsRef.current = periodVideoOffsets;
   }, [isVideoDriven, period, periodVideoOffsets]);
+
+  // Última lectura del playhead aceptada como buena, usada para detectar ruido.
+  const lastGoodVideoTimeRef = useRef(0);
+  const zeroSampleStreakRef = useRef(0);
+  // La API del iframe manda mientras dé lecturas creíbles; si se queda clavada
+  // en 0 (aún no está lista) conduce el stream de infoDelivery.
+  const isYouTubeApiHealthyRef = useRef(false);
+
+  /**
+   * Único punto que proyecta el playhead del vídeo sobre el crono de partido.
+   * Todas las fuentes (vídeo local, poll de la API de YouTube y mensajes
+   * infoDelivery) pasan por aquí para que no escriban dos minutajes distintos
+   * en el mismo segundo: eso hacía parpadear el crono entre 00:00 y el minuto real.
+   *
+   * `trusted` salta el filtro de ruido (playhead de un <video> local, exacto).
+   */
+  const applyVideoTime = useCallback((videoTime: number, trusted = false) => {
+    if (typeof videoTime !== 'number' || !Number.isFinite(videoTime) || videoTime < 0) return;
+
+    // Un 0 suelto con el vídeo ya avanzado es ruido del reproductor, no un salto
+    // al principio: solo se acepta si se repite en varias lecturas seguidas.
+    if (!trusted && videoTime < 0.05 && lastGoodVideoTimeRef.current > 1) {
+      zeroSampleStreakRef.current += 1;
+      if (zeroSampleStreakRef.current < 3) return;
+    } else {
+      zeroSampleStreakRef.current = 0;
+    }
+    lastGoodVideoTimeRef.current = videoTime;
+
+    const offsets = periodVideoOffsetsRef.current;
+    const currentP = periodRef.current;
+    let detectedP: number | null = null;
+
+    if (offsets[4] != null && videoTime >= offsets[4]) detectedP = 4;
+    else if (offsets[3] != null && videoTime >= offsets[3]) detectedP = 3;
+    else if (offsets[2] != null && videoTime >= offsets[2]) detectedP = 2;
+    else if (offsets[1] != null && videoTime >= offsets[1]) detectedP = 1;
+    else if (offsets[1] != null) detectedP = 1;
+
+    const activeP = detectedP ?? currentP;
+    if (detectedP !== null && detectedP !== currentP) {
+      periodRef.current = detectedP;
+      setPeriod(detectedP);
+    }
+
+    const offset = offsets[activeP];
+    if (offset === undefined) return;
+    const base = PERIOD_BASE_SECONDS[activeP] ?? 0;
+    const matchTime = Math.max(0, Math.floor(videoTime - offset + base));
+    setTimerSeconds((prev) => (prev === matchTime ? prev : matchTime));
+  }, []);
 
   // Load Initial Data & Restore Active Tagging Session from Supabase / dbStore
   useEffect(() => {
@@ -290,31 +398,8 @@ export default function BotoneraPage() {
   useEffect(() => {
     if (!isVideoDriven || !videoEl) return;
 
-    const syncFromVideo = () => {
-      const vTime = videoEl.currentTime;
-      const offsets = periodVideoOffsetsRef.current;
-      const currentP = periodRef.current;
-      let detectedP: number | null = null;
-
-      if (offsets[4] != null && vTime >= offsets[4]) detectedP = 4;
-      else if (offsets[3] != null && vTime >= offsets[3]) detectedP = 3;
-      else if (offsets[2] != null && vTime >= offsets[2]) detectedP = 2;
-      else if (offsets[1] != null && vTime >= offsets[1]) detectedP = 1;
-      else if (offsets[1] != null) detectedP = 1;
-
-      const activeP = detectedP ?? currentP;
-      if (detectedP !== null && detectedP !== currentP) {
-        periodRef.current = detectedP;
-        setPeriod(detectedP);
-      }
-
-      const offset = offsets[activeP];
-      const base = PERIOD_BASE_SECONDS[activeP] ?? 0;
-      if (offset !== undefined) {
-        const matchTime = Math.max(0, Math.floor(vTime - offset + base));
-        setTimerSeconds((prev) => (prev === matchTime ? prev : matchTime));
-      }
-    };
+    // El <video> local es fuente exacta: se aplica sin filtro de ruido.
+    const syncFromVideo = () => applyVideoTime(videoEl.currentTime, true);
     const handlePlay = () => { syncFromVideo(); setIsTimerRunning(true); };
     const handlePause = () => { syncFromVideo(); setIsTimerRunning(false); };
 
@@ -340,7 +425,7 @@ export default function BotoneraPage() {
       videoEl.removeEventListener('ended', handlePause);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isVideoDriven, videoEl]);
+  }, [isVideoDriven, videoEl, applyVideoTime]);
 
   // YouTube: el crono sigue al reproductor vía IFrame Player API.
   // El handshake por postMessage a pelo se pierde si el iframe aún no está listo
@@ -355,31 +440,18 @@ export default function BotoneraPage() {
     const readTime = () => {
       const time = ytPlayerRef.current?.getCurrentTime?.();
       if (typeof time !== 'number' || Number.isNaN(time)) return;
+      // Mientras el player no está del todo listo getCurrentTime() puede devolver
+      // 0 de forma persistente: ahí la fuente buena es el stream de infoDelivery.
+      const looksStuckAtZero =
+        time < 0.05 && (lastGoodVideoTimeRef.current > 1 || youtubeCurrentTimeRef.current > 1);
+      isYouTubeApiHealthyRef.current = !looksStuckAtZero;
+      // Sin esto el poll machacaba cuatro veces por segundo el último minuto bueno,
+      // y con él se iban "Marcar aquí", el saque inicial y la ventana emergente.
+      if (looksStuckAtZero) return;
       youtubeCurrentTimeRef.current = time;
-      if (videoDrivenRef.current) {
-        const offsets = periodVideoOffsetsRef.current;
-        const currentP = periodRef.current;
-        let detectedP: number | null = null;
-
-        if (offsets[4] != null && time >= offsets[4]) detectedP = 4;
-        else if (offsets[3] != null && time >= offsets[3]) detectedP = 3;
-        else if (offsets[2] != null && time >= offsets[2]) detectedP = 2;
-        else if (offsets[1] != null && time >= offsets[1]) detectedP = 1;
-        else if (offsets[1] != null) detectedP = 1;
-
-        const activeP = detectedP ?? currentP;
-        if (detectedP !== null && detectedP !== currentP) {
-          periodRef.current = detectedP;
-          setPeriod(detectedP);
-        }
-
-        const offset = offsets[activeP];
-        const base = PERIOD_BASE_SECONDS[activeP] ?? 0;
-        if (offset !== undefined) {
-          const calculatedSec = Math.max(0, Math.floor(time - offset + base));
-          setTimerSeconds((prev) => (prev === calculatedSec ? prev : calculatedSec));
-        }
-      }
+      const state = ytPlayerRef.current?.getPlayerState?.();
+      if (typeof state === 'number' && state !== -1) youtubeIsPlayingRef.current = state === 1;
+      if (videoDrivenRef.current) applyVideoTime(time);
     };
 
     const attachPlayer = () => {
@@ -431,8 +503,9 @@ export default function BotoneraPage() {
       if (poll) clearInterval(poll);
       // No llamamos a player.destroy(): eliminaría el <iframe> que React controla.
       ytPlayerRef.current = null;
+      isYouTubeApiHealthyRef.current = false;
     };
-  }, [videoType, iframeEl]);
+  }, [videoType, iframeEl, applyVideoTime]);
 
   // Sync Active Tagging Session State to LocalStorage / dbStore / Supabase
   useEffect(() => {
@@ -516,7 +589,9 @@ export default function BotoneraPage() {
     setVideoSourceName(null);
     setVideoUrl(null);
     setVideoFile(null);
+    if (popoutWinRef.current) closeVideoPopOut();
     setIsVideoPoppedOut(false);
+    setEditingAnalysisId(null);
   };
 
   // Prevent accidental tab closing when match recording is active
@@ -550,41 +625,26 @@ export default function BotoneraPage() {
             setHasYouTubeSignal(true);
           }
 
-          // While the chrono is slaved to the video, project the playhead onto match time
-          if (videoDrivenRef.current) {
-            const time = data.info.currentTime;
-            const offsets = periodVideoOffsetsRef.current;
-            const currentP = periodRef.current;
-            let detectedP: number | null = null;
-
-            if (offsets[4] != null && time >= offsets[4]) detectedP = 4;
-            else if (offsets[3] != null && time >= offsets[3]) detectedP = 3;
-            else if (offsets[2] != null && time >= offsets[2]) detectedP = 2;
-            else if (offsets[1] != null && time >= offsets[1]) detectedP = 1;
-            else if (offsets[1] != null) detectedP = 1;
-
-            const activeP = detectedP ?? currentP;
-            if (detectedP !== null && detectedP !== currentP) {
-              periodRef.current = detectedP;
-              setPeriod(detectedP);
-            }
-
-            const offset = offsets[activeP];
-            const base = PERIOD_BASE_SECONDS[activeP] ?? 0;
-            if (offset !== undefined) {
-              const calculatedSec = Math.max(0, Math.floor(time - offset + base));
-              setTimerSeconds((prev) => (prev === calculatedSec ? prev : calculatedSec));
-            }
+          // La API del iframe es la fuente principal del crono: aquí solo se
+          // conduce cuando esa API no está dando lecturas válidas, para que no
+          // haya dos escritores del minutaje a la vez (era la causa del parpadeo).
+          if (videoDrivenRef.current && !isYouTubeApiHealthyRef.current) {
+            applyVideoTime(data.info.currentTime);
           }
         }
         // Player state: 1 = playing, 2 = paused, 0 = ended
+        if (data.event === 'infoDelivery' && typeof data.info?.playerState === 'number') {
+          youtubeIsPlayingRef.current = data.info.playerState === 1;
+        }
         if (data.event === 'infoDelivery' && typeof data.info?.playerState === 'number' && videoDrivenRef.current) {
           const state = data.info.playerState;
           if (state === 1) setIsTimerRunning(true);
           else if (state === 2 || state === 0) setIsTimerRunning(false);
         }
-        // Also handle the onReady event to start listening
-        if (data.event === 'onReady' || data.info === 1 /* playing */) {
+        // Re-suscribirse solo cuando el player (re)inicializa. Antes también se
+        // reenviaba en cada onStateChange (info === 1), y cada handshake nuevo
+        // provocaba un volcado de estado inicial con currentTime 0.
+        if (data.event === 'onReady') {
           // Re-subscribe when player re-initializes
           iframeElementRef.current?.contentWindow?.postMessage(
             JSON.stringify({ event: 'listening' }), '*'
@@ -597,7 +657,7 @@ export default function BotoneraPage() {
 
     window.addEventListener('message', handleYouTubeMessage);
     return () => window.removeEventListener('message', handleYouTubeMessage);
-  }, []);
+  }, [applyVideoTime]);
 
   // When the iframe ref is first set, tell YouTube to start broadcasting infoDelivery messages
   const handleIframeRef = useCallback((el: HTMLIFrameElement | null) => {
@@ -628,6 +688,10 @@ export default function BotoneraPage() {
 
   const handleSelectMatch = (matchId: string) => {
     setSelectedMatchId(matchId);
+    const existingAnalyses = dbStore.getAnalyses(matchId);
+    if (existingAnalyses.length > 0) {
+      setEditingAnalysisId(existingAnalyses[0].id);
+    }
     if (matchId !== 'free_session') {
       const matchEvents = dbStore.getNormalizedEvents(matchId);
       setEvents(matchEvents);
@@ -658,6 +722,7 @@ export default function BotoneraPage() {
   };
 
   const handleEditAnalysisInBotonera = (an: MatchAnalysis) => {
+    setEditingAnalysisId(an.id);
     setSelectedMatchId(an.match_id);
     setEvents(an.events || []);
 
@@ -713,6 +778,223 @@ export default function BotoneraPage() {
     setVideoEl(el);
   }, []);
 
+  const stopPopoutMonitor = () => {
+    if (popoutMonitorRef.current) {
+      clearInterval(popoutMonitorRef.current);
+      popoutMonitorRef.current = null;
+    }
+  };
+
+  /**
+   * Devuelve el control a la página: el reproductor incrustado volverá a montarse
+   * en el minuto en el que se quedó la ventana externa (y reproduciendo si lo estaba).
+   */
+  const finishVideoPopOut = () => {
+    stopPopoutMonitor();
+    popoutWinRef.current = null;
+    popoutIframeWinRef.current = null;
+    popoutHasSignalRef.current = false;
+    setPopoutHasSignal(false);
+    // Suelta el <video> de la ventana externa; el crono se reatará al incrustado.
+    if (videoElementRef.current) handleVideoRef(null);
+    setEmbeddedResume({ at: popoutStateRef.current.time, play: popoutStateRef.current.playing });
+    setIsVideoPoppedOut(false);
+  };
+
+  /** Vigila la ventana externa: playhead, play/pausa y cierre manual. */
+  const startPopoutMonitor = () => {
+    stopPopoutMonitor();
+    popoutMonitorRef.current = setInterval(() => {
+      const win = popoutWinRef.current;
+      if (!win || win.closed) {
+        finishVideoPopOut();
+        return;
+      }
+      try {
+        const popupVideo = win.document.querySelector('video');
+        if (popupVideo) {
+          popoutStateRef.current = { time: popupVideo.currentTime, playing: !popupVideo.paused };
+          // La ventana es del mismo origen (la escribimos nosotros), así que el
+          // crono puede atarse a su <video> igual que al reproductor incrustado.
+          if (videoElementRef.current !== popupVideo) handleVideoRef(popupVideo);
+          return;
+        }
+
+        const popupIframe = win.document.querySelector('iframe');
+        if (!popupIframe) return;
+        popoutIframeWinRef.current = popupIframe.contentWindow;
+
+        const time = (win as any).__saoVideoTime;
+        const playing = !!(win as any).__saoVideoPlaying;
+        if (typeof time !== 'number' || !Number.isFinite(time)) return;
+
+        popoutStateRef.current = { time, playing };
+        youtubeCurrentTimeRef.current = time;
+        if (!popoutHasSignalRef.current) {
+          popoutHasSignalRef.current = true;
+          setPopoutHasSignal(true);
+        }
+        if (videoDrivenRef.current) {
+          applyVideoTime(time);
+          setIsTimerRunning((prev) => (prev === playing ? prev : playing));
+        }
+      } catch {
+        // La ventana se está cerrando o todavía no ha escrito su documento.
+      }
+    }, 200);
+  };
+
+  /** "Sacar Ventana": saca el vídeo a una ventana aparte en el minuto exacto que llevaba en la página. */
+  const openVideoPopOut = () => {
+    if (!videoType || videoType === 'none') return;
+
+    const startAt = Math.max(0, getCurrentVideoTime());
+    const wasPlaying = getVideoIsPlaying() ?? false;
+    const title = (videoSourceName || 'Vídeo del Partido').replace(/[<>&"]/g, '');
+
+    let body: string | null = null;
+    if (videoType === 'local' && localObjectUrl) {
+      body = `
+        <video id="v" src="${localObjectUrl}" controls></video>
+        <script>
+          const v = document.getElementById('v');
+          const startAt = ${startAt};
+          const seek = () => { if (Math.abs(v.currentTime - startAt) > 0.5) v.currentTime = startAt; };
+          v.addEventListener('loadedmetadata', () => {
+            seek();
+            ${wasPlaying ? 'v.play().catch(() => {});' : ''}
+          });
+          seek();
+        </script>`;
+    } else if (videoType === 'link' && videoUrl) {
+      let embedUrl = toEmbedUrl(videoUrl);
+      try {
+        const url = new URL(embedUrl);
+        url.searchParams.set('start', String(Math.floor(startAt)));
+        if (wasPlaying) url.searchParams.set('autoplay', '1');
+        embedUrl = url.toString();
+      } catch {
+        // URL rara: se abre igualmente desde el principio
+      }
+      // La ventana publica su playhead en window.__saoVideoTime; la página lo lee
+      // cada 200 ms para mantener el crono sincronizado y para saber por dónde
+      // reanudar cuando el vídeo vuelva a acoplarse. Igual que en la página, la
+      // fuente principal es la API IFrame y el handshake 'listening' es el
+      // respaldo por si esa API no llega a cargar.
+      body = `
+        <iframe id="yt" src="${embedUrl}" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
+        <script>
+          const f = document.getElementById('yt');
+          window.__saoVideoTime = ${startAt};
+          window.__saoVideoPlaying = ${wasPlaying};
+          const setTime = (t) => {
+            if (typeof t === 'number' && isFinite(t) && t > 0) window.__saoVideoTime = t;
+          };
+
+          let player = null;
+          window.onYouTubeIframeAPIReady = () => {
+            player = new YT.Player(f, {
+              events: {
+                onReady: () => {
+                  setInterval(() => {
+                    setTime(player.getCurrentTime && player.getCurrentTime());
+                    const st = player.getPlayerState && player.getPlayerState();
+                    if (typeof st === 'number') window.__saoVideoPlaying = st === 1;
+                  }, 250);
+                },
+              },
+            });
+          };
+          const api = document.createElement('script');
+          api.src = 'https://www.youtube.com/iframe_api';
+          document.body.appendChild(api);
+
+          const listen = () => {
+            if (f.contentWindow) f.contentWindow.postMessage(JSON.stringify({ event: 'listening' }), '*');
+          };
+          [400, 1200, 2500].forEach((ms) => setTimeout(listen, ms));
+          window.addEventListener('message', (e) => {
+            try {
+              const d = JSON.parse(e.data);
+              if (d.event !== 'infoDelivery' || !d.info) return;
+              setTime(d.info.currentTime);
+              if (typeof d.info.playerState === 'number') {
+                window.__saoVideoPlaying = d.info.playerState === 1;
+              }
+            } catch (err) {
+              // mensajes ajenos al reproductor
+            }
+          });
+        </script>`;
+    }
+
+    if (!body) return;
+
+    const win = window.open('', 'sao_botonera_video', 'width=1024,height=600,menubar=no,toolbar=no,location=no');
+    if (!win) {
+      alert('El navegador ha bloqueado la ventana emergente. Permite las ventanas emergentes de esta página para sacar el vídeo.');
+      return;
+    }
+
+    // A partir de aquí manda la ventana: el reproductor de la página se para.
+    setVideoPlaying(false);
+
+    popoutWinRef.current = win;
+    popoutStateRef.current = { time: startAt, playing: wasPlaying };
+    win.document.write(`
+      <!doctype html>
+      <html>
+        <head>
+          <title>${title}</title>
+          <style>
+            html, body { margin:0; padding:0; background:#000; height:100%; overflow:hidden; }
+            video, iframe { width:100%; height:100%; border:0; object-fit:contain; background:#000; }
+          </style>
+        </head>
+        <body>${body}</body>
+      </html>
+    `);
+    win.document.close();
+
+    setIsVideoPoppedOut(true);
+    startPopoutMonitor();
+  };
+
+  /** "Acoplar Vídeo a la Página": cierra la ventana y devuelve el vídeo al hueco pequeño, donde iba. */
+  const closeVideoPopOut = () => {
+    const win = popoutWinRef.current;
+    if (win && !win.closed) {
+      try {
+        const popupVideo = win.document.querySelector('video');
+        if (popupVideo) {
+          popoutStateRef.current = { time: popupVideo.currentTime, playing: !popupVideo.paused };
+        } else if (typeof (win as any).__saoVideoTime === 'number') {
+          popoutStateRef.current = {
+            time: (win as any).__saoVideoTime,
+            playing: !!(win as any).__saoVideoPlaying,
+          };
+        }
+      } catch {
+        // sin acceso: se usa el último estado conocido
+      }
+      win.close();
+    }
+    finishVideoPopOut();
+  };
+
+  // El reproductor incrustado congela el punto de reanudación al montarse, así que
+  // se limpia acto seguido: si no, un cambio posterior de vídeo volvería a saltar
+  // al minuto en el que se cerró aquella ventana.
+  useEffect(() => {
+    if (embeddedResume && !isVideoPoppedOut) setEmbeddedResume(null);
+  }, [embeddedResume, isVideoPoppedOut]);
+
+  // Sin esto la ventana quedaría huérfana (y su intervalo vivo) al salir de la página
+  useEffect(() => () => {
+    if (popoutMonitorRef.current) clearInterval(popoutMonitorRef.current);
+    popoutWinRef.current?.close();
+  }, []);
+
   /**
    * PLAY / PAUSE of the chrono also drives the video transport, so both always
    * move together. When the chrono is video-driven the player's own play/pause
@@ -743,6 +1025,8 @@ export default function BotoneraPage() {
   const handleResetTimer = () => {
     setIsTimerRunning(false);
     setTimerSeconds(0);
+    lastGoodVideoTimeRef.current = 0;
+    zeroSampleStreakRef.current = 0;
     setPeriodVideoOffsets({}); // also clear video offsets on reset
     dbStore.clearActiveBotoneraSession();
   };
@@ -769,7 +1053,7 @@ export default function BotoneraPage() {
     });
 
     // Editing the start of the period being tagged re-bases the chrono right away
-    if (p === period && !isVideoPoppedOut && (videoEl || iframeEl)) {
+    if (p === period && (videoEl || iframeEl || popoutWinRef.current)) {
       const base = PERIOD_BASE_SECONDS[p] ?? 0;
       setTimerSeconds(Math.max(0, Math.floor(getCurrentVideoTime() - newTimeSec + base)));
     }
@@ -1034,10 +1318,13 @@ export default function BotoneraPage() {
       setMatches(dbStore.getMatches());
     }
 
-    // Save as a permanent Match Analysis card
-    const analysisId = `analysis_${targetId}_${Date.now()}`;
-    const newAnalysis = {
-      id: analysisId,
+    // Save or update the permanent Match Analysis card (deduplicated by match / analysis ID)
+    const existingAnalyses = dbStore.getAnalyses(targetId);
+    const resolvedAnalysisId = editingAnalysisId || (existingAnalyses.length > 0 ? existingAnalyses[0].id : `analysis_${targetId}`);
+    const existingObj = existingAnalyses.find((a) => a.id === resolvedAnalysisId) || existingAnalyses[0];
+
+    const newAnalysis: MatchAnalysis = {
+      id: resolvedAnalysisId,
       match_id: targetId,
       title: `Análisis ${targetMatch ? targetMatch.home_team + ' vs ' + targetMatch.away_team : 'Etiquetado en Vivo'}`,
       analyst_name: 'Analista Principal (SAO)',
@@ -1049,11 +1336,12 @@ export default function BotoneraPage() {
       p2_video_start_time: periodVideoOffsets[2] || null,
       botonera_template_id: template?.id || null,
       events: normalizedEvts,
-      created_at: new Date().toISOString(),
+      created_at: existingObj?.created_at || new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
     dbStore.saveAnalysis(newAnalysis);
     dbStore.clearActiveBotoneraSession(targetId);
+    setSavedAnalyses(dbStore.getAnalyses());
   };
 
   const handleExportXml = () => {
@@ -1367,10 +1655,12 @@ export default function BotoneraPage() {
                 <BotoneraVideoPlayer
                   videoType={videoType}
                   videoUrl={videoUrl}
-                  videoFile={videoFile}
                   videoSourceName={videoSourceName}
                   isPoppedOut={false}
-                  onTogglePopOut={(popped) => setIsVideoPoppedOut(popped)}
+                  onTogglePopOut={(popped) => (popped ? openVideoPopOut() : closeVideoPopOut())}
+                  objectUrl={localObjectUrl}
+                  resumeAtSeconds={embeddedResume?.at ?? null}
+                  resumeAutoPlay={embeddedResume?.play ?? false}
                   onVideoRef={handleVideoRef}
                   onIframeRef={handleIframeRef}
                   periodVideoOffsets={periodVideoOffsets}
@@ -1393,6 +1683,7 @@ export default function BotoneraPage() {
                   onExportJson={handleExportJson}
                   onSeekToEvent={handleSeekToEvent}
                   buttons={template?.buttons || []}
+                  players={players}
                 />
               </div>
 
@@ -1435,16 +1726,40 @@ export default function BotoneraPage() {
           ) : (
             /*
              * LAYOUT 2 — VÍDEO EN VENTANA EXTERNA O SIN VÍDEO
-             * ┌──────────────────────────────────────┬────────────────────┐
-             * │  Cronómetro compacto                 │  Feed de Eventos   │
-             * │  [Banner pop-out si aplica]          │                    │
-             * │  Selector Jugadores + Botonera grande│  Estadísticas      │
-             * └──────────────────────────────────────┴────────────────────┘
+             * El hueco del vídeo se reparte: la botonera pasa a 8/12 y el feed a 4/12.
+             * ┌───────────────────────────────────────────────────────────┐
+             * │  [Barra vídeo fuera + marcas de parte] (si aplica)        │
+             * ├────────────────────────────────────────┬──────────────────┤
+             * │  Cronómetro compacto                   │  Feed de Eventos │
+             * │  Selector Jugadores + Botonera grande  │  Estadísticas    │
+             * └────────────────────────────────────────┴──────────────────┘
              */
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
 
-              {/* ── COLUMNA IZQUIERDA GRANDE (7/12): Crono + Botonera ── */}
-              <div className="lg:col-span-7 flex flex-col gap-4">
+              {/* ── FILA SUPERIOR (12/12): el vídeo está fuera, así que su hueco
+                     se devuelve a la página como una barra fina con el botón de
+                     acoplar y las marcas de inicio de cada parte ── */}
+              {videoType && videoType !== 'none' && (
+                <div className="lg:col-span-12">
+                  <BotoneraVideoPlayer
+                    videoType={videoType}
+                    videoUrl={videoUrl}
+                    videoSourceName={videoSourceName}
+                    isPoppedOut={true}
+                    onTogglePopOut={(popped) => (popped ? openVideoPopOut() : closeVideoPopOut())}
+                    periodVideoOffsets={periodVideoOffsets}
+                    onClearPeriodOffset={handleClearPeriodOffset}
+                    onUpdatePeriodOffset={handleUpdatePeriodOffset}
+                    currentPeriod={period}
+                    onCapturePeriodOffset={handleCapturePeriodOffset}
+                    onSeekVideoToTime={(t) => seekVideoTo(t)}
+                    getCurrentVideoTime={getCurrentVideoTime}
+                  />
+                </div>
+              )}
+
+              {/* ── COLUMNA IZQUIERDA GRANDE (8/12): Crono + Botonera ── */}
+              <div className="lg:col-span-8 flex flex-col gap-4">
 
                 {/* 1. Cronómetro compacto — encima de la botonera */}
                 <BotoneraStopwatch
@@ -1461,21 +1776,9 @@ export default function BotoneraPage() {
                   isVideoDriven={isVideoDriven}
                 />
 
-                {/* Banner informativo si el vídeo está en ventana aparte */}
-                {videoType && videoType !== 'none' && (
-                  <BotoneraVideoPlayer
-                    videoType={videoType}
-                    videoUrl={videoUrl}
-                    videoFile={videoFile}
-                    videoSourceName={videoSourceName}
-                    isPoppedOut={true}
-                    onTogglePopOut={(popped) => setIsVideoPoppedOut(popped)}
-                  />
-                )}
-
                 {/* Selector de Jugadores + Botonera en grande */}
                 <div className="grid grid-cols-12 gap-4">
-                  <div className="col-span-4">
+                  <div className="col-span-12 sm:col-span-3">
                     <BotoneraPlayerSelector
                       players={players}
                       selectedPlayerId={selectedPlayerId}
@@ -1485,7 +1788,7 @@ export default function BotoneraPage() {
                       awayTeamName={selectedMatch ? selectedMatch.away_team : 'Rival SC'}
                     />
                   </div>
-                  <div className="col-span-8">
+                  <div className="col-span-12 sm:col-span-9">
                     {template && (
                       <BotoneraPanelEditor
                         template={template}
@@ -1502,8 +1805,8 @@ export default function BotoneraPage() {
                 </div>
               </div>
 
-              {/* ── COLUMNA DERECHA (5/12): Feed + Stats ── */}
-              <div className="lg:col-span-5 flex flex-col gap-4">
+              {/* ── COLUMNA DERECHA (4/12): Feed + Stats ── */}
+              <div className="lg:col-span-4 flex flex-col gap-4">
                 <BotoneraEventLog
                   events={events}
                   onDeleteEvent={handleDeleteEvent}
@@ -1513,6 +1816,7 @@ export default function BotoneraPage() {
                   onExportJson={handleExportJson}
                   onSeekToEvent={handleSeekToEvent}
                   buttons={template?.buttons || []}
+                  players={players}
                 />
 
                 <BotoneraLiveStats events={events} />

@@ -19,21 +19,24 @@ import {
   Save,
   PlayCircle,
 } from 'lucide-react';
-import { NormalizedEvent, BotoneraButton } from '@/types';
+import { NormalizedEvent, BotoneraButton, Player } from '@/types';
 import { getButtonColorHex } from './BotoneraPanelEditor';
 import { FullEventFormModal } from '@/components/analysis/FullEventFormModal';
 
 interface BotoneraEventLogProps {
   events: NormalizedEvent[];
-  onDeleteEvent: (eventId: string) => void;
+  onDeleteEvent?: (eventId: string) => void;
   onUpdateEvent?: (updatedEvent: NormalizedEvent) => void;
-  onClearAllEvents: () => void;
-  onExportXml: () => void;
-  onExportJson: () => void;
+  onClearAllEvents?: () => void;
+  onExportXml?: () => void;
+  onExportJson?: () => void;
   /** Called when the user clicks the ▶ button to seek the video to 12s before this event */
   onSeekToEvent?: (event: NormalizedEvent) => void;
   /** Buttons of the active botonera, used to paint each row with its button colour */
   buttons?: BotoneraButton[];
+  players?: Player[];
+  /** When true, editing, deleting, and clearing buttons are hidden (read-only mode for Visor) */
+  readOnly?: boolean;
 }
 
 export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
@@ -45,6 +48,8 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
   onExportJson,
   onSeekToEvent,
   buttons = [],
+  players = [],
+  readOnly = false,
 }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -155,23 +160,27 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
 
         {/* Action buttons: Export & Clear */}
         <div className="flex items-center gap-2">
-          <button
-            onClick={onExportXml}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-bold border border-slate-700 transition"
-          >
-            <FileCode2 className="w-3.5 h-3.5" />
-            <span>XML LongoMatch</span>
-          </button>
+          {onExportXml && (
+            <button
+              onClick={onExportXml}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-bold border border-slate-700 transition"
+            >
+              <FileCode2 className="w-3.5 h-3.5" />
+              <span>XML LongoMatch</span>
+            </button>
+          )}
 
-          <button
-            onClick={onExportJson}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold border border-slate-700 transition"
-          >
-            <FileText className="w-3.5 h-3.5" />
-            <span>JSON</span>
-          </button>
+          {onExportJson && (
+            <button
+              onClick={onExportJson}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold border border-slate-700 transition"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>JSON</span>
+            </button>
+          )}
 
-          {events.length > 0 && (
+          {!readOnly && onClearAllEvents && events.length > 0 && (
             <button
               onClick={onClearAllEvents}
               className="p-1.5 rounded-xl bg-slate-800 hover:bg-red-950/60 text-slate-400 hover:text-red-400 border border-slate-700 hover:border-red-500/40 transition text-xs"
@@ -315,20 +324,26 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
                               <PlayCircle className="w-3.5 h-3.5" />
                             </button>
                           )}
-                          <button
-                            onClick={() => handleStartEdit(evt)}
-                            className="p-1 rounded bg-slate-950/50 hover:bg-amber-500/20 text-slate-300 hover:text-amber-300 border border-slate-700 transition"
-                            title="Editar este evento"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => onDeleteEvent(evt.event_id)}
-                            className="p-1 rounded bg-slate-950/50 hover:bg-red-900/60 text-slate-300 hover:text-red-300 border border-slate-700 transition"
-                            title="Eliminar este evento"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          {!readOnly && (
+                            <>
+                              <button
+                                onClick={() => handleStartEdit(evt)}
+                                className="p-1 rounded bg-slate-950/50 hover:bg-amber-500/20 text-slate-300 hover:text-amber-300 border border-slate-700 transition"
+                                title="Editar este evento"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              {onDeleteEvent && (
+                                <button
+                                  onClick={() => onDeleteEvent(evt.event_id)}
+                                  className="p-1 rounded bg-slate-950/50 hover:bg-red-900/60 text-slate-300 hover:text-red-300 border border-slate-700 transition"
+                                  title="Eliminar este evento"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </>
+                          )}
                         </span>
                       </td>
                     </tr>
@@ -398,6 +413,7 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
       {editingEvent && (
         <FullEventFormModal
           initialEvent={editingEvent}
+          players={players}
           onSave={(updated) => {
             if (onUpdateEvent) onUpdateEvent(updated);
             setEditingEvent(null);

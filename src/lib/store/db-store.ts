@@ -659,8 +659,26 @@ export const dbStore = {
   // Match Analyses Management
   getAnalyses(matchId?: string): MatchAnalysis[] {
     const list = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
-    if (!matchId) return list;
-    return list.filter(a => a.match_id === matchId);
+    
+    // Deduplicate list by match_id keeping the one with most events or newest timestamp
+    const deduplicatedMap = new Map<string, MatchAnalysis>();
+    list.forEach((item) => {
+      const key = item.match_id || item.id;
+      const existing = deduplicatedMap.get(key);
+      if (!existing) {
+        deduplicatedMap.set(key, item);
+      } else {
+        const existingCount = existing.events?.length || 0;
+        const itemCount = item.events?.length || 0;
+        if (itemCount >= existingCount) {
+          deduplicatedMap.set(key, item);
+        }
+      }
+    });
+
+    const deduplicatedList = Array.from(deduplicatedMap.values());
+    if (!matchId) return deduplicatedList;
+    return deduplicatedList.filter(a => a.match_id === matchId);
   },
 
   getAnalysisById(id: string): MatchAnalysis | undefined {
@@ -671,27 +689,49 @@ export const dbStore = {
   async syncAnalysesFromSupabase(matchId?: string): Promise<MatchAnalysis[]> {
     const remote = await getAnalysesFromSupabase(matchId);
     if (remote && remote.length > 0) {
-      const allLocal = this.getAnalyses();
+      const allLocal = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
       const nonMatchLocal = matchId ? allLocal.filter(a => a.match_id !== matchId) : [];
       const merged = [...remote, ...nonMatchLocal];
       setToStorage(STORAGE_KEYS.MATCH_ANALYSES, merged);
-      return matchId ? remote : merged;
+      return this.getAnalyses(matchId);
     }
     return this.getAnalyses(matchId);
   },
 
   saveAnalysis(analysis: MatchAnalysis): void {
-    const all = this.getAnalyses();
-    const idx = all.findIndex(a => a.id === analysis.id);
+    const all = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
+    const idx = all.findIndex(a => a.id === analysis.id || (a.match_id && a.match_id === analysis.match_id));
     let updated: MatchAnalysis;
     if (idx >= 0) {
-      updated = { ...analysis, updated_at: new Date().toISOString() };
+      const existing = all[idx];
+      updated = {
+        ...existing,
+        ...analysis,
+        id: existing.id, // Keep existing ID
+        created_at: existing.created_at || analysis.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
       all[idx] = updated;
     } else {
-      updated = { ...analysis, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+      updated = {
+        ...analysis,
+        created_at: analysis.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
       all.unshift(updated);
     }
-    setToStorage(STORAGE_KEYS.MATCH_ANALYSES, all);
+
+    // Deduplicate remaining entries in storage for the same match_id
+    const finalMap = new Map<string, MatchAnalysis>();
+    all.forEach((item) => {
+      const key = item.match_id || item.id;
+      if (!finalMap.has(key)) {
+        finalMap.set(key, item);
+      }
+    });
+
+    const deduplicated = Array.from(finalMap.values());
+    setToStorage(STORAGE_KEYS.MATCH_ANALYSES, deduplicated);
 
     saveAnalysisToSupabase(updated).catch(err => {
       console.warn("Could not sync analysis to Supabase:", err);

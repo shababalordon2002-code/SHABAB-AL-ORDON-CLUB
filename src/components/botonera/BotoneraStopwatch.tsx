@@ -81,10 +81,19 @@ export const BotoneraStopwatch: React.FC<BotoneraStopwatchProps> = ({
   };
 
   const parseTimeInput = (value: string): number | null => {
-    const trimmed = value.trim();
-    if (/^\d+$/.test(trimmed)) return parseInt(trimmed, 10);
-    const match = trimmed.match(/^(\d{1,3}):([0-5]?\d)$/);
-    if (match) return parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
+    const trimmed = value.trim().replace(',', '.');
+    if (!trimmed) return null;
+
+    const hms = trimmed.match(/^(\d{1,2}):([0-5]?\d):([0-5]?\d)$/);
+    if (hms) return parseInt(hms[1], 10) * 3600 + parseInt(hms[2], 10) * 60 + parseInt(hms[3], 10);
+
+    const ms = trimmed.match(/^(\d{1,4})[:.]([0-5]?\d)$/);
+    if (ms) return parseInt(ms[1], 10) * 60 + parseInt(ms[2], 10);
+
+    if (/^\d+$/.test(trimmed)) {
+      const num = parseInt(trimmed, 10);
+      return num <= 180 ? num * 60 : num;
+    }
     return null;
   };
 
@@ -132,6 +141,7 @@ export const BotoneraStopwatch: React.FC<BotoneraStopwatchProps> = ({
                 type="text"
                 value={editTimeValue}
                 onChange={(e) => setEditTimeValue(e.target.value)}
+                onBlur={handleConfirmEditTime}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') handleConfirmEditTime();
                   if (e.key === 'Escape') setIsEditingTime(false);
@@ -139,10 +149,10 @@ export const BotoneraStopwatch: React.FC<BotoneraStopwatchProps> = ({
                 placeholder="mm:ss"
                 className="w-16 bg-transparent border-none font-mono text-xl font-black text-emerald-400 text-center focus:outline-none"
               />
-              <button onClick={handleConfirmEditTime} className="p-1 rounded bg-emerald-600 text-slate-950">
+              <button onMouseDown={(e) => e.preventDefault()} onClick={handleConfirmEditTime} className="p-1 rounded bg-emerald-600 text-slate-950">
                 <Check className="w-3 h-3" />
               </button>
-              <button onClick={() => setIsEditingTime(false)} className="p-1 rounded bg-slate-800 text-slate-300">
+              <button onMouseDown={(e) => e.preventDefault()} onClick={() => setIsEditingTime(false)} className="p-1 rounded bg-slate-800 text-slate-300">
                 <X className="w-3 h-3" />
               </button>
             </div>

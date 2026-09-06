@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Edit3, Plus, Target, X, RotateCcw, CheckCircle2 } from 'lucide-react';
 import { Match, NormalizedEvent, Player } from '@/types';
 import { BotoneraPitchCanvas } from '@/components/botonera/BotoneraPitchCanvas';
@@ -71,6 +72,17 @@ export const FullEventFormModal: React.FC<FullEventFormModalProps> = ({
   onClose,
   title = 'Editar Evento Completo',
 }) => {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
   const homeTeam = match?.home_team || initialEvent?.team_name || 'Shabab Al Ordon Club';
   const awayTeam = match?.away_team || 'Rival SC';
 
@@ -79,8 +91,12 @@ export const FullEventFormModal: React.FC<FullEventFormModalProps> = ({
   const [teamName, setTeamName] = useState(initialEvent?.team_name || homeTeam);
   const [playerName, setPlayerName] = useState(initialEvent?.player_name || 'Jugador no asignado');
   const [period, setPeriod] = useState<number>(initialEvent?.period || 1);
-  const [minute, setMinute] = useState<number>(initialEvent?.minute ?? 0);
-  const [second, setSecond] = useState<number>(initialEvent?.second ?? 0);
+  const totalSec = initialEvent?.timestamp ?? 0;
+  const initialMin = initialEvent?.minute ?? (totalSec > 0 ? Math.floor(totalSec / 60) : 0);
+  const initialSec = initialEvent?.second ?? (totalSec > 0 ? Math.floor(totalSec % 60) : 0);
+
+  const [minute, setMinute] = useState<number>(initialMin);
+  const [second, setSecond] = useState<number>(initialSec);
   const [duration, setDuration] = useState<number>(initialEvent?.duration ?? 5);
   const [outcome, setOutcome] = useState(initialEvent?.outcome || '');
 
@@ -171,11 +187,17 @@ export const FullEventFormModal: React.FC<FullEventFormModalProps> = ({
     onSave(saved);
   };
 
-  return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-3 sm:p-5 overflow-y-auto">
+  if (!mounted) return null;
+
+  return createPortal(
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-3 sm:p-6 overflow-y-auto animate-fade-in"
+    >
       <form
         onSubmit={handleSubmit}
-        className="bg-slate-900 border border-slate-800 rounded-2xl max-w-5xl w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-fade-in my-auto"
+        onClick={(e) => e.stopPropagation()}
+        className="bg-slate-900 border border-slate-800 rounded-2xl max-w-5xl w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden my-auto"
       >
         {/* Modal Header */}
         <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/90 shrink-0">
@@ -297,7 +319,9 @@ export const FullEventFormModal: React.FC<FullEventFormModalProps> = ({
                     className="w-full p-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 font-medium mb-1.5"
                   />
                   <div className="flex flex-wrap gap-1">
-                    {[homeTeam, awayTeam, 'Shabab Al Ordon Club'].filter(Boolean).map((tName) => (
+                    {/* El club puede ser ya el local o el visitante: sin deduplicar
+                        salen dos atajos idénticos y React avisa por la key repetida. */}
+                    {Array.from(new Set([homeTeam, awayTeam, 'Shabab Al Ordon Club'].filter(Boolean))).map((tName) => (
                       <button
                         key={tName}
                         type="button"
@@ -607,6 +631,7 @@ export const FullEventFormModal: React.FC<FullEventFormModalProps> = ({
           </div>
         </div>
       </form>
-    </div>
+    </div>,
+    document.body
   );
 };
