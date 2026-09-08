@@ -9,6 +9,7 @@ import {
   Database,
   Gamepad2,
   LayoutDashboard,
+  Pencil,
   Plus,
   Trash2,
   X,
@@ -58,7 +59,6 @@ export default function DashboardsPage() {
   const [blocks, setBlocks] = useState<MatchBlock[]>([]);
   const [templates, setTemplates] = useState<BotoneraTemplate[]>([]);
   const [loading, setLoading] = useState(true);
-  const [creatingFor, setCreatingFor] = useState<MatchBlock | null>(null);
   const [activeVisor, setActiveVisor] = useState<{ match: Match; analysis: MatchAnalysis } | null>(null);
 
   // Admin Customization & Live Sync States
@@ -122,6 +122,29 @@ export default function DashboardsPage() {
     load();
   };
 
+  // Los datos (análisis, botonera) ya están asociados al partido: se crea el dashboard
+  // directamente con esos datos, sin pedir nada al usuario.
+  const handleQuickCreate = (block: MatchBlock, openInEditor = false) => {
+    const analysisId = block.analyses[0]?.id || null;
+    const botoneraTemplateId =
+      block.match.botonera_template_id ||
+      block.analyses.find((a) => a.botonera_template_id)?.botonera_template_id ||
+      templates.find((t) => t.isDefault)?.id ||
+      templates[0]?.id ||
+      null;
+
+    const dashboard = createDashboard({
+      matchId: block.match.id,
+      analysisId,
+      name: `Dashboard ${block.match.home_team} vs ${block.match.away_team}`,
+      botoneraTemplateId,
+      withStarter: true,
+    });
+
+    dbStore.saveDashboard(dashboard);
+    router.push(`/dashboards/${dashboard.id}${openInEditor ? '?mode=edit' : ''}`);
+  };
+
   return (
     <div className="p-5 sm:p-7 space-y-6 max-w-[1500px] mx-auto">
       {/* Top Bar Header */}
@@ -147,6 +170,14 @@ export default function DashboardsPage() {
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
+          <Link
+            href="/dashboards/acumulado"
+            className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 font-extrabold text-xs shadow-md transition-all flex items-center gap-2 border border-amber-500/30 cursor-pointer"
+          >
+            <BarChart3 className="w-4 h-4" />
+            <span>Dashboard Acumulativo</span>
+          </Link>
+
           {isAdmin && (
             <button
               onClick={() => setShowAdminModal(true)}
@@ -222,10 +253,19 @@ export default function DashboardsPage() {
             setActiveVisor({ match: block.match, analysis });
           };
 
+          const handleCardClick = () => {
+            if (block.dashboards.length > 0) {
+              router.push(`/dashboards/${block.dashboards[0].id}`);
+            } else if (isAdmin) {
+              handleQuickCreate(block);
+            }
+          };
+
           return (
             <div
               key={block.match.id}
-              className={`rounded-xl bg-slate-900 border p-4 space-y-3 transition-all shadow-md ${
+              onClick={handleCardClick}
+              className={`rounded-xl bg-slate-900 border p-4 space-y-3 transition-all shadow-md cursor-pointer ${
                 isLiveTagging ? 'border-rose-500/80 ring-1 ring-rose-500/40' : 'border-slate-800 hover:border-slate-700'
               }`}
             >
@@ -267,7 +307,7 @@ export default function DashboardsPage() {
                       </div>
                     )}
                     <button
-                      onClick={openVisorForMatch}
+                      onClick={(e) => { e.stopPropagation(); openVisorForMatch(); }}
                       className="absolute inset-0 bg-slate-950/40 hover:bg-slate-950/20 flex items-center justify-center transition-all cursor-pointer"
                       title="Abrir Vídeo"
                     >
@@ -287,17 +327,21 @@ export default function DashboardsPage() {
                     </div>
 
                     <h2 className="text-sm sm:text-base font-extrabold text-white truncate flex items-center gap-2">
-                      {block.match.home_team_logo && (
-                        <img src={block.match.home_team_logo} alt="" className="w-4.5 h-4.5 object-contain" />
-                      )}
+                      <img 
+                        src={block.match.home_team.toLowerCase().includes('shabab') || block.match.home_team.toLowerCase().includes('ordon') ? '/logo.png' : (block.match.home_team_logo || '/logo.png')} 
+                        alt="" 
+                        className="w-4.5 h-4.5 object-contain" 
+                      />
                       <span>{block.match.home_team}</span>
                       <span className="px-1.5 py-0.5 rounded bg-slate-950 text-amber-400 font-mono text-xs border border-slate-800 font-bold">
                         {block.match.home_score} - {block.match.away_score}
                       </span>
                       <span>{block.match.away_team}</span>
-                      {block.match.away_team_logo && (
-                        <img src={block.match.away_team_logo} alt="" className="w-4.5 h-4.5 object-contain" />
-                      )}
+                      <img 
+                        src={block.match.away_team.toLowerCase().includes('shabab') || block.match.away_team.toLowerCase().includes('ordon') ? '/logo.png' : (block.match.away_team_logo || '/logo.png')} 
+                        alt="" 
+                        className="w-4.5 h-4.5 object-contain" 
+                      />
                     </h2>
 
                     <div className="flex items-center gap-2 text-[11px] pt-0.5">
@@ -309,6 +353,7 @@ export default function DashboardsPage() {
                       </span>
                       <Link
                         href={`/partidos/${block.match.id}`}
+                        onClick={(e) => e.stopPropagation()}
                         className="px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-sky-400 hover:text-sky-300 font-semibold"
                       >
                         Ver partido
@@ -320,25 +365,27 @@ export default function DashboardsPage() {
                 {/* Right Action Buttons */}
                 <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
                   <button
-                    onClick={openVisorForMatch}
+                    onClick={(e) => { e.stopPropagation(); openVisorForMatch(); }}
                     className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-amber-500 hover:from-emerald-400 hover:to-amber-400 text-slate-950 font-black text-xs shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
                   >
                     <Eye className="w-3.5 h-3.5 stroke-[2.5]" />
                     <span>Abrir Visor (Vídeo + Botonera)</span>
                   </button>
 
-                  <button
-                    onClick={() => setCreatingFor(block)}
-                    className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-extrabold text-xs flex items-center gap-1.5 border border-slate-700 cursor-pointer"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Nuevo dashboard</span>
-                  </button>
+                  {isAdmin && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleQuickCreate(block, true); }}
+                      className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-extrabold text-xs flex items-center gap-1.5 border border-slate-700 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Nuevo dashboard</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
-              {/* Created Dashboards Pills Bar */}
-              {block.dashboards.length > 0 && (
+              {/* Created Dashboards Pills Bar — sólo si hay más de uno, o para admin (gestionar/borrar) */}
+              {block.dashboards.length > 0 && (block.dashboards.length > 1 || isAdmin) && (
                 <div className="pt-2.5 border-t border-slate-800/80 flex flex-wrap items-center gap-2">
                   <span className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mr-1">
                     Pizarras guardadas:
@@ -350,6 +397,7 @@ export default function DashboardsPage() {
                     >
                       <Link
                         href={`/dashboards/${dashboard.id}`}
+                        onClick={(e) => e.stopPropagation()}
                         className="flex items-center gap-1.5 font-bold text-slate-200 group-hover:text-emerald-400"
                       >
                         <LayoutDashboard className="w-3.5 h-3.5 text-emerald-400" />
@@ -358,13 +406,25 @@ export default function DashboardsPage() {
                           ({dashboard.widgets.length} visualizaciones)
                         </span>
                       </Link>
-                      <button
-                        onClick={() => handleDelete(dashboard)}
-                        className="text-slate-500 hover:text-rose-400 p-0.5 transition cursor-pointer"
-                        title="Eliminar dashboard"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      {isAdmin && (
+                        <>
+                          <Link
+                            href={`/dashboards/${dashboard.id}?mode=edit`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-slate-500 hover:text-amber-400 p-0.5 transition cursor-pointer"
+                            title="Editar dashboard"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </Link>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleDelete(dashboard); }}
+                            className="text-slate-500 hover:text-rose-400 p-0.5 transition cursor-pointer"
+                            title="Eliminar dashboard"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -373,18 +433,6 @@ export default function DashboardsPage() {
           );
         })}
       </div>
-
-      {creatingFor && (
-        <CreateDashboardModal
-          block={creatingFor}
-          templates={templates}
-          onClose={() => setCreatingFor(null)}
-          onCreate={(dashboard) => {
-            dbStore.saveDashboard(dashboard);
-            router.push(`/dashboards/${dashboard.id}`);
-          }}
-        />
-      )}
 
       {/* Admin Customization Modal */}
       {showAdminModal && (
@@ -412,100 +460,3 @@ export default function DashboardsPage() {
     </div>
   );
 }
-
-const CreateDashboardModal: React.FC<{
-  block: MatchBlock;
-  templates: BotoneraTemplate[];
-  onClose: () => void;
-  onCreate: (dashboard: MatchDashboard) => void;
-}> = ({ block, templates, onClose, onCreate }) => {
-  const defaultTemplateId =
-    block.match.botonera_template_id ||
-    block.analyses.find((a) => a.botonera_template_id)?.botonera_template_id ||
-    templates.find((t) => t.isDefault)?.id ||
-    templates[0]?.id ||
-    '';
-
-  const [name, setName] = useState(`Dashboard ${block.match.home_team} vs ${block.match.away_team}`);
-  const [analysisId, setAnalysisId] = useState<string>('');
-  const [templateId, setTemplateId] = useState<string>(defaultTemplateId);
-  const [withStarter, setWithStarter] = useState(true);
-
-  return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/85 backdrop-blur-sm p-4">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden">
-        <div className="px-5 py-3.5 border-b border-slate-800 flex items-center justify-between">
-          <h3 className="font-extrabold text-white text-sm">Nuevo dashboard</h3>
-          <button onClick={onClose} className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-700">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
-        <div className="p-5 space-y-4">
-          <label className="block space-y-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Nombre</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} className="input-dark" />
-          </label>
-
-          <label className="block space-y-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Origen de los datos</span>
-            <select value={analysisId} onChange={(e) => setAnalysisId(e.target.value)} className="input-dark">
-              <option value="">Todos los eventos del partido ({block.events.length})</option>
-              {block.analyses.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.title} ({a.events?.length || 0} eventos)
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="block space-y-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-              Botonera (define los campos y descriptores disponibles)
-            </span>
-            <select value={templateId} onChange={(e) => setTemplateId(e.target.value)} className="input-dark">
-              <option value="">Sin botonera (sólo campos básicos del evento)</option>
-              {templates.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={withStarter}
-              onChange={(e) => setWithStarter(e.target.checked)}
-              className="w-3.5 h-3.5 accent-emerald-500"
-            />
-            <span className="text-[11px] text-slate-300">Empezar con una pizarra de ejemplo (editable)</span>
-          </label>
-        </div>
-
-        <div className="px-5 py-3 border-t border-slate-800 flex items-center justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold border border-slate-700">
-            Cancelar
-          </button>
-          <button
-            onClick={() =>
-              onCreate(
-                createDashboard({
-                  matchId: block.match.id,
-                  analysisId: analysisId || null,
-                  name: name.trim() || 'Dashboard',
-                  botoneraTemplateId: templateId || null,
-                  withStarter,
-                })
-              )
-            }
-            className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 text-xs font-extrabold cursor-pointer"
-          >
-            Crear dashboard
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};

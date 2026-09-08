@@ -44,6 +44,8 @@ interface BotoneraEventLogProps {
   players?: Player[];
   /** When true, editing, deleting, and clearing buttons are hidden (read-only mode for Visor) */
   readOnly?: boolean;
+  /** Optional custom CSS max height class for the scrollable table container */
+  maxHeightClass?: string;
 }
 
 export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
@@ -58,6 +60,7 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
   buttons = [],
   players = [],
   readOnly = false,
+  maxHeightClass,
 }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -198,7 +201,7 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
   };
 
   return (
-    <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl backdrop-blur-md space-y-4">
+    <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl backdrop-blur-md space-y-4 flex-1 flex flex-col min-h-0 h-full">
       {/* Log Header Controls */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
         <div className="flex items-center gap-2.5">
@@ -308,7 +311,7 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
       </div>
 
       {/* Events Table Stream */}
-      <div className="overflow-x-auto max-h-80 overflow-y-auto rounded-xl border border-slate-800">
+      <div className={`overflow-x-auto overflow-y-auto rounded-xl border border-slate-800 flex-1 min-h-[450px] ${maxHeightClass || 'max-h-none lg:max-h-[2200px]'}`}>
         <table className="w-full text-left text-xs text-slate-300">
           <thead className="bg-slate-950 text-slate-400 font-semibold text-[11px] uppercase tracking-wider sticky top-0 z-10 border-b border-slate-800">
             <tr>

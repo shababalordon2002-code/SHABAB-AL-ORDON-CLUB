@@ -30,6 +30,34 @@ import { BotoneraLiveScoreboard } from '@/components/botonera/BotoneraLiveScoreb
 import { AnalysisVisor } from '@/components/analysis/AnalysisVisor';
 import { Compass, Flame, Sliders, PlayCircle, Trophy, CheckCircle2, FileCode2, Save, Radio, Pencil, Ban, X, Home, FolderOpen, Eye, Edit3, Trash2, AlertTriangle, User, Video } from 'lucide-react';
 
+/**
+ * Calculates features string for window.open to ensure the pop-out window
+ * is centered on the user's active monitor screen.
+ */
+function getCenteredPopUpFeatures(w = 1024, h = 600) {
+  if (typeof window === 'undefined') {
+    return `width=${w},height=${h}`;
+  }
+  const screenLeft = window.screenLeft !== undefined ? window.screenLeft : window.screenX;
+  const screenTop = window.screenTop !== undefined ? window.screenTop : window.screenY;
+
+  const screenWidth = window.innerWidth
+    ? window.innerWidth
+    : document.documentElement.clientWidth
+    ? document.documentElement.clientWidth
+    : window.screen.width;
+  const screenHeight = window.innerHeight
+    ? window.innerHeight
+    : document.documentElement.clientHeight
+    ? document.documentElement.clientHeight
+    : window.screen.height;
+
+  const left = Math.max(0, Math.round(screenLeft + (screenWidth - w) / 2));
+  const top = Math.max(0, Math.round(screenTop + (screenHeight - h) / 2));
+
+  return `width=${w},height=${h},top=${top},left=${left},menubar=no,toolbar=no,location=no,resizable=yes`;
+}
+
 export default function BotoneraPage() {
   // Page Main Operating Mode: null (landing / sin elegir) | 'analysis' (etiquetado en vivo) | 'edit' (configurar pizarras)
   const [pageMode, setPageMode] = useState<'analysis' | 'edit' | null>(null);
@@ -1080,7 +1108,7 @@ export default function BotoneraPage() {
 
     if (!body) return;
 
-    const win = window.open('', 'sao_botonera_video', 'width=1024,height=600,menubar=no,toolbar=no,location=no');
+    const win = window.open('', 'sao_botonera_video', getCenteredPopUpFeatures(1024, 600));
     if (!win) {
       alert('El navegador ha bloqueado la ventana emergente. Permite las ventanas emergentes de esta página para sacar el vídeo.');
       return;
@@ -1338,7 +1366,7 @@ export default function BotoneraPage() {
 
     if (videoType === 'local' && videoElementRef.current?.src) {
       const src = videoElementRef.current.src;
-      const win = window.open('', '_blank', 'width=960,height=560,menubar=no,toolbar=no,location=no');
+      const win = window.open('', '_blank', getCenteredPopUpFeatures(960, 560));
       if (win) {
         win.document.write(`
           <!doctype html>
@@ -1366,7 +1394,7 @@ export default function BotoneraPage() {
       const embedUrl = new URL(toEmbedUrl(videoUrl));
       embedUrl.searchParams.set('start', Math.floor(targetVideoTime).toString());
       embedUrl.searchParams.set('autoplay', '1');
-      window.open(embedUrl.toString(), '_blank', 'width=960,height=560,menubar=no,toolbar=no,location=no');
+      window.open(embedUrl.toString(), '_blank', getCenteredPopUpFeatures(960, 560));
     } else {
       alert(
         `Para buscar este evento en el vídeo, rebobina a ${Math.floor(targetVideoTime / 60)}:${String(Math.floor(targetVideoTime % 60)).padStart(2, '0')} del vídeo.`
@@ -1985,10 +2013,10 @@ export default function BotoneraPage() {
              * │  Feed Eventos (abajo)   │  Estadísticas            │
              * └─────────────────────────┴──────────────────────────┘
              */
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
 
               {/* ── COLUMNA IZQUIERDA (7/12): Vídeo + Feed de Eventos ── */}
-              <div className="lg:col-span-7 flex flex-col gap-5">
+              <div className="lg:col-span-7 flex flex-col gap-5 h-full">
                 <BotoneraVideoPlayer
                   videoType={videoType}
                   videoUrl={videoUrl}
@@ -2026,7 +2054,7 @@ export default function BotoneraPage() {
               </div>
 
               {/* ── COLUMNA DERECHA (5/12): Cronómetro → Botonera → Stats ── */}
-              <div className="lg:col-span-5 flex flex-col gap-4">
+              <div className="lg:col-span-5 flex flex-col gap-4 h-full">
 
                 {/* 1. Cronómetro compacto — DIRECTAMENTE encima de la botonera */}
                 <BotoneraStopwatch
@@ -2078,7 +2106,7 @@ export default function BotoneraPage() {
              * │  Selector Jugadores + Botonera grande  │  Estadísticas    │
              * └────────────────────────────────────────┴──────────────────┘
              */
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
 
               {/* ── FILA SUPERIOR (12/12): el vídeo está fuera, así que su hueco
                      se devuelve a la página como una barra fina con el botón de
@@ -2150,7 +2178,7 @@ export default function BotoneraPage() {
               </div>
 
               {/* ── COLUMNA DERECHA (4/12): Feed + Stats ── */}
-              <div className="lg:col-span-4 flex flex-col gap-4">
+              <div className="lg:col-span-4 flex flex-col gap-4 h-full">
                 <BotoneraEventLog
                   events={events}
                   onDeleteEvent={handleDeleteEvent}

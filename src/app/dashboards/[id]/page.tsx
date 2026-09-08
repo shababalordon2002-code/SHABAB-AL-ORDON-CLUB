@@ -2,7 +2,7 @@
 
 import React, { use, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   ArrowLeft,
   BarChart3,
@@ -12,6 +12,7 @@ import {
   Eye,
   Filter,
   LayoutDashboard,
+  Pencil,
   Plus,
   RefreshCw,
   Save,
@@ -39,17 +40,24 @@ import { DashboardGrid } from '@/components/dashboards/DashboardGrid';
 import { WidgetEditorModal } from '@/components/dashboards/WidgetEditorModal';
 import { createWidget, WIDGET_TYPES } from '@/components/dashboards/widget-catalog';
 import { buildButtonByButtonWidgets, DEFAULT_BUTTONS } from '@/components/dashboards/dashboard-presets';
+import { MatchResultHeader } from '@/components/dashboards/MatchResultHeader';
+import { useAuth } from '@/components/providers/AuthProvider';
 
 export default function DashboardDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
   const dashboardId = resolvedParams.id;
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const { isAdmin } = useAuth();
+  // Sólo se entra en el editor cuando se navega explícitamente con ?mode=edit
+  // (botón "Editar dashboard", visible únicamente para admin). Clicar el partido
+  // desde el listado siempre abre el dashboard en modo visualización.
+  const canEdit = isAdmin && searchParams.get('mode') === 'edit';
 
   const [dashboard, setDashboard] = useState<MatchDashboard | null>(null);
   const [match, setMatch] = useState<Match | null>(null);
   const [events, setEvents] = useState<NormalizedEvent[]>([]);
   const [template, setTemplate] = useState<BotoneraTemplate | null>(null);
-  const [editMode, setEditMode] = useState(true);
   const [editingWidget, setEditingWidget] = useState<DashboardWidget | null>(null);
   const [showCatalogModal, setShowCatalogModal] = useState(false);
   const [selectedButtonFilter, setSelectedButtonFilter] = useState<string>('');
@@ -74,6 +82,8 @@ export default function DashboardDetailPage({ params }: { params: Promise<{ id: 
       }
     }
   }, [dashboardId]);
+
+  const editMode = canEdit;
 
   const ctx = useMemo(() => buildEngineContext(template), [template]);
   const fields = useMemo(() => getAvailableFields(ctx), [ctx]);
@@ -220,13 +230,17 @@ export default function DashboardDetailPage({ params }: { params: Promise<{ id: 
             <span>Volver a Dashboards</span>
           </Link>
           <div className="flex items-center gap-3">
-            <input
-              type="text"
-              value={dashboard.name}
-              onChange={(e) => setDashboard({ ...dashboard, name: e.target.value })}
-              onBlur={() => handleSaveDashboard()}
-              className="text-lg font-extrabold text-white bg-transparent border-b border-transparent hover:border-slate-700 focus:border-amber-500 focus:outline-none transition-all"
-            />
+            {canEdit ? (
+              <input
+                type="text"
+                value={dashboard.name}
+                onChange={(e) => setDashboard({ ...dashboard, name: e.target.value })}
+                onBlur={() => handleSaveDashboard()}
+                className="text-lg font-extrabold text-white bg-transparent border-b border-transparent hover:border-slate-700 focus:border-amber-500 focus:outline-none transition-all"
+              />
+            ) : (
+              <h1 className="text-lg font-extrabold text-white">{dashboard.name}</h1>
+            )}
             <span className="text-xs px-2.5 py-0.5 rounded bg-slate-950 border border-slate-800 text-amber-400 font-mono font-bold">
               {events.length} eventos
             </span>
@@ -238,29 +252,22 @@ export default function DashboardDetailPage({ params }: { params: Promise<{ id: 
           </p>
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            onClick={handleGenerateButtonByButtonWidgets}
-            className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-sky-300 font-extrabold text-xs flex items-center gap-1.5 border border-sky-500/30 shadow transition-all cursor-pointer"
-            title="Generar 1 widget exclusivo por cada botón de la botonera (Córner, Falta, Tiro, Pase, etc.)"
-          >
-            <Zap className="w-4 h-4 text-sky-400 fill-sky-400/20" />
-            <span>1 Widget por Botón</span>
-          </button>
+        {canEdit ? (
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="px-3 py-2 rounded-xl bg-amber-500/10 text-amber-300 border border-amber-500/30 font-extrabold text-xs flex items-center gap-1.5">
+              <Edit3 className="w-4 h-4" />
+              <span>Editor de Dashboard</span>
+            </span>
 
-          <button
-            onClick={() => setEditMode(!editMode)}
-            className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border cursor-pointer ${
-              editMode
-                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-sm'
-                : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
-            }`}
-          >
-            {editMode ? <Edit3 className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-            <span>{editMode ? 'Modo Edición' : 'Vista Previa'}</span>
-          </button>
+            <button
+              onClick={handleGenerateButtonByButtonWidgets}
+              className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-sky-300 font-extrabold text-xs flex items-center gap-1.5 border border-sky-500/30 shadow transition-all cursor-pointer"
+              title="Generar 1 widget exclusivo por cada botón de la botonera (Córner, Falta, Tiro, Pase, etc.)"
+            >
+              <Zap className="w-4 h-4 text-sky-400 fill-sky-400/20" />
+              <span>1 Widget por Botón</span>
+            </button>
 
-          {editMode && (
             <button
               onClick={() => setShowCatalogModal(true)}
               className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-extrabold text-xs flex items-center gap-1.5 shadow transition-all cursor-pointer"
@@ -268,17 +275,36 @@ export default function DashboardDetailPage({ params }: { params: Promise<{ id: 
               <Plus className="w-4 h-4 stroke-[3]" />
               <span>Añadir Widget</span>
             </button>
-          )}
 
-          <button
-            onClick={() => handleSaveDashboard()}
+            <button
+              onClick={() => handleSaveDashboard()}
+              className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
+            >
+              {isSaved ? <Check className="w-4 h-4 text-slate-950 stroke-[3]" /> : <Save className="w-4 h-4 stroke-[2.5]" />}
+              <span>{isSaved ? '¡Guardado!' : 'Guardar Pizarra'}</span>
+            </button>
+
+            <Link
+              href={`/dashboards/${dashboardId}`}
+              className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs flex items-center gap-1.5 border border-slate-700 cursor-pointer"
+            >
+              <Eye className="w-4 h-4" />
+              <span>Salir del editor</span>
+            </Link>
+          </div>
+        ) : isAdmin ? (
+          <Link
+            href={`/dashboards/${dashboardId}?mode=edit`}
             className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
           >
-            {isSaved ? <Check className="w-4 h-4 text-slate-950 stroke-[3]" /> : <Save className="w-4 h-4 stroke-[2.5]" />}
-            <span>{isSaved ? '¡Guardado!' : 'Guardar Pizarra'}</span>
-          </button>
-        </div>
+            <Pencil className="w-4 h-4 stroke-[2.5]" />
+            <span>Editar dashboard</span>
+          </Link>
+        ) : null}
       </div>
+
+      {/* Resultado, escudos y comparativa de métricas */}
+      <MatchResultHeader match={match} events={events} ctx={ctx} />
 
       {/* Button-by-Button Filtering Bar */}
       <div className="bg-slate-900 border border-slate-800 p-3 rounded-xl flex items-center gap-2 overflow-x-auto">
@@ -321,16 +347,24 @@ export default function DashboardDetailPage({ params }: { params: Promise<{ id: 
             <h3 className="text-sm font-bold text-slate-300">
               No hay widgets {selectedButtonFilter ? `para el botón "${selectedButtonFilter}"` : 'en este dashboard'}
             </h3>
-            <p className="text-xs text-slate-500 max-w-md mx-auto">
-              Haz clic en "1 Widget por Botón" para generar la plantilla completa o en "+ Añadir Widget" para añadir uno personalizado.
-            </p>
-            <button
-              onClick={handleGenerateButtonByButtonWidgets}
-              className="mt-2 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-extrabold text-xs cursor-pointer shadow"
-            >
-              <Zap className="w-4 h-4" />
-              <span>Generar 1 Widget por Botón</span>
-            </button>
+            {canEdit ? (
+              <>
+                <p className="text-xs text-slate-500 max-w-md mx-auto">
+                  Haz clic en "1 Widget por Botón" para generar la plantilla completa o en "+ Añadir Widget" para añadir uno personalizado.
+                </p>
+                <button
+                  onClick={handleGenerateButtonByButtonWidgets}
+                  className="mt-2 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-extrabold text-xs cursor-pointer shadow"
+                >
+                  <Zap className="w-4 h-4" />
+                  <span>Generar 1 Widget por Botón</span>
+                </button>
+              </>
+            ) : (
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                Este dashboard todavía no tiene visualizaciones configuradas.
+              </p>
+            )}
           </div>
         ) : (
           <DashboardGrid

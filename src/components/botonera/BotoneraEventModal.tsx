@@ -29,8 +29,8 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
   onSave,
   onCancel,
 }) => {
-  // Side-docking state so event modal sits on the right side without covering the match video
-  const [isSideDocked, setIsSideDocked] = useState<boolean>(true);
+  // Side-docking state (false by default so event modal appears centered in screen)
+  const [isSideDocked, setIsSideDocked] = useState<boolean>(false);
 
   // Descriptors state
   const [selectedDescriptors, setSelectedDescriptors] = useState<string[]>([...initialGlobalDescriptors]);

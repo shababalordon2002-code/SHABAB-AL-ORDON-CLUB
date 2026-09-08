@@ -239,7 +239,7 @@ const SEED_MATCHES: Match[] = [
     round: 'Jornada 1',
     season: '2026/2027',
     home_team: 'Shabab Al Ordon',
-    home_team_logo: 'https://static.flashscore.com/res/image/data/b5mbVfDa-dvq5wjeM.png',
+    home_team_logo: '/logo.png',
     away_team: 'Al Ramtha',
     away_team_logo: 'https://static.flashscore.com/res/image/data/AcAGnYwS-riw7cLfq.png',
     home_score: 1,
@@ -260,7 +260,7 @@ const SEED_MATCHES: Match[] = [
     home_team: 'Al Jazeera Amman',
     home_team_logo: 'https://static.flashscore.com/res/image/data/YZJS9hAr-WdX72eig.png',
     away_team: 'Shabab Al Ordon',
-    away_team_logo: 'https://static.flashscore.com/res/image/data/b5mbVfDa-dvq5wjeM.png',
+    away_team_logo: '/logo.png',
     home_score: 0,
     away_score: 0,
     status: 'Programado',
@@ -277,7 +277,7 @@ const SEED_MATCHES: Match[] = [
     round: 'Jornada 3',
     season: '2026/2027',
     home_team: 'Shabab Al Ordon',
-    home_team_logo: 'https://static.flashscore.com/res/image/data/b5mbVfDa-dvq5wjeM.png',
+    home_team_logo: '/logo.png',
     away_team: 'Al Hussein',
     away_team_logo: 'https://static.flashscore.com/res/image/data/Ey5MadGG-WnrX0gmJ.png',
     home_score: 0,
@@ -294,7 +294,7 @@ const SEED_MATCHES: Match[] = [
     round: 'Jornada Previa',
     season: '2026/2027',
     home_team: 'Shabab Al Ordon',
-    home_team_logo: 'https://static.flashscore.com/res/image/data/b5mbVfDa-dvq5wjeM.png',
+    home_team_logo: '/logo.png',
     away_team: 'Al-Faisaly SC',
     away_team_logo: 'https://static.flashscore.com/res/image/data/AcAGnYwS-riw7cLfq.png',
     home_score: 2,
@@ -338,6 +338,18 @@ const SEED_IMPORT_LOGS: ImportLog[] = [
   }
 ];
 
+function sanitizeMatchLogos(m: Match): Match {
+  const norm = (s: string) => (s || '').toLowerCase();
+  const isShababHome = norm(m.home_team).includes('shabab') || norm(m.home_team).includes('ordon');
+  const isShababAway = norm(m.away_team).includes('shabab') || norm(m.away_team).includes('ordon');
+
+  return {
+    ...m,
+    home_team_logo: isShababHome ? '/logo.png' : m.home_team_logo,
+    away_team_logo: isShababAway ? '/logo.png' : m.away_team_logo,
+  };
+}
+
 function getFromStorage<T>(key: string, defaultValue: T): T {
   if (typeof window === 'undefined') return defaultValue;
   try {
@@ -366,7 +378,10 @@ function setToStorage<T>(key: string, value: T): void {
 export const dbStore = {
   // Matches
   getMatches(): Match[] {
-    return getFromStorage(STORAGE_KEYS.MATCHES, SEED_MATCHES);
+    const matches: Match[] = getFromStorage(STORAGE_KEYS.MATCHES, SEED_MATCHES);
+    const sanitized = matches.map(sanitizeMatchLogos);
+    setToStorage(STORAGE_KEYS.MATCHES, sanitized);
+    return sanitized;
   },
 
   async syncMatchesFromSupabase(): Promise<Match[]> {
@@ -375,11 +390,13 @@ export const dbStore = {
       const allLocal = this.getMatches();
       const remoteIds = new Set(remote.map(m => m.id));
       const localOnly = allLocal.filter(m => !remoteIds.has(m.id));
-      const merged = [...remote, ...localOnly];
+      const merged = [...remote, ...localOnly].map(sanitizeMatchLogos);
       setToStorage(STORAGE_KEYS.MATCHES, merged);
       return merged;
     }
-    return this.getMatches();
+    const sanitized = this.getMatches();
+    setToStorage(STORAGE_KEYS.MATCHES, sanitized);
+    return sanitized;
   },
 
   getMatchById(id: string): Match | undefined {
@@ -417,7 +434,7 @@ export const dbStore = {
     let savedTarget: Match;
     if (existingIdx >= 0) {
       const existing = matches[existingIdx];
-      savedTarget = {
+      savedTarget = sanitizeMatchLogos({
         ...existing,
         ...match,
         id: existing.id, // Keep existing ID so links and event relations don't break
@@ -432,13 +449,13 @@ export const dbStore = {
         p1_video_start_time: match.p1_video_start_time !== undefined ? match.p1_video_start_time : existing.p1_video_start_time,
         p2_video_start_time: match.p2_video_start_time !== undefined ? match.p2_video_start_time : existing.p2_video_start_time,
         botonera_template_id: match.botonera_template_id !== undefined ? match.botonera_template_id : existing.botonera_template_id,
-      };
+      });
       matches[existingIdx] = savedTarget;
     } else {
-      savedTarget = match;
+      savedTarget = sanitizeMatchLogos(match);
       matches.unshift(savedTarget);
     }
-    setToStorage(STORAGE_KEYS.MATCHES, matches);
+    setToStorage(STORAGE_KEYS.MATCHES, matches.map(sanitizeMatchLogos));
 
     // Sync match analysis data to Supabase
     saveMatchesToSupabase([savedTarget]).catch((err) => {

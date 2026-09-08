@@ -156,8 +156,8 @@ export function TeamLogo({
       }
     }
 
-    // 4. Fallback for Shabab Al Ordon Club
-    if (!resolvedUrl && (cleanName.includes('shabab') || cleanName.includes('ordon'))) {
+    // Enforce /logo.png for Shabab Al Ordon Club
+    if (cleanName.includes('shabab') || cleanName.includes('ordon')) {
       resolvedUrl = '/logo.png';
     }
   }

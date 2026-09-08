@@ -223,12 +223,12 @@ export default function PartidosPage() {
                   {/* Home Team */}
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2.5 overflow-hidden">
-                      {m.home_team_logo ? (
+                      {isShababHome || m.home_team_logo ? (
                         <img 
-                          src={m.home_team_logo} 
+                          src={isShababHome ? '/logo.png' : (m.home_team_logo || '/logo.png')} 
                           alt={m.home_team} 
-                          className="w-6 h-6 object-contain shrink-0 rounded bg-slate-950 p-0.5"
-                          onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }}
+                          className="w-6 h-6 object-contain shrink-0 rounded"
+                          onError={(e) => { (e.target as HTMLImageElement).src = '/logo.png'; }}
                         />
                       ) : (
                         <div className="w-6 h-6 rounded bg-slate-800 flex items-center justify-center text-[10px] font-bold text-slate-400 shrink-0">
@@ -252,12 +252,12 @@ export default function PartidosPage() {
                   {/* Away Team */}
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2.5 overflow-hidden">
-                      {m.away_team_logo ? (
+                      {isShababAway || m.away_team_logo ? (
                         <img 
-                          src={m.away_team_logo} 
+                          src={isShababAway ? '/logo.png' : (m.away_team_logo || '/logo.png')} 
                           alt={m.away_team} 
-                          className="w-6 h-6 object-contain shrink-0 rounded bg-slate-950 p-0.5"
-                          onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }}
+                          className="w-6 h-6 object-contain shrink-0 rounded"
+                          onError={(e) => { (e.target as HTMLImageElement).src = '/logo.png'; }}
                         />
                       ) : (
                         <div className="w-6 h-6 rounded bg-slate-800 flex items-center justify-center text-[10px] font-bold text-slate-400 shrink-0">

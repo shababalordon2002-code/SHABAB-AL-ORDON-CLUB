@@ -65,29 +65,44 @@ export function buildButtonByButtonWidgets(template?: BotoneraTemplate | null): 
 
   currentY += 8;
 
-  // UN WIDGET EXCLUSIVO POR CADA BOTÓN (Córner, Falta, Tiro, Pase, etc.)
+  // POR CADA BOTÓN: una gráfica (barras/otro) + su campograma asociado, uno junto al otro.
   sourceList.forEach((btn, index) => {
-    const x = (index % 2) * 6;
-    const row = Math.floor(index / 2);
-    const y = currentY + row * 8;
+    const y = currentY + index * 8;
+    const slug = btn.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const chartType = btn.defaultType?.startsWith('pitch_') ? 'bar' : btn.defaultType || 'bar';
+    const pitchType = btn.pitchRequired === 'vector_arrow' ? 'pitch_arrows' : 'pitch_points';
 
-    const isPitch = btn.defaultType?.startsWith('pitch_');
+    const filters = [
+      {
+        id: `filter_btn_${index}`,
+        field: 'event_type',
+        operator: 'in' as const,
+        values: [btn.name],
+      },
+    ];
 
+    // Gráfica del botón (izquierda)
     widgets.push({
-      ...createWidget(btn.defaultType || 'bar', { x, y }),
-      id: `w_btn_${index}_${btn.name.toLowerCase().replace(/[^a-z0-9]/g, '')}`,
-      title: `Botonera: ${btn.name}`,
-      subtitle: `Widget exclusivo para el botón ${btn.name} (${btn.category || 'Acción'})`,
-      dimension: isPitch ? undefined : 'player_name',
-      breakdown: isPitch ? undefined : 'outcome',
-      filters: [
-        {
-          id: `filter_btn_${index}`,
-          field: 'event_type',
-          operator: 'in',
-          values: [btn.name],
-        },
-      ],
+      ...createWidget(chartType, { x: 0, y }),
+      id: `w_btn_${index}_${slug}_chart`,
+      title: `${btn.name} · Gráfica`,
+      subtitle: `${btn.category || 'Acción'} · desglose por jugador y resultado`,
+      dimension: 'player_name',
+      breakdown: 'outcome',
+      filters,
+      w: 6,
+      h: 8,
+    });
+
+    // Campograma asociado (derecha)
+    widgets.push({
+      ...createWidget(pitchType, { x: 6, y }),
+      id: `w_btn_${index}_${slug}_pitch`,
+      title: `${btn.name} · Campograma`,
+      subtitle: `Ubicación en el campo de las acciones "${btn.name}"`,
+      dimension: undefined,
+      breakdown: 'outcome',
+      filters,
       w: 6,
       h: 8,
     });

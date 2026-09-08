@@ -40,7 +40,7 @@ async function scrapeFlashscoreViaFetch(maxMatches = 20): Promise<Match[]> {
           flashscore_mid: mid,
           flashscore_url: matchUrl,
           home_team: 'Shabab Al Ordon',
-          home_team_logo: 'https://static.flashscore.com/res/image/data/b5mbVfDa-dvq5wjeM.png',
+          home_team_logo: '/logo.png',
           away_team: 'Rival Jordan League',
           away_team_logo: undefined,
           date: new Date().toLocaleDateString('es-ES'),

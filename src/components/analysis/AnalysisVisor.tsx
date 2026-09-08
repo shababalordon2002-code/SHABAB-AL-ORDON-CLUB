@@ -260,9 +260,9 @@ export const AnalysisVisor: React.FC<AnalysisVisorProps> = ({
         <div className="p-4 overflow-y-auto space-y-5 flex-1 text-slate-200">
           {/* TAB 1: ESTRUCTURA EXACTA DEL EDITOR (VÍDEO + FEED IZQUIERDA, SIN BOTONERA + ESTADÍSTICAS DERECHA) */}
           {activeTab === 'editor_view' && (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
               {/* ── COLUMNA IZQUIERDA (7/12): Reproductor de Vídeo Sincronizado + Feed de Registros (Solo Lectura) ── */}
-              <div className="lg:col-span-7 flex flex-col gap-5">
+              <div className="lg:col-span-7 flex flex-col gap-5 h-full">
                 <BotoneraVideoPlayer
                   videoType={resolvedVideoType}
                   videoUrl={resolvedVideoUrl}
@@ -285,7 +285,7 @@ export const AnalysisVisor: React.FC<AnalysisVisorProps> = ({
               </div>
 
               {/* ── COLUMNA DERECHA (5/12): Estadísticas Provisionales + Panel de Métricas Detalladas (Sin Botonera) ── */}
-              <div className="lg:col-span-5 flex flex-col gap-4">
+              <div className="lg:col-span-5 flex flex-col gap-4 h-full">
                 <BotoneraLiveStats
                   events={events}
                   videoUrl={resolvedVideoUrl}
