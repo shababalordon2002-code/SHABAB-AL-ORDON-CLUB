@@ -344,33 +344,56 @@ export default function PartidosPage() {
                 </div>
 
                 <div className="flex flex-col gap-2 pt-1">
-                  <button
-                    onClick={() => setSelectedMatchForAnalysis({ match: m, analyses: savedAnalyses })}
-                    className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-500 via-amber-600 to-amber-500 hover:from-emerald-400 hover:to-amber-400 text-slate-950 font-black text-xs shadow-md shadow-amber-950/40 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <PlayCircle className="w-4 h-4 stroke-[2.5]" />
-                    <span>Entrar en el Análisis ({savedAnalyses.length})</span>
-                  </button>
+                  {savedAnalyses.length > 0 ? (
+                    <>
+                      <button
+                        onClick={() => setSelectedMatchForAnalysis({ match: m, analyses: savedAnalyses })}
+                        className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-500 via-amber-600 to-amber-500 hover:from-emerald-400 hover:to-amber-400 text-slate-950 font-black text-xs shadow-md shadow-amber-950/40 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <PlayCircle className="w-4 h-4 stroke-[2.5]" />
+                        <span>Entrar en el Análisis ({savedAnalyses.length})</span>
+                      </button>
 
-                  <div className="flex items-center gap-2">
-                    <Link
-                      href={`/partidos/${m.id}`}
-                      className="flex-1 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 text-center transition-colors flex items-center justify-center gap-1"
-                    >
-                      <span>Ver Detalle & Eventos</span>
-                      <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
-                    </Link>
+                      <div className="flex items-center gap-2">
+                        <Link
+                          href={`/partidos/${m.id}`}
+                          className="flex-1 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 text-center transition-colors flex items-center justify-center gap-1"
+                        >
+                          <span>Ver Detalle & Eventos</span>
+                          <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+                        </Link>
 
-                    {m.import_status !== 'XML Importado' && (
+                        {m.import_status !== 'XML Importado' && (
+                          <Link
+                            href={`/importar-xml?match_id=${m.id}`}
+                            className="p-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 transition-colors"
+                            title="Importar XML para este partido"
+                          >
+                            <UploadCloud className="w-4 h-4" />
+                          </Link>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <Link
+                        href={`/botonera?match_id=${m.id}&mode=tag`}
+                        className="flex-1 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 font-extrabold text-xs border border-emerald-500/30 text-center transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Plus className="w-4 h-4 text-emerald-400" />
+                        <span>Iniciar Análisis (Botonera)</span>
+                      </Link>
+
                       <Link
                         href={`/importar-xml?match_id=${m.id}`}
-                        className="p-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 transition-colors"
+                        className="p-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 transition-colors flex items-center gap-1 text-xs font-bold"
                         title="Importar XML para este partido"
                       >
                         <UploadCloud className="w-4 h-4" />
+                        <span>XML</span>
                       </Link>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
