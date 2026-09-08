@@ -48,20 +48,32 @@ export async function GET() {
     // 1. Fetch all auth users from Supabase Auth Admin API
     const { data: authData, error: authError } = await adminSupabase.auth.admin.listUsers();
     
-    if (authError) {
-      console.warn('Could not list auth users:', authError.message);
-    }
-
-    const authUsers = authData?.users || [];
-
     // 2. Fetch profiles from database (service role key bypasses RLS)
-    const { data: profiles } = await adminSupabase
+    const { data: profiles, error: profilesError } = await adminSupabase
       .from('profiles')
       .select('*');
 
-    const profilesMap = new Map((profiles || []).map((p) => [p.id, p]));
+    if (authError) {
+      console.warn('Could not list auth users from admin API:', authError.message);
+    }
+    if (profilesError) {
+      console.warn('Could not list profiles from database:', profilesError.message);
+    }
 
-    // 3. Combine authUsers and profiles so EVERY auth user is listed!
+    // If both failed, surface the error to client
+    if (authError && profilesError) {
+      return NextResponse.json(
+        { error: `Error de Supabase Auth (${authError.message}) y Profiles (${profilesError.message})` },
+        { status: 500 }
+      );
+    }
+
+    const authUsers = authData?.users || [];
+    const profilesList = profiles || [];
+
+    const profilesMap = new Map(profilesList.map((p) => [p.id, p]));
+
+    // 3. Combine authUsers and profiles so EVERY user is listed!
     const combinedUsers = authUsers.map((authUser) => {
       const profile = profilesMap.get(authUser.id);
       const isOwner = authUser.email === 'shababalordon2002@gmail.com';
@@ -83,13 +95,13 @@ export async function GET() {
 
     // Include profiles not in authUsers
     const authUserIds = new Set(authUsers.map((u) => u.id));
-    (profiles || []).forEach((p) => {
+    profilesList.forEach((p) => {
       if (!authUserIds.has(p.id)) {
         combinedUsers.push({
           id: p.id,
           email: p.email || '',
           full_name: p.full_name || '',
-          role: p.role || 'user',
+          role: (p.role as any) || 'user',
           created_at: p.created_at,
           last_sign_in_at: null,
         });

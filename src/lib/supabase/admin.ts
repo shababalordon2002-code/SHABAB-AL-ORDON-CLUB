@@ -12,7 +12,12 @@ function getValidUrl() {
 }
 
 function getValidServiceRoleKey() {
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim().replace(/^["']|["']$/g, '');
+  const key = (
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_KEY ||
+    process.env.SUPABASE_SECRET_KEY
+  )?.trim().replace(/^["']|["']$/g, '');
+
   if (key && key.startsWith('eyJ') && key.split('.').length === 3 && key.length > 100) {
     return key;
   }

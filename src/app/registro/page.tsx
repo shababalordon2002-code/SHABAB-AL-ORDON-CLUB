@@ -34,6 +34,13 @@ function RegistroFormContent() {
 
   const supabase = createClient();
 
+  useEffect(() => {
+    // Force clear inputs on mount to prevent aggressive browser autofill of saved admin credentials
+    setEmail('');
+    setPassword('');
+    setFullName('');
+  }, []);
+
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -164,7 +171,7 @@ function RegistroFormContent() {
           </div>
         )}
 
-        <form onSubmit={handleRegister} className="space-y-4 text-sm">
+        <form onSubmit={handleRegister} autoComplete="off" className="space-y-4 text-sm">
           <div>
             <label className="block text-xs font-medium text-slate-300 mb-1.5">Nombre Completo</label>
             <div className="relative">
@@ -172,6 +179,8 @@ function RegistroFormContent() {
               <input
                 type="text"
                 required
+                autoComplete="off"
+                name="new_full_name"
                 placeholder="Ej. Carlos Pérez"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
@@ -187,6 +196,8 @@ function RegistroFormContent() {
               <input
                 type="email"
                 required
+                autoComplete="off"
+                name="new_user_email"
                 placeholder="analista@shababalordon.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -203,6 +214,8 @@ function RegistroFormContent() {
                 type="password"
                 required
                 minLength={6}
+                autoComplete="new-password"
+                name="new_user_password"
                 placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
