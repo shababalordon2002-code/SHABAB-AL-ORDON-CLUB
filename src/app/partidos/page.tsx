@@ -287,8 +287,14 @@ export default function PartidosPage() {
                     <FileCode2 className="w-3.5 h-3.5 text-slate-400" />
                     <span className="text-slate-300 font-semibold">
                       {(() => {
-                        const localEvs = dbStore.getNormalizedEvents(m.id);
-                        const count = activeSession?.events?.length ?? (localEvs.length > 0 ? localEvs.length : (m.event_count || 0));
+                        if (activeSession && activeSession.events?.length) {
+                          return `${activeSession.events.length} eventos`;
+                        }
+                        const savedAnalyses = dbStore.getAnalyses(m.id);
+                        if (savedAnalyses.length === 0) {
+                          return '0 eventos';
+                        }
+                        const count = savedAnalyses[0].events?.length || dbStore.getNormalizedEvents(m.id).length;
                         return `${count} eventos`;
                       })()}
                     </span>

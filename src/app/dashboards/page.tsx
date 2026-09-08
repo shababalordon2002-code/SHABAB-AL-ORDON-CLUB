@@ -82,7 +82,7 @@ export default function DashboardsPage() {
           dashboards: dashboards.filter((d) => d.match_id === match.id),
         };
       })
-      .filter((b) => b.events.length > 0 || b.analyses.length > 0 || b.dashboards.length > 0)
+      .filter((b) => b.analyses.length > 0)
       .sort((a, b) => (a.match.date < b.match.date ? 1 : -1));
 
     setBlocks(next);
