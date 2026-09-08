@@ -11,20 +11,31 @@ async function verifyAdmin() {
     return { authorized: false, status: 401, error: 'No autenticado' };
   }
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .single();
-
-  if (profile?.role !== 'admin') {
-    return { authorized: false, status: 403, error: 'Acceso denegado. Se requieren permisos de Administrador.' };
+  // 1. Check metadata
+  if (user.user_metadata?.role === 'admin' || user.email === 'shababalordon2002@gmail.com') {
+    return { authorized: true, user };
   }
 
-  return { authorized: true, user };
+  // 2. Check profiles via Service Role Key (bypassing RLS recursion)
+  try {
+    const adminSupabase = createAdminClient();
+    const { data: profile } = await adminSupabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single();
+
+    if (profile?.role === 'admin') {
+      return { authorized: true, user };
+    }
+  } catch (e) {
+    console.warn('Error checking profile in verifyAdmin:', e);
+  }
+
+  return { authorized: false, status: 403, error: 'Acceso denegado. Se requieren permisos de Administrador.' };
 }
 
-// GET: List all users with profiles
+// GET: List all users (combines Auth users and Profiles)
 export async function GET() {
   const authCheck = await verifyAdmin();
   if (!authCheck.authorized) {
@@ -33,32 +44,56 @@ export async function GET() {
 
   try {
     const adminSupabase = createAdminClient();
+
+    // 1. Fetch all auth users from Supabase Auth Admin API
+    const { data: authData, error: authError } = await adminSupabase.auth.admin.listUsers();
     
-    // Fetch profiles
-    const { data: profiles, error: profilesError } = await adminSupabase
-      .from('profiles')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    if (profilesError) {
-      return NextResponse.json({ error: profilesError.message }, { status: 500 });
-    }
-
-    // Fetch auth users to get last_sign_in_at
-    const { data: { users: authUsers }, error: authError } = await adminSupabase.auth.admin.listUsers();
-
     if (authError) {
       console.warn('Could not list auth users:', authError.message);
     }
 
-    const authMap = new Map(authUsers?.map((u) => [u.id, u]) || []);
+    const authUsers = authData?.users || [];
 
-    const combinedUsers = (profiles || []).map((p) => {
-      const authUser = authMap.get(p.id);
+    // 2. Fetch profiles from database (service role key bypasses RLS)
+    const { data: profiles } = await adminSupabase
+      .from('profiles')
+      .select('*');
+
+    const profilesMap = new Map((profiles || []).map((p) => [p.id, p]));
+
+    // 3. Combine authUsers and profiles so EVERY auth user is listed!
+    const combinedUsers = authUsers.map((authUser) => {
+      const profile = profilesMap.get(authUser.id);
+      const isOwner = authUser.email === 'shababalordon2002@gmail.com';
+      const role = isOwner
+        ? 'admin'
+        : profile?.role || authUser.user_metadata?.role || 'viewer';
+      
+      const fullName = profile?.full_name || authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'Usuario';
+
       return {
-        ...p,
-        last_sign_in_at: authUser?.last_sign_in_at || null,
+        id: authUser.id,
+        email: authUser.email || '',
+        full_name: fullName,
+        role: role,
+        created_at: profile?.created_at || authUser.created_at,
+        last_sign_in_at: authUser.last_sign_in_at || null,
       };
+    });
+
+    // Include profiles not in authUsers
+    const authUserIds = new Set(authUsers.map((u) => u.id));
+    (profiles || []).forEach((p) => {
+      if (!authUserIds.has(p.id)) {
+        combinedUsers.push({
+          id: p.id,
+          email: p.email || '',
+          full_name: p.full_name || '',
+          role: p.role || 'user',
+          created_at: p.created_at,
+          last_sign_in_at: null,
+        });
+      }
     });
 
     return NextResponse.json({ users: combinedUsers });
@@ -83,6 +118,7 @@ export async function POST(request: Request) {
     }
 
     const adminSupabase = createAdminClient();
+    const assignedRole = role || 'viewer';
 
     // Create auth user
     const { data: newUser, error: createError } = await adminSupabase.auth.admin.createUser({
@@ -91,7 +127,7 @@ export async function POST(request: Request) {
       email_confirm: true,
       user_metadata: {
         full_name: full_name || email.split('@')[0],
-        role: role || 'user',
+        role: assignedRole,
       },
     });
 
@@ -105,7 +141,7 @@ export async function POST(request: Request) {
         id: newUser.user.id,
         email,
         full_name: full_name || email.split('@')[0],
-        role: role || 'user',
+        role: assignedRole,
       });
     }
 
@@ -136,12 +172,19 @@ export async function PATCH(request: Request) {
     if (role) updates.role = role;
     if (full_name !== undefined) updates.full_name = full_name;
 
+    // Update profiles table
     const { data, error } = await adminSupabase
       .from('profiles')
-      .update(updates)
-      .eq('id', userId)
+      .upsert({ id: userId, ...updates })
       .select()
       .single();
+
+    // Also update auth.user_metadata.role
+    if (role) {
+      await adminSupabase.auth.admin.updateUserById(userId, {
+        user_metadata: { role },
+      });
+    }
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 400 });
@@ -176,6 +219,7 @@ export async function DELETE(request: Request) {
     const adminSupabase = createAdminClient();
 
     const { error } = await adminSupabase.auth.admin.deleteUser(userId);
+    await adminSupabase.from('profiles').delete().eq('id', userId);
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 400 });

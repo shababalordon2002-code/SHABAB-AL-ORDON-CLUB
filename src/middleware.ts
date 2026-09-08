@@ -6,13 +6,8 @@ export async function middleware(request: NextRequest) {
     request,
   });
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  // If Supabase environment variables are not configured yet, allow access to request
-  if (!supabaseUrl || !supabaseAnonKey || supabaseUrl.includes('tu-proyecto')) {
-    return supabaseResponse;
-  }
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://oyxzggegkzcvlcrvwpxs.supabase.co';
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im95eHpnZ2Vna3pjdmxjcnZ3cHhzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg1ODg5MDcsImV4cCI6MjEwNDE2NDkwN30.lQVLH4QopLtHHike2TUVDO3a-vtydXKjmod8bTpEdng';
 
   const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
     cookies: {
@@ -31,43 +26,26 @@ export async function middleware(request: NextRequest) {
     },
   });
 
-  // Do not run code between createServerClient and
-  // supabase.auth.getUser(). A simple mistake could make it very hard to debug
-  // issues with users being randomly logged out.
-
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
   const isLoginPage = request.nextUrl.pathname.startsWith('/login');
+  const isRegistroPage = request.nextUrl.pathname.startsWith('/registro');
   const isApiPage = request.nextUrl.pathname.startsWith('/api');
 
-  // If user is not signed in and trying to access protected page (exclude login and api routes)
-  if (!user && !isLoginPage && !isApiPage) {
+  // Allow unauthenticated access to /login, /registro (invitation registration) and /api routes
+  if (!user && !isLoginPage && !isRegistroPage && !isApiPage) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
     return NextResponse.redirect(url);
   }
-
-  // Allow /login page to always be accessible (e.g. for account switching or re-authenticating)
-
-  // Admin-only pages (e.g. /admin/usuarios) are gated client-side (AdminGuard) and, more
-  // importantly, at the API layer (/api/admin/* verifies role with the service-role key on
-  // every request) — not here. Doing the role check here against the cookie-based session
-  // client proved unreliable (RLS/cookie propagation), so we don't rely on it for security.
 
   return supabaseResponse;
 }
 
 export const config = {
   matcher: [
-    /*
-     * Match all request paths except for the ones starting with:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     * - public files (svg, png, jpg, etc.)
-     */
     '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 };

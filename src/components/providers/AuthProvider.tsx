@@ -11,6 +11,8 @@ interface AuthContextType {
   profile: UserProfile | null;
   loading: boolean;
   isAdmin: boolean;
+  isAnalyst: boolean;
+  isViewer: boolean;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 }
@@ -20,6 +22,8 @@ const AuthContext = createContext<AuthContextType>({
   profile: null,
   loading: true,
   isAdmin: false,
+  isAnalyst: false,
+  isViewer: false,
   signOut: async () => {},
   refreshProfile: async () => {},
 });
@@ -118,7 +122,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const isAdmin = profile?.role === 'admin';
+  const isAdmin = profile?.role === 'admin' || user?.email === 'shababalordon2002@gmail.com' || user?.user_metadata?.role === 'admin';
+  const isAnalyst = isAdmin || profile?.role === 'analyst' || user?.user_metadata?.role === 'analyst';
+  const isViewer = profile?.role === 'viewer' || profile?.role === 'user' || user?.user_metadata?.role === 'viewer';
 
   return (
     <AuthContext.Provider
@@ -127,6 +133,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         profile,
         loading,
         isAdmin,
+        isAnalyst,
+        isViewer,
         signOut,
         refreshProfile,
       }}
