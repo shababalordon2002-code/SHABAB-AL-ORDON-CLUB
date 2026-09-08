@@ -286,7 +286,11 @@ export default function PartidosPage() {
                   <div className="flex items-center gap-1.5">
                     <FileCode2 className="w-3.5 h-3.5 text-slate-400" />
                     <span className="text-slate-300 font-semibold">
-                      {activeSession?.events?.length ?? m.event_count} eventos
+                      {(() => {
+                        const localEvs = dbStore.getNormalizedEvents(m.id);
+                        const count = activeSession?.events?.length ?? (localEvs.length > 0 ? localEvs.length : (m.event_count || 0));
+                        return `${count} eventos`;
+                      })()}
                     </span>
                   </div>
 
