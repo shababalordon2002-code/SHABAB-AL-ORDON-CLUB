@@ -106,7 +106,7 @@ export default function AdminUsuariosPage() {
       const res = await fetch('/api/admin/users', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, role: targetRole }),
+        body: JSON.stringify({ userId, role: targetRole, email }),
       });
 
       const data = await res.json();

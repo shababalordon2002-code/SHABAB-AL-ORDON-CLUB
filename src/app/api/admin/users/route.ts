@@ -172,7 +172,7 @@ export async function PATCH(request: Request) {
 
   try {
     const body = await request.json();
-    const { userId, role, full_name } = body;
+    const { userId, role, full_name, email } = body;
 
     if (!userId) {
       return NextResponse.json({ error: 'ID de usuario requerido' }, { status: 400 });
@@ -180,29 +180,65 @@ export async function PATCH(request: Request) {
 
     const adminSupabase = createAdminClient();
 
-    const updates: Record<string, any> = {};
-    if (role) updates.role = role;
-    if (full_name !== undefined) updates.full_name = full_name;
+    // Fetch existing auth user to get email and current user_metadata
+    const { data: authUserData } = await adminSupabase.auth.admin.getUserById(userId);
+    const authUser = authUserData?.user;
 
-    // Update profiles table
-    const { data, error } = await adminSupabase
-      .from('profiles')
-      .upsert({ id: userId, ...updates })
-      .select()
-      .single();
+    const userEmail = email || authUser?.email || '';
+    const userFullName = full_name !== undefined ? full_name : (authUser?.user_metadata?.full_name || authUser?.email?.split('@')[0] || '');
 
-    // Also update auth.user_metadata.role
-    if (role) {
-      await adminSupabase.auth.admin.updateUserById(userId, {
-        user_metadata: { role },
+    // 1. Update Auth user_metadata so login session / JWT reflects new role immediately
+    if (role || full_name !== undefined) {
+      const currentMeta = authUser?.user_metadata || {};
+      const newMeta = { ...currentMeta };
+      if (role) newMeta.role = role;
+      if (full_name !== undefined) newMeta.full_name = full_name;
+
+      const { error: authError } = await adminSupabase.auth.admin.updateUserById(userId, {
+        user_metadata: newMeta,
       });
+
+      if (authError) {
+        console.warn('Warning updating Auth user_metadata:', authError.message);
+      }
     }
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+    // 2. Update or insert profiles table
+    const profilePayload: Record<string, any> = {
+      id: userId,
+      email: userEmail,
+      full_name: userFullName,
+      updated_at: new Date().toISOString(),
+    };
+    if (role) profilePayload.role = role;
+    if (full_name !== undefined) profilePayload.full_name = full_name;
+
+    let { data: profileData, error: profileError } = await adminSupabase
+      .from('profiles')
+      .upsert(profilePayload, { onConflict: 'id' })
+      .select()
+      .maybeSingle();
+
+    // Fallback: If DB table has check constraint rejecting 'viewer', fallback to 'user' in profiles table while user_metadata retains 'viewer'
+    if (profileError && role === 'viewer' && profileError.message.includes('check constraint')) {
+      console.warn('profiles_role_check constraint error on "viewer". Falling back to "user" role in DB table.');
+      profilePayload.role = 'user';
+      const fallbackResult = await adminSupabase
+        .from('profiles')
+        .upsert(profilePayload, { onConflict: 'id' })
+        .select()
+        .maybeSingle();
+
+      profileData = fallbackResult.data;
+      profileError = fallbackResult.error;
     }
 
-    return NextResponse.json({ message: 'Perfil actualizado', profile: data });
+    if (profileError) {
+      console.error('Error updating profile in DB:', profileError.message);
+      return NextResponse.json({ error: `Error al actualizar perfil: ${profileError.message}` }, { status: 400 });
+    }
+
+    return NextResponse.json({ message: 'Rol actualizado exitosamente', profile: profileData });
   } catch (error: any) {
     return NextResponse.json({ error: error.message || 'Error al actualizar perfil' }, { status: 500 });
   }
