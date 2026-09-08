@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, Suspense } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { ArrowLeft, Eye, Layers, Pencil, RefreshCw, Trophy, Zap } from 'lucide-react';
@@ -31,7 +31,7 @@ const COMPARISON_WIDGET: DashboardWidget = {
   showLegend: true,
 };
 
-export default function CumulativeDashboardPage() {
+function CumulativeDashboardContent() {
   const { isAdmin } = useAuth();
   const searchParams = useSearchParams();
   // Igual que el dashboard por partido: sólo se edita entrando explícitamente
@@ -250,5 +250,20 @@ function Stat({ label, value, accent = 'text-white' }: { label: string; value: n
       <span className={`text-2xl font-black tabular-nums ${accent}`}>{value}</span>
       <span className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">{label}</span>
     </div>
+  );
+}
+
+export default function CumulativeDashboardPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-slate-950 p-6 flex flex-col items-center justify-center text-slate-400 text-xs">
+          <div className="w-5 h-5 border-2 border-sky-500 border-t-transparent rounded-full animate-spin mb-2" />
+          <span>Cargando dashboard acumulado...</span>
+        </div>
+      }
+    >
+      <CumulativeDashboardContent />
+    </Suspense>
   );
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { use, useEffect, useMemo, useState } from 'react';
+import React, { use, useEffect, useMemo, useState, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
@@ -43,7 +43,7 @@ import { buildButtonByButtonWidgets, DEFAULT_BUTTONS } from '@/components/dashbo
 import { MatchResultHeader } from '@/components/dashboards/MatchResultHeader';
 import { useAuth } from '@/components/providers/AuthProvider';
 
-export default function DashboardDetailPage({ params }: { params: Promise<{ id: string }> }) {
+function DashboardDetailContent({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
   const dashboardId = resolvedParams.id;
   const router = useRouter();
@@ -474,5 +474,20 @@ export default function DashboardDetailPage({ params }: { params: Promise<{ id: 
         />
       )}
     </div>
+  );
+}
+
+export default function DashboardDetailPage(props: { params: Promise<{ id: string }> }) {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-slate-950 p-6 flex flex-col items-center justify-center text-slate-400 text-xs">
+          <div className="w-5 h-5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin mb-2" />
+          <span>Cargando dashboard...</span>
+        </div>
+      }
+    >
+      <DashboardDetailContent {...props} />
+    </Suspense>
   );
 }
