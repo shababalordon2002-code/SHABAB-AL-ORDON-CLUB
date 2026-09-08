@@ -15,10 +15,14 @@ import {
   ExternalLink,
   AlertCircle,
   Radio,
-  PlayCircle
+  PlayCircle,
+  Eye,
+  Plus
 } from 'lucide-react';
 import { dbStore } from '@/lib/store/db-store';
-import { Match, ActiveBotoneraSession } from '@/types';
+import { Match, MatchAnalysis, ActiveBotoneraSession } from '@/types';
+import { MatchAnalysisSelectorModal } from '@/components/analysis/MatchAnalysisSelectorModal';
+import { AnalysisVisor } from '@/components/analysis/AnalysisVisor';
 
 export default function PartidosPage() {
   const [matches, setMatches] = useState<Match[]>([]);
@@ -28,6 +32,10 @@ export default function PartidosPage() {
   const [importFilter, setImportFilter] = useState<string>('todos');
   const [isScraping, setIsScraping] = useState(false);
   const [scrapeMessage, setScrapeMessage] = useState<string | null>(null);
+
+  // Analysis Selector & Visor States
+  const [selectedMatchForAnalysis, setSelectedMatchForAnalysis] = useState<{ match: Match; analyses: MatchAnalysis[] } | null>(null);
+  const [activeVisor, setActiveVisor] = useState<{ match: Match; analysis: MatchAnalysis } | null>(null);
 
   const loadMatches = async () => {
     setMatches(dbStore.getMatches());
@@ -42,6 +50,10 @@ export default function PartidosPage() {
     dbStore.getAllActiveSessions().then((sessions) => {
       if (sessions) setActiveSessionsMap(sessions);
     });
+
+    Promise.all([
+      dbStore.syncAnalysesFromSupabase(),
+    ]).then(loadMatches).catch(() => {});
   }, []);
 
   const handleScrapeFlashscore = async () => {
@@ -58,10 +70,8 @@ export default function PartidosPage() {
       const data = await res.json();
 
       if (data.success && Array.isArray(data.matches)) {
-        let addedCount = 0;
         data.matches.forEach((scrapedMatch: Match) => {
           dbStore.saveMatch(scrapedMatch);
-          addedCount++;
         });
 
         loadMatches();
@@ -78,6 +88,15 @@ export default function PartidosPage() {
         setScrapeMessage(null);
       }, 7000);
     }
+  };
+
+  const handleDeleteAnalysis = (analysisId: string) => {
+    dbStore.deleteAnalysis(analysisId);
+    if (selectedMatchForAnalysis) {
+      const updatedList = dbStore.getAnalyses(selectedMatchForAnalysis.match.id);
+      setSelectedMatchForAnalysis({ match: selectedMatchForAnalysis.match, analyses: updatedList });
+    }
+    loadMatches();
   };
 
   const filteredMatches = matches.filter(m => {
@@ -200,6 +219,8 @@ export default function PartidosPage() {
           const isShababHome = m.home_team.toLowerCase().includes('shabab al ordon');
           const isShababAway = m.away_team.toLowerCase().includes('shabab al ordon');
           const activeSession = activeSessionsMap[m.id];
+          const savedAnalyses = dbStore.getAnalyses(m.id);
+          const totalEventsCount = activeSession?.events?.length ?? (savedAnalyses[0]?.events?.length || 0);
 
           return (
             <div key={m.id} className={`p-5 rounded-2xl bg-slate-900/90 border space-y-4 card-hover-effect relative flex flex-col justify-between shadow-xl ${
@@ -282,21 +303,13 @@ export default function PartidosPage() {
 
               {/* Bottom Row */}
               <div className="space-y-3 pt-3 border-t border-slate-800/60">
-                <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-1.5">
-                    <FileCode2 className="w-3.5 h-3.5 text-slate-400" />
-                    <span className="text-slate-300 font-semibold">
-                      {(() => {
-                        if (activeSession && activeSession.events?.length) {
-                          return `${activeSession.events.length} eventos`;
-                        }
-                        const savedAnalyses = dbStore.getAnalyses(m.id);
-                        if (savedAnalyses.length === 0) {
-                          return '0 eventos';
-                        }
-                        const count = savedAnalyses[0].events?.length || dbStore.getNormalizedEvents(m.id).length;
-                        return `${count} eventos`;
-                      })()}
+                <div className="flex items-center justify-between text-xs gap-2 flex-wrap">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-amber-400 font-mono text-[11px] font-bold">
+                      {savedAnalyses.length} {savedAnalyses.length === 1 ? 'análisis' : 'análisis'}
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-emerald-400 font-mono text-[11px] font-semibold">
+                      {totalEventsCount} eventos
                     </span>
                   </div>
 
@@ -331,13 +344,13 @@ export default function PartidosPage() {
                 </div>
 
                 <div className="flex flex-col gap-2 pt-1">
-                  <Link
-                    href={`/botonera?match_id=${m.id}`}
+                  <button
+                    onClick={() => setSelectedMatchForAnalysis({ match: m, analyses: savedAnalyses })}
                     className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-500 via-amber-600 to-amber-500 hover:from-emerald-400 hover:to-amber-400 text-slate-950 font-black text-xs shadow-md shadow-amber-950/40 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                   >
                     <PlayCircle className="w-4 h-4 stroke-[2.5]" />
-                    <span>Entrar en el Análisis</span>
-                  </Link>
+                    <span>Entrar en el Análisis ({savedAnalyses.length})</span>
+                  </button>
 
                   <div className="flex items-center gap-2">
                     <Link
@@ -364,6 +377,32 @@ export default function PartidosPage() {
           );
         })}
       </div>
+
+      {/* Match Analysis Selector Modal */}
+      {selectedMatchForAnalysis && (
+        <MatchAnalysisSelectorModal
+          match={selectedMatchForAnalysis.match}
+          analyses={selectedMatchForAnalysis.analyses}
+          onClose={() => setSelectedMatchForAnalysis(null)}
+          onSelectVisor={(analysis) => {
+            setActiveVisor({ match: selectedMatchForAnalysis.match, analysis });
+          }}
+          onDeleteAnalysis={handleDeleteAnalysis}
+        />
+      )}
+
+      {/* Analysis Visor Modal */}
+      {activeVisor && (
+        <AnalysisVisor
+          match={activeVisor.match}
+          analysis={activeVisor.analysis}
+          onClose={() => setActiveVisor(null)}
+          onUpdateAnalysis={(updated) => {
+            dbStore.saveAnalysis(updated);
+            loadMatches();
+          }}
+        />
+      )}
     </div>
   );
 }

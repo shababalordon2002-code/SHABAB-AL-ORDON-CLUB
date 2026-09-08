@@ -6,12 +6,9 @@ export const metadata: Metadata = {
   title: 'Shabab Al Ordon Club | Football Analytics Platform',
   description: 'Plataforma profesional de análisis de fútbol para Shabab Al Ordon Club.',
   icons: {
-    icon: [
-      { url: '/logo.png?v=3', type: 'image/png' },
-      { url: '/icon.png?v=3', type: 'image/png' },
-    ],
+    icon: '/logo.png?v=3',
     shortcut: '/logo.png?v=3',
-    apple: '/apple-icon.png?v=3',
+    apple: '/logo.png?v=3',
   },
 };
 

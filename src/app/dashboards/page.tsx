@@ -33,6 +33,7 @@ import {
 } from '@/types';
 import { createDashboard } from '@/components/dashboards/dashboard-presets';
 import { AnalysisVisor } from '@/components/analysis/AnalysisVisor';
+import { MatchAnalysisSelectorModal } from '@/components/analysis/MatchAnalysisSelectorModal';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { AdminDashboardConfigModal } from '@/components/dashboards/AdminDashboardConfigModal';
 import { TacticalLineupPitch } from '@/components/pitch/TacticalLineupPitch';
@@ -60,6 +61,7 @@ export default function DashboardsPage() {
   const [templates, setTemplates] = useState<BotoneraTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeVisor, setActiveVisor] = useState<{ match: Match; analysis: MatchAnalysis } | null>(null);
+  const [selectedMatchForAnalysis, setSelectedMatchForAnalysis] = useState<{ match: Match; analyses: MatchAnalysis[] } | null>(null);
 
   // Admin Customization & Live Sync States
   const [dashboardConfig, setDashboardConfig] = useState<DashboardGlobalConfig>(DEFAULT_DASHBOARD_CONFIG);
@@ -119,6 +121,15 @@ export default function DashboardsPage() {
   const handleDelete = (dashboard: MatchDashboard) => {
     if (!confirm(`¿Eliminar el dashboard "${dashboard.name}"?`)) return;
     dbStore.deleteDashboard(dashboard.id);
+    load();
+  };
+
+  const handleDeleteAnalysis = (analysisId: string) => {
+    dbStore.deleteAnalysis(analysisId);
+    if (selectedMatchForAnalysis) {
+      const updatedList = dbStore.getAnalyses(selectedMatchForAnalysis.match.id);
+      setSelectedMatchForAnalysis({ match: selectedMatchForAnalysis.match, analyses: updatedList });
+    }
     load();
   };
 
@@ -235,6 +246,11 @@ export default function DashboardsPage() {
           const youtubeThumb = getYouTubeThumbnail(resolvedVideoUrl);
 
           const openVisorForMatch = () => {
+            if (block.analyses.length > 1) {
+              setSelectedMatchForAnalysis({ match: block.match, analyses: block.analyses });
+              return;
+            }
+
             const analysis = block.analyses[0] || {
               id: `analysis_${block.match.id}`,
               match_id: block.match.id,
@@ -344,7 +360,10 @@ export default function DashboardsPage() {
                       />
                     </h2>
 
-                    <div className="flex items-center gap-2 text-[11px] pt-0.5">
+                    <div className="flex items-center gap-2 text-[11px] pt-0.5 flex-wrap">
+                      <span className="px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-amber-400 font-mono font-semibold">
+                        {block.analyses.length} {block.analyses.length === 1 ? 'análisis' : 'análisis'}
+                      </span>
                       <span className="px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-emerald-400 font-mono font-semibold">
                         {currentEventsCount} registros
                       </span>
@@ -369,7 +388,7 @@ export default function DashboardsPage() {
                     className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-amber-500 hover:from-emerald-400 hover:to-amber-400 text-slate-950 font-black text-xs shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
                   >
                     <Eye className="w-3.5 h-3.5 stroke-[2.5]" />
-                    <span>Abrir Visor (Vídeo + Botonera)</span>
+                    <span>Abrir Visor ({block.analyses.length})</span>
                   </button>
 
                   {isAdmin && (
@@ -442,6 +461,19 @@ export default function DashboardsPage() {
           onSave={(updatedConfig) => {
             setDashboardConfig(updatedConfig);
           }}
+        />
+      )}
+
+      {/* Match Analysis Selector Modal */}
+      {selectedMatchForAnalysis && (
+        <MatchAnalysisSelectorModal
+          match={selectedMatchForAnalysis.match}
+          analyses={selectedMatchForAnalysis.analyses}
+          onClose={() => setSelectedMatchForAnalysis(null)}
+          onSelectVisor={(analysis) => {
+            setActiveVisor({ match: selectedMatchForAnalysis.match, analysis });
+          }}
+          onDeleteAnalysis={handleDeleteAnalysis}
         />
       )}
 
