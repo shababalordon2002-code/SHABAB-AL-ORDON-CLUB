@@ -219,12 +219,15 @@ export default function PartidosPage() {
           const isShababHome = m.home_team.toLowerCase().includes('shabab al ordon');
           const isShababAway = m.away_team.toLowerCase().includes('shabab al ordon');
           const activeSession = activeSessionsMap[m.id];
+          const isLiveActive = !!(activeSession && (activeSession.isTimerRunning || activeSession.isConfigured));
           const savedAnalyses = dbStore.getAnalyses(m.id);
-          const totalEventsCount = activeSession?.events?.length ?? (savedAnalyses[0]?.events?.length || 0);
+          const totalEventsCount = isLiveActive 
+            ? (activeSession.events?.length || 0) 
+            : savedAnalyses.reduce((acc, a) => acc + (a.events?.length || 0), 0);
 
           return (
             <div key={m.id} className={`p-5 rounded-2xl bg-slate-900/90 border space-y-4 card-hover-effect relative flex flex-col justify-between shadow-xl ${
-              activeSession ? 'border-rose-500/60 ring-1 ring-rose-500/30' : 'border-slate-800/80'
+              isLiveActive ? 'border-rose-500/60 ring-1 ring-rose-500/30' : 'border-slate-800/80'
             }`}>
               <div>
                 {/* Top row: Date/Time + League & Round */}
@@ -326,7 +329,7 @@ export default function PartidosPage() {
                       </a>
                     )}
 
-                    {activeSession ? (
+                    {isLiveActive ? (
                       <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse flex items-center gap-1">
                         <Radio className="w-3 h-3 text-rose-400" />
                         <span>En marcha</span>
