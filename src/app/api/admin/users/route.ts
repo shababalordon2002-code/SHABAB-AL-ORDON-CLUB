@@ -79,7 +79,7 @@ export async function GET() {
       const isOwner = authUser.email === 'shababalordon2002@gmail.com';
       const role = isOwner
         ? 'admin'
-        : profile?.role || authUser.user_metadata?.role || 'viewer';
+        : authUser.user_metadata?.role || profile?.role || 'viewer';
       
       const fullName = profile?.full_name || authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'Usuario';
 

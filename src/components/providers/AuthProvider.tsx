@@ -48,12 +48,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           id: currentUser.id,
           email: currentUser.email || '',
           full_name: (currentUser.user_metadata?.full_name as string) || currentUser.email?.split('@')[0] || 'Usuario',
-          role: (currentUser.user_metadata?.role as any) || 'user',
+          role: (currentUser.user_metadata?.role as any) || 'viewer',
           created_at: currentUser.created_at || new Date().toISOString(),
         };
         setProfile(fallbackProfile);
       } else {
-        setProfile(data as UserProfile);
+        const effectiveRole = (currentUser.user_metadata?.role as any) || data.role || 'viewer';
+        setProfile({ ...data, role: effectiveRole } as UserProfile);
       }
     } catch {
       // Fallback profile on any network/Supabase exception
@@ -61,7 +62,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         id: currentUser.id,
         email: currentUser.email || '',
         full_name: (currentUser.user_metadata?.full_name as string) || currentUser.email?.split('@')[0] || 'Usuario',
-        role: (currentUser.user_metadata?.role as any) || 'user',
+        role: (currentUser.user_metadata?.role as any) || 'viewer',
         created_at: currentUser.created_at || new Date().toISOString(),
       };
       setProfile(fallbackProfile);
