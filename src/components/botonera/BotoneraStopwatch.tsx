@@ -181,19 +181,20 @@ export const BotoneraStopwatch: React.FC<BotoneraStopwatchProps> = ({
           <Rewind className="w-3 h-3" /> -10s
         </button>
 
-        {/* Play / Pause */}
+        {/* Play / Pause (Pausar o Reproducir Vídeo y Cronómentro) */}
         <button
-          onClick={handlePlayPauseClick}
-          className={`flex items-center gap-1.5 px-4 py-1.5 rounded-xl font-black text-xs transition-all shadow-lg cursor-pointer ${
+          onClick={onToggleTimer}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-black text-xs transition-all shadow-lg cursor-pointer ${
             isTimerRunning
               ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-amber-950/30'
               : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-950/40'
           }`}
+          title={isTimerRunning ? 'Pausar vídeo y cronómetro' : 'Reproducir vídeo y cronómetro'}
         >
           {isTimerRunning ? (
-            <><Pause className="w-3.5 h-3.5 fill-slate-950" /> {isVideoDriven ? 'PAUSAR VÍDEO' : 'PAUSAR'}</>
+            <><Pause className="w-3.5 h-3.5 fill-slate-950" /> PAUSAR</>
           ) : (
-            <><Play className="w-3.5 h-3.5 fill-slate-950" /> {isVideoDriven ? 'REPRODUCIR [Espacio]' : 'INICIAR [Espacio]'}</>
+            <><Play className="w-3.5 h-3.5 fill-slate-950" /> REPRODUCIR</>
           )}
         </button>
 
@@ -201,7 +202,7 @@ export const BotoneraStopwatch: React.FC<BotoneraStopwatchProps> = ({
         <button
           onClick={() => handleSeek(10)}
           className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 transition text-[11px] font-bold flex items-center gap-1"
-          title={isVideoDriven ? 'Avanzar 10s (crono y vídeo)' : '+10 Segundos'}
+          title="Avanzar 10s el vídeo"
         >
           +10s <FastForward className="w-3 h-3" />
         </button>
@@ -215,62 +216,32 @@ export const BotoneraStopwatch: React.FC<BotoneraStopwatchProps> = ({
           <RotateCcw className="w-3.5 h-3.5" />
         </button>
 
-        {/* Seek video to current match time */}
-        {onSeekVideoToNow && (
-          <button
-            onClick={onSeekVideoToNow}
-            disabled={!hasVideoSync}
-            title={
-              hasVideoSync
-                ? `Llevar el vídeo al minuto ${formatTime(timerSeconds)} de partido`
-                : 'Primero pulsa PLAY para capturar el inicio del periodo'
-            }
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-bold transition ${
-              hasVideoSync
-                ? 'bg-sky-900/60 hover:bg-sky-800/70 border-sky-600/60 text-sky-300 hover:text-sky-100 shadow-sm shadow-sky-950/40'
-                : 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
-            }`}
-          >
-            <Crosshair className="w-3.5 h-3.5" />
-            <span>Ir al vídeo</span>
-          </button>
-        )}
-
-        {/* Video-driven indicator */}
-        {isVideoDriven && (
-          <span
-            title="El cronómetro sigue la reproducción del vídeo: si pausas, retrocedes o avanzas el vídeo, el crono se ajusta solo."
-            className="flex items-center gap-1 px-2 py-1 rounded-lg bg-sky-950/70 border border-sky-700/50 text-sky-300 text-[10px] font-bold uppercase tracking-wide"
-          >
-            <Link2 className="w-3 h-3" />
-            Crono ligado al vídeo
-          </span>
-        )}
-
-        {/* Period Selector */}
+        {/* 4 Botones PLAY al lado del Cronómetro para iniciar cada parte */}
         <div className="flex items-center gap-1.5 ml-auto">
-          <span className="text-[11px] font-semibold text-slate-400 flex items-center gap-1">
-            <Layers className="w-3 h-3 text-emerald-400" /> Por.
-          </span>
-          <div className="flex bg-slate-900 p-0.5 rounded-xl border border-slate-800">
+          <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-800 gap-1.5">
             {[
               { id: 1, label: '1ª Parte' },
               { id: 2, label: '2ª Parte' },
               { id: 3, label: 'ET 1' },
               { id: 4, label: 'ET 2' },
-            ].map((p) => (
-              <button
-                key={p.id}
-                onClick={() => onPeriodChange(p.id)}
-                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition ${
-                  period === p.id
-                    ? 'bg-emerald-600 text-white shadow'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-                }`}
-              >
-                {p.label}
-              </button>
-            ))}
+            ].map((p) => {
+              const isCurrent = period === p.id;
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => onPeriodChange(p.id)}
+                  title={`Iniciar ${p.label}: marca el inicio en el vídeo y pone en marcha el crono desde 0`}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer ${
+                    isCurrent
+                      ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-950/50 scale-105 ring-1 ring-emerald-400'
+                      : 'bg-slate-950 text-slate-300 hover:text-white hover:bg-slate-800 border border-slate-800'
+                  }`}
+                >
+                  <Play className={`w-3 h-3 ${isCurrent ? 'fill-slate-950' : 'fill-emerald-400 text-emerald-400'}`} />
+                  <span>{p.label}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>

@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { Users, UserPlus, Shield, Check, X, Edit3 } from 'lucide-react';
 import { Player } from '@/types';
+import { PlayerAvatar, NumberBadge } from '@/components/player/PlayerBadge';
 
 interface BotoneraPlayerSelectorProps {
   players: Player[];
@@ -94,14 +95,13 @@ export const BotoneraPlayerSelector: React.FC<BotoneraPlayerSelectorProps> = ({
         <div className="flex items-center gap-2.5">
           {selectedPlayer ? (
             <>
-              <div className="w-8 h-8 rounded-lg bg-emerald-500 text-slate-950 font-black text-sm flex items-center justify-center shadow">
-                #{selectedPlayer.number}
-              </div>
+              <NumberBadge number={selectedPlayer.number} size={34} selected={true} />
+              <PlayerAvatar photoUrl={selectedPlayer.photo_url} name={selectedPlayer.name} size={34} />
               <div>
-                <p className="font-bold text-slate-100 text-xs leading-tight">
+                <p className="font-extrabold text-slate-100 text-xs leading-tight">
                   {selectedPlayer.name}
                 </p>
-                <p className="text-[10px] text-emerald-400 font-medium">
+                <p className="text-[10px] text-emerald-400 font-bold">
                   {selectedPlayer.position} • {selectedPlayer.team_name}
                 </p>
               </div>
@@ -125,29 +125,24 @@ export const BotoneraPlayerSelector: React.FC<BotoneraPlayerSelectorProps> = ({
       </div>
 
       {/* Players Quick Grid */}
-      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-48 overflow-y-auto pr-1">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 max-h-48 overflow-y-auto pr-1">
         {players.map((p) => {
           const isSelected = selectedPlayerId === p.id;
           return (
             <button
               key={p.id}
               onClick={() => onSelectPlayer(isSelected ? null : p)}
-              className={`flex items-center gap-2 p-2 rounded-xl border text-left transition ${
+              className={`flex items-center gap-2 p-2 rounded-xl border text-left transition-all cursor-pointer ${
                 isSelected
-                  ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300 shadow-md ring-1 ring-emerald-500/40'
-                  : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:bg-slate-800/60 hover:border-slate-700'
+                  ? 'bg-emerald-600/25 border-emerald-400 text-emerald-300 shadow-md ring-2 ring-emerald-500/40 font-bold'
+                  : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:bg-slate-800/80 hover:border-slate-700'
               }`}
             >
-              <div
-                className={`w-6 h-6 rounded-md font-bold text-xs flex items-center justify-center shrink-0 ${
-                  isSelected ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-300'
-                }`}
-              >
-                #{p.number}
-              </div>
+              <NumberBadge number={p.number} size={28} selected={isSelected} />
+              <PlayerAvatar photoUrl={p.photo_url} name={p.name} size={28} />
               <div className="min-w-0 flex-1">
-                <p className="font-semibold text-[11px] truncate leading-tight">{p.name}</p>
-                <p className="text-[9px] text-slate-500 truncate">{p.position}</p>
+                <p className="font-extrabold text-[11px] truncate leading-tight text-slate-100">{p.name}</p>
+                <p className="text-[9px] text-slate-400 truncate">{p.position}</p>
               </div>
             </button>
           );

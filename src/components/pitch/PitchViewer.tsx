@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { NormalizedEvent } from '@/types';
 import { ArrowUp, ArrowRight, RotateCw } from 'lucide-react';
+import { TeamLogo } from '@/components/player/PlayerBadge';
 
 interface PitchViewerProps {
   events: NormalizedEvent[];
@@ -102,12 +103,14 @@ export const PitchViewer: React.FC<PitchViewerProps> = ({
 
       {/* Main Pitch Container */}
       <div
-        className={`relative w-full mx-auto bg-emerald-950 rounded-2xl border-2 border-emerald-800/80 overflow-hidden shadow-2xl select-none group ${
+        className={`relative w-full mx-auto bg-emerald-950 rounded-2xl border-2 border-emerald-800/80 shadow-2xl select-none group ${
           isVertical ? 'max-w-md max-h-[580px] aspect-[68/105]' : 'aspect-[105/68]'
         }`}
       >
-        {/* Tactical Grass Stripes Overlay */}
-        <div className="absolute inset-0 bg-[linear-gradient(to_bottom,#022c22_0%,#064e3b_10%,#022c22_20%,#064e3b_30%,#022c22_40%,#064e3b_50%,#022c22_60%,#064e3b_70%,#022c22_80%,#064e3b_90%,#022c22_100%)] opacity-90 pointer-events-none"></div>
+        {/* Tactical Grass Stripes Overlay (Inner clipped) */}
+        <div className="absolute inset-0 rounded-[14px] overflow-hidden pointer-events-none">
+          <div className="absolute inset-0 bg-[linear-gradient(to_bottom,#022c22_0%,#064e3b_10%,#022c22_20%,#064e3b_30%,#022c22_40%,#064e3b_50%,#022c22_60%,#064e3b_70%,#022c22_80%,#064e3b_90%,#022c22_100%)] opacity-90"></div>
+        </div>
 
         <svg
           viewBox={`0 0 ${width} ${height}`}
@@ -176,26 +179,56 @@ export const PitchViewer: React.FC<PitchViewerProps> = ({
 
           {/* DEFINE ARROW MARKERS */}
           <defs>
-            <marker id="arrow-pass" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <marker id="arrow-pass" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <path d="M 0 0 L 10 5 L 0 10 z" fill="#34d399" />
+            </marker>
+            <marker id="arrow-amber" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#f59e0b" />
+            </marker>
+            <marker id="arrow-blue" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#38bdf8" />
             </marker>
           </defs>
 
           {/* RENDER EVENT VECTORS & MARKERS */}
           {events.map((evt) => {
-            const startCoords = getSvgCoords(evt.x, evt.y);
+            const startX = evt.x ?? evt.metadata?.x ?? evt.metadata?.startX ?? null;
+            const startY = evt.y ?? evt.metadata?.y ?? evt.metadata?.startY ?? null;
+            const endX = evt.end_x ?? evt.metadata?.end_x ?? evt.metadata?.endX ?? null;
+            const endY = evt.end_y ?? evt.metadata?.end_y ?? evt.metadata?.endY ?? null;
+
+            const startCoords = getSvgCoords(startX, startY);
             if (!startCoords) return null;
 
             const isSelected = selectedEventId === evt.event_id;
-            const isPass = evt.category.toLowerCase().includes('pase') || evt.category.toLowerCase().includes('centro');
-            const isShot = evt.category.toLowerCase().includes('tiro') || evt.category.toLowerCase().includes('remate') || evt.category.toLowerCase().includes('gol');
-            const isRecovery = evt.category.toLowerCase().includes('recuperacion') || evt.category.toLowerCase().includes('intercepcion');
+            const catLower = (evt.category || '').toLowerCase();
+            const isPassCategory =
+              catLower.includes('pase') ||
+              catLower.includes('centro') ||
+              catLower.includes('transicion') ||
+              catLower.includes('desmarque');
 
-            let endCoords = getSvgCoords(evt.end_x, evt.end_y);
-            if (!endCoords && isPass) {
+            const hasEndCoords = endX !== null && endY !== null && (endX !== startX || endY !== startY);
+            const isArrow = hasEndCoords || isPassCategory;
+
+            let endCoords = getSvgCoords(endX, endY);
+            if (!endCoords && isPassCategory) {
               endCoords = isVertical
                 ? { x: startCoords.x + 15, y: startCoords.y - 45 }
                 : { x: startCoords.x + 45, y: startCoords.y - 15 };
+            }
+
+            const isShot = catLower.includes('tiro') || catLower.includes('remate') || catLower.includes('gol');
+            const isRecovery = catLower.includes('recuperacion') || catLower.includes('intercepcion');
+
+            let strokeColor = isSelected ? '#6ee7b7' : '#34d399';
+            let markerId = 'arrow-pass';
+            if (isShot || evt.outcome === 'Gol') {
+              strokeColor = '#f59e0b';
+              markerId = 'arrow-amber';
+            } else if (isRecovery) {
+              strokeColor = '#38bdf8';
+              markerId = 'arrow-blue';
             }
 
             return (
@@ -205,32 +238,32 @@ export const PitchViewer: React.FC<PitchViewerProps> = ({
                 onClick={() => onSelectEvent(evt)}
                 onMouseMove={(e) => handleMouseMove(e, evt)}
               >
-                {/* PASS VECTORS */}
-                {isPass && endCoords && (
+                {/* ARROWS / VECTORS */}
+                {isArrow && endCoords && (
                   <g>
                     <line
                       x1={startCoords.x}
                       y1={startCoords.y}
                       x2={endCoords.x}
                       y2={endCoords.y}
-                      stroke={isSelected ? '#6ee7b7' : '#34d399'}
-                      strokeWidth={isSelected ? '4' : '2.5'}
-                      strokeOpacity={isSelected ? '1' : '0.85'}
-                      markerEnd="url(#arrow-pass)"
+                      stroke={strokeColor}
+                      strokeWidth={isSelected ? '4.5' : '3'}
+                      strokeOpacity={isSelected ? '1' : '0.9'}
+                      markerEnd={`url(#${markerId})`}
                     />
                     <circle
                       cx={startCoords.x}
                       cy={startCoords.y}
-                      r={isSelected ? 6 : 4}
-                      fill="#34d399"
+                      r={isSelected ? 6 : 4.5}
+                      fill={strokeColor}
                       stroke="#022c22"
                       strokeWidth="1.5"
                     />
                   </g>
                 )}
 
-                {/* SHOTS & GOALS */}
-                {isShot && (
+                {/* SHOTS & GOALS (SINGLE POINT) */}
+                {!isArrow && isShot && (
                   <g>
                     {isSelected && (
                       <circle cx={startCoords.x} cy={startCoords.y} r="14" fill="rgba(245, 158, 11, 0.4)" className="animate-ping" />
@@ -239,15 +272,15 @@ export const PitchViewer: React.FC<PitchViewerProps> = ({
                       cx={startCoords.x}
                       cy={startCoords.y}
                       r={isSelected ? 8 : 6.5}
-                      fill={evt.outcome === 'Gol' || evt.category.toLowerCase().includes('gol') ? '#10b981' : '#f59e0b'}
+                      fill={evt.outcome === 'Gol' || catLower.includes('gol') ? '#10b981' : '#f59e0b'}
                       stroke="#022c22"
                       strokeWidth="2"
                     />
                   </g>
                 )}
 
-                {/* RECOVERIES */}
-                {isRecovery && (
+                {/* RECOVERIES (SINGLE POINT) */}
+                {!isArrow && isRecovery && (
                   <g>
                     {isSelected && (
                       <circle cx={startCoords.x} cy={startCoords.y} r="12" fill="rgba(56, 189, 248, 0.4)" />
@@ -266,7 +299,7 @@ export const PitchViewer: React.FC<PitchViewerProps> = ({
                 )}
 
                 {/* OTHER GENERAL EVENTS */}
-                {!isPass && !isShot && !isRecovery && (
+                {!isArrow && !isShot && !isRecovery && (
                   <g>
                     {isSelected && (
                       <circle cx={startCoords.x} cy={startCoords.y} r="10" fill="rgba(239, 68, 68, 0.4)" />
@@ -289,7 +322,7 @@ export const PitchViewer: React.FC<PitchViewerProps> = ({
         {/* HOVER TOOLTIP */}
         {hoveredEvent && (
           <div
-            className="absolute z-30 pointer-events-none p-3 rounded-xl bg-slate-950/95 border border-emerald-500/40 shadow-2xl text-xs space-y-1 transform -translate-x-1/2 -translate-y-full mb-3 backdrop-blur-md min-w-44"
+            className="absolute z-[150] pointer-events-none p-3.5 rounded-2xl bg-slate-950/95 border border-emerald-500/60 shadow-[0_20px_50px_rgba(0,0,0,0.85)] text-xs space-y-1 transform -translate-x-1/2 -translate-y-full mb-3 backdrop-blur-md min-w-44"
             style={{
               left: `${tooltipPos.x}px`,
               top: `${tooltipPos.y}px`,
@@ -303,7 +336,10 @@ export const PitchViewer: React.FC<PitchViewerProps> = ({
             </div>
 
             <p className="font-semibold text-slate-100 text-xs">{hoveredEvent.player_name}</p>
-            <p className="text-[10px] text-slate-400">{hoveredEvent.team_name || 'Shabab Al Ordon'}</p>
+            <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+              <TeamLogo teamName={hoveredEvent.team_name} size={14} />
+              <span>{hoveredEvent.team_name || 'Shabab Al Ordon'}</span>
+            </div>
 
             {hoveredEvent.outcome && (
               <div className="pt-1 flex items-center justify-between text-[10px]">
@@ -311,6 +347,31 @@ export const PitchViewer: React.FC<PitchViewerProps> = ({
                 <span className="font-bold text-amber-400">{hoveredEvent.outcome}</span>
               </div>
             )}
+
+            {/* DESCRIPTORES AL PASAR EL RATÓN POR ENCIMA DE LA FLECHA O PUNTO */}
+            {(() => {
+              const descList: string[] = [];
+              if (Array.isArray(hoveredEvent.metadata?.descriptors)) descList.push(...hoveredEvent.metadata.descriptors);
+              if (hoveredEvent.subcategory) descList.push(...hoveredEvent.subcategory.split(',').map((s) => s.trim()));
+              if (hoveredEvent.metadata?.bodyPart) descList.push(`Parte: ${hoveredEvent.metadata.bodyPart}`);
+              if (hoveredEvent.metadata?.result) descList.push(`Efecto: ${hoveredEvent.metadata.result}`);
+              const uniqueDescs = Array.from(new Set(descList.filter(Boolean)));
+
+              if (uniqueDescs.length === 0) return null;
+
+              return (
+                <div className="pt-1 border-t border-slate-800/80 space-y-1">
+                  <span className="text-[10px] font-bold text-amber-400 uppercase">Descriptores:</span>
+                  <div className="flex flex-wrap gap-1">
+                    {uniqueDescs.map((d, i) => (
+                      <span key={i} className="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-[10px] text-slate-200 font-bold">
+                        {d}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
       </div>

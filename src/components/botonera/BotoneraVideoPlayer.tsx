@@ -103,17 +103,17 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
   const PERIOD_LABELS: Record<number, string> = {
     1: '1ª Parte',
     2: '2ª Parte',
-    3: 'ET 1',
-    4: 'ET 2',
+    3: 'Prórroga 1ª Parte',
+    4: 'Prórroga 2ª Parte',
   };
 
-  // 1ª y 2ª parte siempre visibles; prórrogas solo si están marcadas o en curso
+  // 1ª y 2ª parte siempre visibles; prórrogas (3 y 4) solo se muestran si están marcadas o en uso
   const visiblePeriods = Array.from(
     new Set<number>([
       1,
       2,
       ...Object.keys(periodVideoOffsets).map(Number),
-      ...(currentPeriod ? [currentPeriod] : []),
+      ...(currentPeriod && currentPeriod >= 3 ? [currentPeriod] : []),
     ])
   ).sort((a, b) => a - b);
 
@@ -216,17 +216,16 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
   };
 
   /* ── Sincronización vídeo ↔ partido ──────────────────────────────────
-     Se muestra también con el vídeo en ventana externa: desde otro monitor
-     el analista sigue necesitando marcar o corregir el inicio de cada parte. */
+     Muestra el minutaje del vídeo registrado para cada parte (editable a mano) */
   const syncBar = (
-    <div className="px-3 py-2 bg-slate-950/80 border-b border-slate-800/80 space-y-1.5">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Clock className="w-3 h-3 text-emerald-500" />
-        <span className="text-[10px] font-bold text-slate-300 uppercase tracking-wider">
+    <div className="px-3 py-2 bg-slate-950/90 border-b border-slate-800/80 space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <Clock className="w-3.5 h-3.5 text-emerald-400" />
+        <span className="text-xs font-black text-slate-200 uppercase tracking-wider">
           Inicio de cada parte en el vídeo
         </span>
-        <span className="text-[10px] text-slate-500">
-          — marca el saque inicial y el crono irá en función del vídeo
+        <span className="text-[11px] text-slate-400 hidden sm:inline">
+          — consulta o edita a mano el minuto del vídeo en el que arranca cada parte
         </span>
       </div>
 
@@ -238,21 +237,25 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
           const isCurrent = currentPeriod === p;
 
           return (
-            <span
+            <div
               key={p}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition ${
-                isSet
-                  ? 'bg-emerald-950/60 border-emerald-700/50 text-emerald-300'
-                  : 'bg-slate-900 border-slate-700/60 text-slate-400'
-              } ${isCurrent ? 'ring-1 ring-emerald-400/70' : ''}`}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border transition ${
+                isCurrent
+                  ? 'bg-emerald-950/80 border-emerald-500/70 ring-1 ring-emerald-400/50 shadow-md shadow-emerald-950/30'
+                  : isSet
+                  ? 'bg-slate-900/90 border-emerald-800/40 text-slate-200'
+                  : 'bg-slate-900/60 border-slate-800 text-slate-400'
+              }`}
             >
-              {isSet ? (
-                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-              ) : (
-                <CircleDashed className="w-3 h-3 text-slate-500" />
-              )}
-              <span className="text-[11px] font-black">{PERIOD_LABELS[p] ?? `Parte ${p}`}</span>
-              <span className="text-[11px] text-slate-500">empieza en</span>
+              <div className="flex items-center gap-1.5 min-w-0">
+                {isSet ? (
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                ) : (
+                  <CircleDashed className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                )}
+                <span className="text-xs font-black text-slate-200">{PERIOD_LABELS[p] ?? `Parte ${p}`}</span>
+                <span className="text-[11px] text-slate-400 font-medium">empieza en</span>
+              </div>
 
               {isEditing ? (
                 <div className="flex items-center gap-1">
@@ -266,14 +269,14 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
                       if (e.key === 'Enter') handleConfirmPeriodEdit(p);
                       if (e.key === 'Escape') setEditingPeriod(null);
                     }}
-                    placeholder="mm:ss"
-                    title="Formato mm:ss, mm.ss o minuto (ej: 15:30 o 15)"
+                    placeholder="hh:mm:ss"
+                    title="Formato hh:mm:ss, mm:ss o minutos (ej: 05:59:19 o 15:30)"
                     className="w-20 px-1.5 py-0.5 rounded bg-slate-950 border border-amber-400 text-amber-300 font-mono text-[11px] font-bold text-center focus:outline-none"
                   />
                   <button
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => handleConfirmPeriodEdit(p)}
-                    className="p-1 rounded bg-emerald-600 text-slate-950"
+                    className="p-1 rounded bg-emerald-600 text-slate-950 hover:bg-emerald-500"
                     title="Guardar minutaje"
                   >
                     <Check className="w-3 h-3" />
@@ -281,20 +284,20 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
                   <button
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => setEditingPeriod(null)}
-                    className="p-1 rounded bg-slate-800 text-slate-300"
+                    className="p-1 rounded bg-slate-800 text-slate-300 hover:bg-slate-700"
                     title="Cancelar"
                   >
                     <X className="w-3 h-3" />
                   </button>
                 </div>
               ) : (
-                <>
+                <div className="flex items-center gap-1">
                   <button
                     onClick={() => handleStartPeriodEdit(p)}
-                    title="Editar a mano el minuto del vídeo en el que arranca esta parte"
-                    className={`flex items-center gap-1 px-1.5 py-0.5 rounded font-black font-mono text-[11px] border cursor-pointer transition ${
+                    title="Editar a mano el minuto del vídeo en el que arranca esta parte (haz clic para modificar)"
+                    className={`flex items-center gap-1 px-2.5 py-0.5 rounded font-black font-mono text-[11px] border cursor-pointer transition ${
                       isSet
-                        ? 'bg-slate-900 hover:bg-slate-800 text-emerald-100 border-emerald-500/40'
+                        ? 'bg-slate-950 hover:bg-slate-800 text-emerald-300 border-emerald-500/50'
                         : 'bg-slate-950 hover:bg-slate-900 text-slate-400 border-slate-700 italic'
                     }`}
                   >
@@ -302,39 +305,18 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
                     <Pencil className={`w-2.5 h-2.5 ${isSet ? 'text-emerald-400' : 'text-amber-400'}`} />
                   </button>
 
-                  {onCapturePeriodOffset && (
-                    <button
-                      onClick={() => onCapturePeriodOffset(p)}
-                      title={`Marcar aquí: usar el minuto actual del vídeo como inicio de ${PERIOD_LABELS[p] ?? `Parte ${p}`}`}
-                      className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-900/50 hover:bg-sky-800/70 border border-sky-600/50 text-sky-300 hover:text-sky-100 text-[10px] font-bold transition"
-                    >
-                      <Crosshair className="w-2.5 h-2.5" />
-                      Marcar aquí
-                    </button>
-                  )}
-
-                  {isSet && onSeekVideoToTime && (
-                    <button
-                      onClick={() => onSeekVideoToTime(time)}
-                      title={`Llevar el vídeo al inicio de ${PERIOD_LABELS[p] ?? `Parte ${p}`}`}
-                      className="p-0.5 rounded hover:bg-emerald-800/60 text-emerald-400 hover:text-emerald-200 transition"
-                    >
-                      <SkipForward className="w-3 h-3" />
-                    </button>
-                  )}
-
                   {isSet && onClearPeriodOffset && (
                     <button
                       onClick={() => onClearPeriodOffset(p)}
                       title={`Borrar la marca de ${PERIOD_LABELS[p] ?? `Parte ${p}`}`}
-                      className="p-0.5 rounded hover:bg-red-900/50 text-emerald-500 hover:text-red-400 transition"
+                      className="p-1 rounded hover:bg-red-900/50 text-slate-500 hover:text-red-400 transition"
                     >
-                      <RotateCcw className="w-2.5 h-2.5" />
+                      <RotateCcw className="w-3 h-3" />
                     </button>
                   )}
-                </>
+                </div>
               )}
-            </span>
+            </div>
           );
         })}
       </div>

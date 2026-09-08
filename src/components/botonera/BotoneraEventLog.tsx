@@ -18,16 +18,23 @@ import {
   X,
   Save,
   PlayCircle,
+  ArrowUpDown,
+  AlertTriangle,
+  RotateCcw,
+  RefreshCw,
 } from 'lucide-react';
 import { NormalizedEvent, BotoneraButton, Player } from '@/types';
 import { getButtonColorHex } from './BotoneraPanelEditor';
 import { FullEventFormModal } from '@/components/analysis/FullEventFormModal';
+import { TeamLogo } from '@/components/player/PlayerBadge';
+import { dbStore } from '@/lib/store/db-store';
 
 interface BotoneraEventLogProps {
   events: NormalizedEvent[];
   onDeleteEvent?: (eventId: string) => void;
   onUpdateEvent?: (updatedEvent: NormalizedEvent) => void;
   onClearAllEvents?: () => void;
+  onRestoreDeletedEvents?: () => void;
   onExportXml?: () => void;
   onExportJson?: () => void;
   /** Called when the user clicks the ▶ button to seek the video to 12s before this event */
@@ -44,6 +51,7 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
   onDeleteEvent,
   onUpdateEvent,
   onClearAllEvents,
+  onRestoreDeletedEvents,
   onExportXml,
   onExportJson,
   onSeekToEvent,
@@ -53,9 +61,39 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
   // Fila desplegada: categoría, coordenadas y demás detalles solo al hacer clic
   const [expandedEventId, setExpandedEventId] = useState<string | null>(null);
-  
+
+  // High-Friction Deletion Security Inputs & Trash State
+  const [deletingEventTarget, setDeletingEventTarget] = useState<NormalizedEvent | null>(null);
+  const [singleDeleteInput, setSingleDeleteInput] = useState<string>('');
+
+  const [isConfirmingClearAll, setIsConfirmingClearAll] = useState<boolean>(false);
+  const [clearAllInput, setClearAllInput] = useState<string>('');
+
+  const [trashCount, setTrashCount] = useState<number>(0);
+
+  const updateTrashCount = () => {
+    if (typeof window !== 'undefined') {
+      const trash = dbStore.getTrashEvents();
+      setTrashCount(trash.length);
+    }
+  };
+
+  React.useEffect(() => {
+    updateTrashCount();
+  }, [events]);
+
+  const handleRestoreFromTrash = () => {
+    if (onRestoreDeletedEvents) {
+      onRestoreDeletedEvents();
+    } else {
+      dbStore.restoreTrashEvents();
+    }
+    setTimeout(updateTrashCount, 100);
+  };
+
   // Edit Event State
   const [editingEvent, setEditingEvent] = useState<NormalizedEvent | null>(null);
   const [editPlayerName, setEditPlayerName] = useState<string>('');
@@ -78,6 +116,25 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
     const matchesCategory = selectedCategory === 'all' || e.category === selectedCategory;
 
     return matchesSearch && matchesCategory;
+  });
+
+  // Sort events: default "desc" (más reciente a más lejano por período y tiempo)
+  const sortedEvents = [...filteredEvents].sort((a, b) => {
+    const periodA = a.period || 1;
+    const periodB = b.period || 1;
+    if (periodA !== periodB) {
+      return sortOrder === 'desc' ? periodB - periodA : periodA - periodB;
+    }
+
+    const timeA = a.timestamp ?? 0;
+    const timeB = b.timestamp ?? 0;
+    if (timeA !== timeB) {
+      return sortOrder === 'desc' ? timeB - timeA : timeA - timeB;
+    }
+
+    const createdA = new Date(a.created_at || 0).getTime();
+    const createdB = new Date(b.created_at || 0).getTime();
+    return sortOrder === 'desc' ? createdB - createdA : createdA - createdB;
   });
 
   /** Descriptores marcados en el evento (los nuevos van en metadata, los viejos en subcategory) */
@@ -182,8 +239,8 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
 
           {!readOnly && onClearAllEvents && events.length > 0 && (
             <button
-              onClick={onClearAllEvents}
-              className="p-1.5 rounded-xl bg-slate-800 hover:bg-red-950/60 text-slate-400 hover:text-red-400 border border-slate-700 hover:border-red-500/40 transition text-xs"
+              onClick={() => setIsConfirmingClearAll(true)}
+              className="p-1.5 rounded-xl bg-slate-800 hover:bg-red-950/60 text-slate-400 hover:text-red-400 border border-slate-700 hover:border-red-500/40 transition text-xs cursor-pointer"
               title="Borrar Todos los Eventos"
             >
               <Trash2 className="w-4 h-4" />
@@ -192,7 +249,27 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
         </div>
       </div>
 
-      {/* Search & Category Filters */}
+      {/* ── RESTAURAR REGISTROS DE LA PAPELERA ── */}
+      {trashCount > 0 && !readOnly && (
+        <div className="flex items-center justify-between p-2.5 px-3.5 bg-emerald-950/40 border border-emerald-500/40 rounded-xl text-xs shadow-sm">
+          <div className="flex items-center gap-2 text-emerald-300 font-bold">
+            <RotateCcw className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>
+              Papelera de Recuperación: Tienes <strong className="text-white font-black">{trashCount} registros</strong> respaldados en la papelera de seguridad.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={handleRestoreFromTrash}
+            className="px-3 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs shadow-md transition flex items-center gap-1 cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Restaurar Registros</span>
+          </button>
+        </div>
+      )}
+
+      {/* Search, Category Filters & Sort Control */}
       <div className="flex flex-wrap items-center gap-3 bg-slate-950/80 p-2.5 rounded-xl border border-slate-800">
         <div className="flex-1 min-w-44 flex items-center gap-2 bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-800">
           <Search className="w-3.5 h-3.5 text-slate-400" />
@@ -217,6 +294,17 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
             </option>
           ))}
         </select>
+
+        {/* Sort order toggle button */}
+        <button
+          type="button"
+          onClick={() => setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc')}
+          className="bg-slate-900 text-xs text-amber-300 font-bold px-3 py-1.5 rounded-xl border border-slate-800 hover:bg-slate-800 transition flex items-center gap-1.5 shrink-0"
+          title="Cambiar ordenación: De más reciente a más lejano o viceversa"
+        >
+          <ArrowUpDown className="w-3.5 h-3.5 text-amber-400" />
+          <span>{sortOrder === 'desc' ? 'Más Reciente (⬇)' : 'Más Antiguo (⬆)'}</span>
+        </button>
       </div>
 
       {/* Events Table Stream */}
@@ -224,8 +312,21 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
         <table className="w-full text-left text-xs text-slate-300">
           <thead className="bg-slate-950 text-slate-400 font-semibold text-[11px] uppercase tracking-wider sticky top-0 z-10 border-b border-slate-800">
             <tr>
-              <th className="p-2.5">Tiempo</th>
-              <th className="p-2.5">Periodo</th>
+              <th
+                onClick={() => setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc')}
+                className="p-2.5 cursor-pointer hover:text-amber-300 transition select-none flex items-center gap-1"
+                title="Ordenar por Tiempo"
+              >
+                <span>Tiempo</span>
+                <ArrowUpDown className="w-3 h-3 text-amber-400 shrink-0" />
+              </th>
+              <th
+                onClick={() => setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc')}
+                className="p-2.5 cursor-pointer hover:text-amber-300 transition select-none"
+                title="Ordenar por Periodo"
+              >
+                <span>Periodo</span>
+              </th>
               <th className="p-2.5">Evento</th>
               <th className="p-2.5">Jugador</th>
               <th className="p-2.5">Descriptores</th>
@@ -233,14 +334,14 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/60 bg-slate-900/60 font-medium">
-            {filteredEvents.length === 0 ? (
+            {sortedEvents.length === 0 ? (
               <tr>
                 <td colSpan={6} className="p-6 text-center text-slate-500 text-xs italic">
                   No hay eventos registrados aún. Usa la botonera o atajos de teclado para marcar acciones del partido.
                 </td>
               </tr>
             ) : (
-              filteredEvents.map((evt) => {
+              sortedEvents.map((evt) => {
                 const color = getEventColor(evt);
                 const descriptors = getDescriptors(evt);
                 const isExpanded = expandedEventId === evt.event_id;
@@ -267,12 +368,18 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
 
                       {/* Nombre del botón pulsado */}
                       <td className="p-2.5">
-                        <span className="flex items-center gap-1.5 font-black text-slate-50">
+                        <span className="flex items-center gap-1.5 flex-wrap font-black text-slate-50">
                           <span
                             className="w-2 h-2 rounded-full shrink-0"
                             style={{ backgroundColor: color }}
                           />
-                          {evt.event_type || evt.category}
+                          <span>{evt.event_type || evt.category}</span>
+                          {evt.team_name && (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-cyan-950/70 text-cyan-300 text-[10px] font-bold border border-cyan-800/40">
+                              <TeamLogo teamName={evt.team_name} size={13} />
+                              <span>{evt.team_name}</span>
+                            </span>
+                          )}
                           <ChevronDown
                             className={`w-3 h-3 text-slate-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
                           />
@@ -335,8 +442,8 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
                               </button>
                               {onDeleteEvent && (
                                 <button
-                                  onClick={() => onDeleteEvent(evt.event_id)}
-                                  className="p-1 rounded bg-slate-950/50 hover:bg-red-900/60 text-slate-300 hover:text-red-300 border border-slate-700 transition"
+                                  onClick={() => setDeletingEventTarget(evt)}
+                                  className="p-1 rounded bg-slate-950/50 hover:bg-red-900/60 text-slate-300 hover:text-red-300 border border-slate-700 transition cursor-pointer"
                                   title="Eliminar este evento"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
@@ -379,14 +486,23 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
                             <span className="flex items-center gap-1.5">
                               <User className="w-3 h-3 text-slate-500" />
                               <span className="text-slate-500 font-bold uppercase tracking-wide">Equipo:</span>
-                              <span className="text-slate-200">{evt.team_name || '-'}</span>
+                              <span className="text-slate-200 inline-flex items-center gap-1">
+                                <TeamLogo teamName={evt.team_name} size={14} />
+                                <span>{evt.team_name || '-'}</span>
+                              </span>
                             </span>
 
                             <span className="flex items-center gap-1.5">
                               <Clock className="w-3 h-3 text-slate-500" />
-                              <span className="text-slate-500 font-bold uppercase tracking-wide">Ventana:</span>
-                              <span className="text-slate-200 font-mono">
-                                -{evt.metadata?.leadTime ?? 0}s / +{evt.metadata?.lagTime ?? 0}s
+                              <span className="text-slate-500 font-bold uppercase tracking-wide">Ventana Corte:</span>
+                              <span className="text-amber-300 font-mono font-bold">
+                                {(() => {
+                                  const lead = evt.metadata?.leadTime ?? 0;
+                                  const lag = evt.metadata?.lagTime ?? 0;
+                                  const leadStr = lead >= 0 ? `-${lead}s` : `+${Math.abs(lead)}s (post-clic)`;
+                                  const lagStr = lag >= 0 ? `+${lag}s` : `-${Math.abs(lag)}s (pre-clic)`;
+                                  return `${leadStr} / ${lagStr}`;
+                                })()}
                               </span>
                             </span>
 
@@ -412,8 +528,10 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
       {/* Edit Event Modal with full campograma pitch canvas, vector arrow, zone, and descriptors */}
       {editingEvent && (
         <FullEventFormModal
+          key={editingEvent.event_id}
           initialEvent={editingEvent}
           players={players}
+          buttons={buttons}
           onSave={(updated) => {
             if (onUpdateEvent) onUpdateEvent(updated);
             setEditingEvent(null);
@@ -421,6 +539,142 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
           onClose={() => setEditingEvent(null)}
           title="Editar Evento Registrado (Campograma & Descriptores)"
         />
+      )}
+
+      {/* ── MODAL CONFIRMACIÓN ALTA SEGURIDAD: BORRAR UN EVENTO SELECCIONADO ── */}
+      {deletingEventTarget && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/90 backdrop-blur-md p-4 animate-fade-in">
+          <div className="bg-slate-900 border border-red-500/50 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 text-slate-100 text-center">
+            <div className="w-12 h-12 rounded-2xl bg-red-500/10 border border-red-500/30 text-red-400 mx-auto flex items-center justify-center">
+              <AlertTriangle className="w-6 h-6" />
+            </div>
+
+            <div className="space-y-1">
+              <h3 className="text-base font-black text-white">¿Confirmar eliminación del registro?</h3>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                ¿Estás seguro de que deseas borrar la acción{' '}
+                <strong className="text-amber-400">
+                  {deletingEventTarget.event_type || deletingEventTarget.category}
+                </strong>{' '}
+                de <strong className="text-emerald-400">{deletingEventTarget.player_name}</strong>{' '}
+                ({formatMinSec(deletingEventTarget.timestamp)})?
+              </p>
+            </div>
+
+            <div className="space-y-1.5 text-left bg-slate-950 p-3 rounded-xl border border-slate-800">
+              <label className="block text-[10px] font-extrabold uppercase text-amber-400">
+                🔒 Medida de Protección (Escribe para Desbloquear):
+              </label>
+              <p className="text-[11px] text-slate-400">
+                Escribe exactamente <strong className="text-red-400 font-mono">BORRAR</strong> para habilitar la eliminación:
+              </p>
+              <input
+                type="text"
+                value={singleDeleteInput}
+                onChange={(e) => setSingleDeleteInput(e.target.value)}
+                placeholder='Escribe "BORRAR"'
+                className="w-full p-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white font-mono font-black text-center focus:outline-none focus:border-red-500 text-xs"
+              />
+            </div>
+
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                onClick={() => {
+                  setDeletingEventTarget(null);
+                  setSingleDeleteInput('');
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                disabled={singleDeleteInput.trim().toUpperCase() !== 'BORRAR'}
+                onClick={() => {
+                  if (onDeleteEvent && deletingEventTarget) {
+                    onDeleteEvent(deletingEventTarget.event_id);
+                    updateTrashCount();
+                  }
+                  setDeletingEventTarget(null);
+                  setSingleDeleteInput('');
+                }}
+                className={`flex-1 py-2.5 rounded-xl text-white font-black text-xs transition flex items-center justify-center gap-1.5 ${
+                  singleDeleteInput.trim().toUpperCase() === 'BORRAR'
+                    ? 'bg-red-600 hover:bg-red-500 shadow-lg shadow-red-600/30 cursor-pointer'
+                    : 'bg-slate-800 text-slate-500 cursor-not-allowed opacity-60'
+                }`}
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Sí, Eliminar</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL CONFIRMACIÓN ALTA SEGURIDAD: BORRAR TODOS LOS EVENTOS DE LA SESIÓN ── */}
+      {isConfirmingClearAll && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/90 backdrop-blur-md p-4 animate-fade-in">
+          <div className="bg-slate-900 border border-red-500/60 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 text-slate-100 text-center">
+            <div className="w-12 h-12 rounded-2xl bg-red-500/10 border border-red-500/30 text-red-400 mx-auto flex items-center justify-center">
+              <AlertTriangle className="w-6 h-6 text-red-400" />
+            </div>
+
+            <div className="space-y-1">
+              <h3 className="text-base font-black text-white">¿Borrar TODOS los eventos del análisis?</h3>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                ¿Estás seguro de que deseas eliminar TODOS los{' '}
+                <strong className="text-amber-400 font-extrabold">{events.length} eventos</strong> registrados en este partido?
+              </p>
+            </div>
+
+            <div className="space-y-1.5 text-left bg-slate-950 p-3 rounded-xl border border-red-900/40">
+              <label className="block text-[10px] font-extrabold uppercase text-amber-400">
+                ⚠️ Protección Anti-Borrado de Seguridad (Costoso):
+              </label>
+              <p className="text-[11px] text-slate-300">
+                Para evitar pérdidas accidentales de análisis, escribe exactamente <strong className="text-red-400 font-mono">BORRAR TODO</strong>:
+              </p>
+              <input
+                type="text"
+                value={clearAllInput}
+                onChange={(e) => setClearAllInput(e.target.value)}
+                placeholder='Escribe "BORRAR TODO"'
+                className="w-full p-2.5 rounded-xl bg-slate-900 border border-red-700/60 text-amber-300 font-mono font-black text-center focus:outline-none focus:border-red-500 text-xs"
+              />
+            </div>
+
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                onClick={() => {
+                  setIsConfirmingClearAll(false);
+                  setClearAllInput('');
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                disabled={clearAllInput.trim().toUpperCase() !== 'BORRAR TODO'}
+                onClick={() => {
+                  if (onClearAllEvents) {
+                    onClearAllEvents();
+                    updateTrashCount();
+                  }
+                  setIsConfirmingClearAll(false);
+                  setClearAllInput('');
+                }}
+                className={`flex-1 py-2.5 rounded-xl text-white font-black text-xs transition flex items-center justify-center gap-1.5 ${
+                  clearAllInput.trim().toUpperCase() === 'BORRAR TODO'
+                    ? 'bg-red-600 hover:bg-red-500 shadow-lg shadow-red-600/40 cursor-pointer'
+                    : 'bg-slate-800 text-slate-500 cursor-not-allowed opacity-60'
+                }`}
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Sí, Borrar Todo</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

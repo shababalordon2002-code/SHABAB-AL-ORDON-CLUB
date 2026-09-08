@@ -26,7 +26,12 @@ import {
   AlertCircle,
   Copy,
   Clipboard,
-  Files
+  Files,
+  Shield,
+  Check,
+  GripVertical,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
 import { BotoneraButton, BotoneraTemplate } from '@/types';
 import { dbStore } from '@/lib/store/db-store';
@@ -93,6 +98,127 @@ export const EXPANDED_COLOR_OPTIONS = [
   { key: 'charcoal', name: 'Carbón', hex: '#1f2937' },
   { key: 'midnight', name: 'Medianoche', hex: '#0f172a' },
 ];
+
+export const PITCH_MODE_OPTIONS = [
+  { key: 'none', title: 'Sin Campograma', desc: 'Sin registro espacial', icon: '⚡' },
+  { key: 'point_full', title: 'Punto (Campo)', desc: 'Punto (X, Y) campo entero', icon: '📍' },
+  { key: 'point_half', title: 'Punto (Medio)', desc: 'Punto (X, Y) medio campo', icon: '📌' },
+  { key: 'vector_arrow', title: 'Vector / Flechas', desc: 'Origen ➔ Destino (Pase, tiro)', icon: '🏹' },
+  { key: 'zone_bandas_centro', title: 'Bandas y Centro', desc: '3 pasillos (Izq, Centro, Der)', icon: '↔️' },
+  { key: 'zone_3_hitos', title: '3 Zonas', desc: 'Inicio - Creación - Finalización', icon: '📶' },
+  { key: 'zone_4_zonas', title: '4 Cuadrantes', desc: 'Cuadrícula 2x2', icon: '📊' },
+  { key: 'zone_remate', title: 'Zonas Remate', desc: 'Área pequeña, área grande, borde', icon: '🎯' },
+  { key: 'zone_counter', title: 'Conteo por Zona', desc: 'Zonas con contador numérico', icon: '🔢' },
+];
+
+export function MiniPitchDiagram({ mode }: { mode: string }) {
+  return (
+    <svg viewBox="0 0 100 60" className="w-full h-12 rounded-lg bg-slate-950 border border-slate-800 overflow-hidden shadow-inner">
+      {/* Outer Pitch Line */}
+      <rect x="4" y="4" width="92" height="52" rx="3" fill="#0d2419" stroke="#10b981" strokeWidth="0.8" strokeOpacity="0.5" />
+      {/* Center Line */}
+      <line x1="50" y1="4" x2="50" y2="56" stroke="#10b981" strokeWidth="0.8" strokeOpacity="0.5" />
+      {/* Center Circle */}
+      <circle cx="50" cy="30" r="8" fill="none" stroke="#10b981" strokeWidth="0.8" strokeOpacity="0.5" />
+      {/* Penalty Boxes */}
+      <rect x="4" y="16" width="14" height="28" fill="none" stroke="#10b981" strokeWidth="0.8" strokeOpacity="0.5" />
+      <rect x="82" y="16" width="14" height="28" fill="none" stroke="#10b981" strokeWidth="0.8" strokeOpacity="0.5" />
+
+      {/* Mode Specific Vector Diagrams */}
+      {mode === 'none' && (
+        <g>
+          <line x1="25" y1="15" x2="75" y2="45" stroke="#ef4444" strokeWidth="2" strokeDasharray="3 2" opacity="0.7" />
+          <circle cx="50" cy="30" r="14" fill="none" stroke="#ef4444" strokeWidth="1.5" opacity="0.7" />
+        </g>
+      )}
+
+      {mode === 'point_full' && (
+        <g>
+          <circle cx="68" cy="22" r="5" fill="#ef4444" fillOpacity="0.3" stroke="#ef4444" strokeWidth="1" />
+          <circle cx="68" cy="22" r="2.5" fill="#ef4444" />
+        </g>
+      )}
+
+      {mode === 'point_half' && (
+        <g>
+          <rect x="50" y="4" width="46" height="52" fill="#10b981" fillOpacity="0.15" />
+          <circle cx="82" cy="30" r="4.5" fill="#06b6d4" fillOpacity="0.3" stroke="#06b6d4" strokeWidth="1" />
+          <circle cx="82" cy="30" r="2" fill="#06b6d4" />
+        </g>
+      )}
+
+      {mode === 'vector_arrow' && (
+        <g>
+          <circle cx="26" cy="42" r="2.5" fill="#3b82f6" />
+          <path d="M 26 42 Q 50 16 74 24" fill="none" stroke="#f59e0b" strokeWidth="1.8" strokeDasharray="2.5 1.5" />
+          <polygon points="74,24 68,20 70,26" fill="#f59e0b" />
+          <circle cx="74" cy="24" r="2.5" fill="#f59e0b" />
+        </g>
+      )}
+
+      {mode === 'zone_bandas_centro' && (
+        <g>
+          <rect x="4" y="4" width="92" height="15" fill="#3b82f6" fillOpacity="0.25" stroke="#3b82f6" strokeWidth="0.5" strokeDasharray="2 2" />
+          <rect x="4" y="19" width="92" height="22" fill="#10b981" fillOpacity="0.25" stroke="#10b981" strokeWidth="0.5" strokeDasharray="2 2" />
+          <rect x="4" y="41" width="92" height="15" fill="#3b82f6" fillOpacity="0.25" stroke="#3b82f6" strokeWidth="0.5" strokeDasharray="2 2" />
+          <text x="50" y="14" fill="#93c5fd" fontSize="5" fontWeight="bold" textAnchor="middle">Izq</text>
+          <text x="50" y="32" fill="#6ee7b7" fontSize="5" fontWeight="bold" textAnchor="middle">Centro</text>
+          <text x="50" y="51" fill="#93c5fd" fontSize="5" fontWeight="bold" textAnchor="middle">Der</text>
+        </g>
+      )}
+
+      {mode === 'zone_3_hitos' && (
+        <g>
+          <rect x="4" y="4" width="29" height="52" fill="#3b82f6" fillOpacity="0.25" stroke="#3b82f6" strokeWidth="0.5" strokeDasharray="2 2" />
+          <rect x="33" y="4" width="34" height="52" fill="#10b981" fillOpacity="0.25" stroke="#10b981" strokeWidth="0.5" strokeDasharray="2 2" />
+          <rect x="67" y="4" width="29" height="52" fill="#ef4444" fillOpacity="0.25" stroke="#ef4444" strokeWidth="0.5" strokeDasharray="2 2" />
+          <text x="18" y="32" fill="#93c5fd" fontSize="5" fontWeight="bold" textAnchor="middle">Inicio</text>
+          <text x="50" y="32" fill="#6ee7b7" fontSize="5" fontWeight="bold" textAnchor="middle">Creación</text>
+          <text x="81" y="32" fill="#f87171" fontSize="5" fontWeight="bold" textAnchor="middle">Finaliz.</text>
+        </g>
+      )}
+
+      {mode === 'zone_4_zonas' && (
+        <g>
+          <rect x="4" y="4" width="46" height="26" fill="#3b82f6" fillOpacity="0.25" stroke="#3b82f6" strokeWidth="0.5" />
+          <rect x="50" y="4" width="46" height="26" fill="#8b5cf6" fillOpacity="0.25" stroke="#8b5cf6" strokeWidth="0.5" />
+          <rect x="4" y="30" width="46" height="26" fill="#10b981" fillOpacity="0.25" stroke="#10b981" strokeWidth="0.5" />
+          <rect x="50" y="30" width="46" height="26" fill="#f59e0b" fillOpacity="0.25" stroke="#f59e0b" strokeWidth="0.5" />
+          <text x="27" y="19" fill="#93c5fd" fontSize="5" fontWeight="bold" textAnchor="middle">Z1</text>
+          <text x="73" y="19" fill="#c4b5fd" fontSize="5" fontWeight="bold" textAnchor="middle">Z2</text>
+          <text x="27" y="45" fill="#6ee7b7" fontSize="5" fontWeight="bold" textAnchor="middle">Z3</text>
+          <text x="73" y="45" fill="#fcd34d" fontSize="5" fontWeight="bold" textAnchor="middle">Z4</text>
+        </g>
+      )}
+
+      {mode === 'zone_remate' && (
+        <g>
+          <rect x="70" y="17" width="26" height="26" fill="#ef4444" fillOpacity="0.35" stroke="#ef4444" strokeWidth="0.8" />
+          <rect x="84" y="21" width="12" height="18" fill="#f59e0b" fillOpacity="0.45" stroke="#f59e0b" strokeWidth="0.8" />
+          <text x="90" y="32" fill="#fbbf24" fontSize="4.5" fontWeight="bold" textAnchor="middle">AP</text>
+          <text x="77" y="32" fill="#f87171" fontSize="4.5" fontWeight="bold" textAnchor="middle">AG</text>
+        </g>
+      )}
+
+      {mode === 'zone_counter' && (
+        <g>
+          <rect x="4" y="4" width="30" height="26" fill="#10b981" fillOpacity="0.2" stroke="#10b981" strokeWidth="0.5" />
+          <rect x="34" y="4" width="32" height="26" fill="#10b981" fillOpacity="0.2" stroke="#10b981" strokeWidth="0.5" />
+          <rect x="66" y="4" width="30" height="26" fill="#10b981" fillOpacity="0.2" stroke="#10b981" strokeWidth="0.5" />
+          <rect x="4" y="30" width="30" height="26" fill="#10b981" fillOpacity="0.2" stroke="#10b981" strokeWidth="0.5" />
+          <rect x="34" y="30" width="32" height="26" fill="#10b981" fillOpacity="0.2" stroke="#10b981" strokeWidth="0.5" />
+          <rect x="66" y="30" width="30" height="26" fill="#10b981" fillOpacity="0.2" stroke="#10b981" strokeWidth="0.5" />
+          <circle cx="19" cy="17" r="4" fill="#10b981" />
+          <text x="19" y="19.5" fill="#000" fontSize="5" fontWeight="bold" textAnchor="middle">1</text>
+          <circle cx="50" cy="17" r="4" fill="#10b981" />
+          <text x="50" y="19.5" fill="#000" fontSize="5" fontWeight="bold" textAnchor="middle">2</text>
+          <circle cx="81" cy="17" r="4" fill="#10b981" />
+          <text x="81" y="19.5" fill="#000" fontSize="5" fontWeight="bold" textAnchor="middle">3</text>
+        </g>
+      )}
+    </svg>
+  );
+}
 
 export function getButtonColorHex(colorStr: string): string {
   if (!colorStr) return '#10b981';
@@ -170,7 +296,38 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
   const [isRenameModalOpen, setIsRenameModalOpen] = useState<boolean>(false);
   const [newTemplateName, setNewTemplateName] = useState<string>('');
   const [newTemplateDesc, setNewTemplateDesc] = useState<string>('');
+  const [deleteConfirmTemplate, setDeleteConfirmTemplate] = useState<BotoneraTemplate | null>(null);
   const [saveSuccessToast, setSaveSuccessToast] = useState<string | null>(null);
+
+  // Drag & Drop Descriptor Group Reordering State
+  const [draggedGrpIdx, setDraggedGrpIdx] = useState<number | null>(null);
+  const [dragOverGrpIdx, setDragOverGrpIdx] = useState<number | null>(null);
+
+  // Drag & Drop Descriptor Option Reordering State
+  const [draggedOptIdx, setDraggedOptIdx] = useState<{ grpIdx: number; optIdx: number } | null>(null);
+  const [dragOverOptIdx, setDragOverOptIdx] = useState<{ grpIdx: number; optIdx: number } | null>(null);
+
+  const moveDescriptorGroup = (fromIdx: number, toIdx: number) => {
+    if (!editingButton || !editingButton.descriptorGroups) return;
+    if (toIdx < 0 || toIdx >= editingButton.descriptorGroups.length) return;
+    const updated = [...editingButton.descriptorGroups];
+    const [removed] = updated.splice(fromIdx, 1);
+    updated.splice(toIdx, 0, removed);
+    setEditingButton({ ...editingButton, descriptorGroups: updated });
+  };
+
+  const moveDescriptorOption = (grpIdx: number, fromIdx: number, toIdx: number) => {
+    if (!editingButton || !editingButton.descriptorGroups) return;
+    const grp = editingButton.descriptorGroups[grpIdx];
+    if (!grp || !grp.options) return;
+    if (toIdx < 0 || toIdx >= grp.options.length) return;
+    const updatedGrps = [...editingButton.descriptorGroups];
+    const updatedOpts = [...updatedGrps[grpIdx].options];
+    const [removed] = updatedOpts.splice(fromIdx, 1);
+    updatedOpts.splice(toIdx, 0, removed);
+    updatedGrps[grpIdx] = { ...updatedGrps[grpIdx], options: updatedOpts };
+    setEditingButton({ ...editingButton, descriptorGroups: updatedGrps });
+  };
 
   // Duplication, Copy, Paste & Delete Handlers
   const handleDuplicateSelected = (idsToDuplicate?: string[]) => {
@@ -599,15 +756,21 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
       alert('La plantilla predeterminada no se puede eliminar.');
       return;
     }
+    setDeleteConfirmTemplate(template);
+  };
 
-    if (confirm(`¿Estás seguro de eliminar la botonera "${template.name}"?`)) {
-      dbStore.deleteBotoneraTemplate(template.id);
-      const remaining = dbStore.getBotoneraTemplates();
-      setTemplatesList(remaining);
-      if (remaining.length > 0) {
-        onUpdateTemplate(remaining[0]);
-      }
+  const confirmDeleteTemplate = () => {
+    if (!deleteConfirmTemplate) return;
+    dbStore.deleteBotoneraTemplate(deleteConfirmTemplate.id);
+    const remaining = dbStore.getBotoneraTemplates();
+    setTemplatesList(remaining);
+    if (remaining.length > 0) {
+      onUpdateTemplate(remaining[0]);
     }
+    const deletedName = deleteConfirmTemplate.name;
+    setDeleteConfirmTemplate(null);
+    setSaveSuccessToast(`🗑️ Pizarra "${deletedName}" eliminada correctamente.`);
+    setTimeout(() => setSaveSuccessToast(null), 3000);
   };
 
   const handleAddButtonToCanvas = (type: 'category' | 'descriptor' | 'header') => {
@@ -1608,32 +1771,56 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                 </div>
               </div>
 
-              {/* 1. SELECCIÓN DE REGISTRO ESPACIAL / CAMPOGRAMA */}
+              {/* 1. SELECCIÓN DE REGISTRO ESPACIAL / CAMPOGRAMA (CON DIBUJOS EN PEQUEÑO) */}
               {editingButton.type !== 'header' && (
-                <div className="p-3 rounded-xl bg-slate-950 border border-emerald-500/30 space-y-2">
-                  <label className="block text-xs font-bold text-emerald-400">
-                    📍 Modo de Registro de Datos en Campograma:
-                  </label>
-                  <select
-                    value={editingButton.pitchRequired || 'none'}
-                    onChange={(e) => setEditingButton({ ...editingButton, pitchRequired: e.target.value as any })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-emerald-500/40 text-emerald-300 font-semibold text-xs focus:outline-none focus:border-emerald-400"
-                  >
-                  <option value="none">⚡ Sin Campograma (Registrar evento directamente)</option>
-                  <option value="point_full">📍 Punto Único en Campo Entero (X, Y)</option>
-                  <option value="point_half">📌 Punto Único en Medio Campo (Área Rival)</option>
-                  <option value="vector_arrow">🏹 Flechas / Vector (Origen ➔ Destino)</option>
-                  <option value="zone_bandas_centro">↔️ Zonas: Bandas - Centro (3 pasillos)</option>
-                  <option value="zone_3_hitos">📶 Zonas: 3 Zonas (Inicio - Canalización - Finalización / Alta - Media - Baja)</option>
-                  <option value="zone_4_zonas">📊 Zonas: 4 Zonas Horizontales</option>
-                  <option value="zone_remate">🎯 Zonas: Zonas de Remate (Área grande, pequeña, borde, laterales)</option>
-                  <option value="zone_counter">🔢 Zonas: Conteo de Cantidad por Zona</option>
-                </select>
-                <p className="text-[10px] text-slate-400 italic">
-                  Define la interfaz del campograma que aparecerá al hacer clic en este botón durante la observación en directo.
-                </p>
-              </div>
-            )}
+                <div className="p-3 rounded-xl bg-slate-950 border border-emerald-500/30 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-extrabold text-emerald-400 flex items-center gap-1.5">
+                      <span>📍 Modo de Registro de Datos en Campograma</span>
+                    </label>
+                    <span className="text-[10px] text-slate-400 font-mono">
+                      Seleccionado: <strong className="text-emerald-300">{(PITCH_MODE_OPTIONS.find(o => o.key === (editingButton.pitchRequired || 'none'))?.title)}</strong>
+                    </span>
+                  </div>
+
+                  {/* Grid de tarjetas visuales con dibujos en pequeño de cada tipo de campograma */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 max-h-72 overflow-y-auto pr-1">
+                    {PITCH_MODE_OPTIONS.map((opt) => {
+                      const isSelected = (editingButton.pitchRequired || 'none') === opt.key;
+                      return (
+                        <button
+                          key={opt.key}
+                          type="button"
+                          onClick={() => setEditingButton({ ...editingButton, pitchRequired: opt.key as any })}
+                          className={`p-2 rounded-xl border text-left flex flex-col justify-between gap-2 transition-all cursor-pointer ${
+                            isSelected
+                              ? 'bg-emerald-600/20 border-emerald-400 ring-2 ring-emerald-500/50 shadow-lg shadow-emerald-950/40 text-emerald-200'
+                              : 'bg-slate-900/90 border-slate-800 text-slate-400 hover:border-slate-700 hover:bg-slate-850 hover:text-slate-200'
+                          }`}
+                        >
+                          {/* Dibujo en pequeño SVG del tipo de campograma */}
+                          <MiniPitchDiagram mode={opt.key} />
+
+                          <div>
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="text-[11px] font-bold text-slate-100 truncate flex items-center gap-1">
+                                <span>{opt.icon}</span>
+                                <span>{opt.title}</span>
+                              </span>
+                              {isSelected && <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
+                            </div>
+                            <p className="text-[9.5px] text-slate-400 leading-tight mt-0.5">{opt.desc}</p>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <p className="text-[10px] text-slate-400 italic">
+                    Selecciona el dibujo del campograma que aparecerá al pulsar este botón durante el análisis en directo.
+                  </p>
+                </div>
+              )}
 
               {/* 2. DESCRIPTORES ESTRUCTURADOS (TIPO Y POSIBILIDADES 100% EDITABLES) */}
               {editingButton.type === 'category' && (
@@ -1669,10 +1856,80 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                   {editingButton.descriptorGroups && editingButton.descriptorGroups.length > 0 ? (
                     <div className="space-y-3">
                       {editingButton.descriptorGroups.map((grp, grpIdx) => (
-                        <div key={grp.id} className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
+                        <div
+                          key={grp.id}
+                          draggable
+                          onDragStart={(e) => {
+                            if (draggedOptIdx !== null) return;
+                            e.stopPropagation();
+                            e.dataTransfer.setData('text/plain', grpIdx.toString());
+                            e.dataTransfer.effectAllowed = 'move';
+                            setDraggedGrpIdx(grpIdx);
+                          }}
+                          onDragOver={(e) => {
+                            if (draggedOptIdx !== null) return;
+                            e.preventDefault();
+                            e.dataTransfer.dropEffect = 'move';
+                            if (draggedGrpIdx !== null && draggedGrpIdx !== grpIdx) {
+                              setDragOverGrpIdx(grpIdx);
+                            }
+                          }}
+                          onDragLeave={() => {
+                            if (dragOverGrpIdx === grpIdx) setDragOverGrpIdx(null);
+                          }}
+                          onDrop={(e) => {
+                            if (draggedOptIdx !== null) return;
+                            e.preventDefault();
+                            if (draggedGrpIdx !== null && draggedGrpIdx !== grpIdx) {
+                              moveDescriptorGroup(draggedGrpIdx, grpIdx);
+                            }
+                            setDraggedGrpIdx(null);
+                            setDragOverGrpIdx(null);
+                          }}
+                          onDragEnd={() => {
+                            setDraggedGrpIdx(null);
+                            setDragOverGrpIdx(null);
+                          }}
+                          className={`p-2.5 rounded-xl bg-slate-900 border space-y-2 transition-all ${
+                            dragOverGrpIdx === grpIdx
+                              ? 'border-amber-400 bg-amber-500/10 scale-[1.01] shadow-lg shadow-amber-500/10 ring-1 ring-amber-400/50'
+                              : draggedGrpIdx === grpIdx
+                              ? 'opacity-40 border-dashed border-amber-500/50'
+                              : 'border-slate-800 hover:border-slate-700'
+                          }`}
+                        >
                           <div className="flex items-center gap-2">
+                            {/* Drag Handle & Up/Down reorder controls */}
+                            <div className="flex items-center gap-0.5 text-slate-500 shrink-0">
+                              <div
+                                className="p-1 cursor-grab active:cursor-grabbing hover:text-amber-300 transition rounded hover:bg-slate-800"
+                                title="Arrastra para cambiar el orden de este tipo descriptor"
+                              >
+                                <GripVertical className="w-4 h-4" />
+                              </div>
+                              <button
+                                type="button"
+                                disabled={grpIdx === 0}
+                                onClick={() => moveDescriptorGroup(grpIdx, grpIdx - 1)}
+                                className="p-0.5 hover:text-amber-300 disabled:opacity-20 disabled:hover:text-slate-500 transition rounded hover:bg-slate-800"
+                                title="Subir orden"
+                              >
+                                <ArrowUp className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={grpIdx === editingButton.descriptorGroups!.length - 1}
+                                onClick={() => moveDescriptorGroup(grpIdx, grpIdx + 1)}
+                                className="p-0.5 hover:text-amber-300 disabled:opacity-20 disabled:hover:text-slate-500 transition rounded hover:bg-slate-800"
+                                title="Bajar orden"
+                              >
+                                <ArrowDown className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+
                             <input
                               type="text"
+                              draggable={false}
                               placeholder="Escribe el nombre del tipo de descriptor..."
                               value={grp.type}
                               autoFocus={!grp.type}
@@ -1716,10 +1973,11 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                           </div>
 
                           {/* Options / Posibilidades pills */}
-                          <div className="space-y-1.5">
+                          <div className="space-y-1.5 pt-0.5">
                             <div className="flex items-center justify-between">
-                              <label className="text-[10px] text-slate-400 font-semibold">
-                                Posibilidades / Opciones para &quot;{grp.type || 'Este tipo'}&quot;:
+                              <label className="text-[10px] text-slate-400 font-semibold flex items-center gap-1">
+                                <span>Posibilidades / Opciones para &quot;{grp.type || 'Este tipo'}&quot;:</span>
+                                <span className="text-[9px] text-amber-400/80 font-normal">⋮⋮ Arrastra opciones o grupos para reordenar</span>
                               </label>
                               {grp.options.length > 0 && (
                                 <span className="text-[10px] text-slate-500">{grp.options.length} opciones creadas (haz clic para editar texto)</span>
@@ -1727,39 +1985,96 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                             </div>
 
                             <div className="flex flex-wrap gap-1.5">
-                              {grp.options.map((opt, optIdx) => (
-                                <span key={optIdx} className="flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-md bg-slate-800 text-slate-200 border border-slate-700 text-[11px] focus-within:border-amber-400">
-                                  <input
-                                    type="text"
-                                    value={opt}
-                                    onChange={(e) => {
-                                      const updatedGrps = [...editingButton.descriptorGroups!];
-                                      updatedGrps[grpIdx].options[optIdx] = e.target.value;
-                                      setEditingButton({ ...editingButton, descriptorGroups: updatedGrps });
+                              {grp.options.map((opt, optIdx) => {
+                                const isOptDragged = draggedOptIdx?.grpIdx === grpIdx && draggedOptIdx?.optIdx === optIdx;
+                                const isOptOver = dragOverOptIdx?.grpIdx === grpIdx && dragOverOptIdx?.optIdx === optIdx;
+
+                                return (
+                                  <span
+                                    key={optIdx}
+                                    draggable
+                                    onDragStart={(e) => {
+                                      e.stopPropagation();
+                                      setDraggedOptIdx({ grpIdx, optIdx });
+                                      e.dataTransfer.setData('text/plain', `${grpIdx}:${optIdx}`);
+                                      e.dataTransfer.effectAllowed = 'move';
                                     }}
-                                    className="bg-transparent border-none text-slate-200 text-[11px] focus:outline-none min-w-[50px] max-w-[150px]"
-                                    style={{ width: `${Math.max(opt.length, 5)}ch` }}
-                                  />
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      const updatedGrps = [...editingButton.descriptorGroups!];
-                                      updatedGrps[grpIdx].options = updatedGrps[grpIdx].options.filter((_, i) => i !== optIdx);
-                                      setEditingButton({ ...editingButton, descriptorGroups: updatedGrps });
+                                    onDragOver={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      e.dataTransfer.dropEffect = 'move';
+                                      if (draggedOptIdx && (draggedOptIdx.grpIdx !== grpIdx || draggedOptIdx.optIdx !== optIdx)) {
+                                        setDragOverOptIdx({ grpIdx, optIdx });
+                                      }
                                     }}
-                                    className="p-0.5 hover:text-red-400 transition rounded"
-                                    title="Eliminar esta opción"
+                                    onDragLeave={(e) => {
+                                      e.stopPropagation();
+                                      if (dragOverOptIdx?.grpIdx === grpIdx && dragOverOptIdx?.optIdx === optIdx) {
+                                        setDragOverOptIdx(null);
+                                      }
+                                    }}
+                                    onDrop={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      if (draggedOptIdx && draggedOptIdx.grpIdx === grpIdx && draggedOptIdx.optIdx !== optIdx) {
+                                        moveDescriptorOption(grpIdx, draggedOptIdx.optIdx, optIdx);
+                                      }
+                                      setDraggedOptIdx(null);
+                                      setDragOverOptIdx(null);
+                                    }}
+                                    onDragEnd={(e) => {
+                                      e.stopPropagation();
+                                      setDraggedOptIdx(null);
+                                      setDragOverOptIdx(null);
+                                    }}
+                                    className={`flex items-center gap-1 pl-1.5 pr-1 py-0.5 rounded-md bg-slate-800 text-slate-200 border text-[11px] transition-all ${
+                                      isOptOver
+                                        ? 'border-amber-400 bg-amber-500/20 scale-105 ring-1 ring-amber-400'
+                                        : isOptDragged
+                                        ? 'opacity-40 border-dashed border-amber-500/50'
+                                        : 'border-slate-700 hover:border-slate-500'
+                                    }`}
                                   >
-                                    <X className="w-3 h-3" />
-                                  </button>
-                                </span>
-                              ))}
+                                    <div
+                                      className="cursor-grab active:cursor-grabbing hover:text-amber-300 transition"
+                                      title="Arrastra para reordenar esta opción"
+                                    >
+                                      <GripVertical className="w-3 h-3 text-slate-500 hover:text-amber-300 shrink-0" />
+                                    </div>
+                                    <input
+                                      type="text"
+                                      draggable={false}
+                                      value={opt}
+                                      onChange={(e) => {
+                                        const updatedGrps = [...editingButton.descriptorGroups!];
+                                        updatedGrps[grpIdx].options[optIdx] = e.target.value;
+                                        setEditingButton({ ...editingButton, descriptorGroups: updatedGrps });
+                                      }}
+                                      className="bg-transparent border-none text-slate-200 text-[11px] focus:outline-none min-w-[50px] max-w-[150px]"
+                                      style={{ width: `${Math.max(opt.length, 5)}ch` }}
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const updatedGrps = [...editingButton.descriptorGroups!];
+                                        updatedGrps[grpIdx].options = updatedGrps[grpIdx].options.filter((_, i) => i !== optIdx);
+                                        setEditingButton({ ...editingButton, descriptorGroups: updatedGrps });
+                                      }}
+                                      className="p-0.5 hover:text-red-400 transition rounded"
+                                      title="Eliminar esta opción"
+                                    >
+                                      <X className="w-3 h-3" />
+                                    </button>
+                                  </span>
+                                );
+                              })}
                             </div>
 
                             {/* Add Option Input */}
                             <div className="flex gap-1.5 pt-1">
                               <input
                                 type="text"
+                                draggable={false}
                                 id={`input_opt_${grp.id}`}
                                 placeholder="Escribe nueva posibilidad y pulsa Enter..."
                                 onKeyDown={(e) => {
@@ -1859,7 +2174,7 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                     <button
                       type="button"
                       onClick={() => setEditingButton({ ...editingButton, playerRequiredMode: 'required' })}
-                      className={`p-2 rounded-xl border text-center transition flex flex-col items-center gap-1 ${
+                      className={`p-2 rounded-xl border text-center transition flex flex-col items-center gap-1 cursor-pointer ${
                         editingButton.playerRequiredMode === 'required'
                           ? 'bg-red-500/20 border-red-500/80 text-red-300 font-black ring-1 ring-red-500/40'
                           : 'bg-slate-950 border-slate-800 text-slate-500 hover:bg-slate-900'
@@ -1872,29 +2187,182 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                 </div>
               )}
 
+              {/* 4. REQUISITO DE SELECCIÓN DE EQUIPO */}
               {editingButton.type === 'category' && (
-                <div className="grid grid-cols-2 gap-2 p-2.5 rounded-xl bg-slate-950 border border-slate-800">
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-400">Lead Time (Previo sec):</label>
-                    <input
-                      type="number"
-                      min={0}
-                      max={30}
-                      value={editingButton.leadTime}
-                      onChange={(e) => setEditingButton({ ...editingButton, leadTime: parseInt(e.target.value) || 0 })}
-                      className="w-full px-2 py-1 rounded bg-slate-900 border border-slate-800 text-slate-200 text-xs font-mono"
-                    />
+                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                  <label className="text-xs font-bold text-cyan-400 flex items-center gap-1.5">
+                    <Shield className="w-3.5 h-3.5 text-cyan-400" /> Requisito de Selección de Equipo:
+                  </label>
+                  <div className="grid grid-cols-3 gap-1.5 text-xs font-semibold">
+                    <button
+                      type="button"
+                      onClick={() => setEditingButton({ ...editingButton, teamRequiredMode: 'none' })}
+                      className={`p-2 rounded-xl border text-center transition flex flex-col items-center gap-1 cursor-pointer ${
+                        (!editingButton.teamRequiredMode || editingButton.teamRequiredMode === 'none')
+                          ? 'bg-slate-800 border-slate-700 text-slate-200 font-bold'
+                          : 'bg-slate-950 border-slate-800 text-slate-500 hover:bg-slate-900'
+                      }`}
+                    >
+                      <span>🚫 Ninguno</span>
+                      <span className="text-[9px] font-normal text-slate-500">Sin equipo</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setEditingButton({ ...editingButton, teamRequiredMode: 'optional' })}
+                      className={`p-2 rounded-xl border text-center transition flex flex-col items-center gap-1 cursor-pointer ${
+                        editingButton.teamRequiredMode === 'optional'
+                          ? 'bg-cyan-500/20 border-cyan-500/80 text-cyan-300 font-bold'
+                          : 'bg-slate-950 border-slate-800 text-slate-500 hover:bg-slate-900'
+                      }`}
+                    >
+                      <span>🛡️ Opcional</span>
+                      <span className="text-[9px] font-normal text-slate-500">Se puede omitir</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setEditingButton({ ...editingButton, teamRequiredMode: 'required' })}
+                      className={`p-2 rounded-xl border text-center transition flex flex-col items-center gap-1 cursor-pointer ${
+                        editingButton.teamRequiredMode === 'required'
+                          ? 'bg-red-500/20 border-red-500/80 text-red-300 font-black ring-1 ring-red-500/40'
+                          : 'bg-slate-950 border-slate-800 text-slate-500 hover:bg-slate-900'
+                      }`}
+                    >
+                      <span>⚠️ Obligatorio</span>
+                      <span className="text-[9px] font-normal text-slate-400">Requerido</span>
+                    </button>
                   </div>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-400">Lag Time (Posterior sec):</label>
-                    <input
-                      type="number"
-                      min={0}
-                      max={30}
-                      value={editingButton.lagTime}
-                      onChange={(e) => setEditingButton({ ...editingButton, lagTime: parseInt(e.target.value) || 0 })}
-                      className="w-full px-2 py-1 rounded bg-slate-900 border border-slate-800 text-slate-200 text-xs font-mono"
-                    />
+                </div>
+              )}
+
+              {editingButton.type === 'category' && (
+                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-amber-400" />
+                      Ventana y Punto de Corte del Vídeo:
+                    </label>
+                    <span className="text-[10px] text-slate-400 font-mono bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
+                      Duración estimada: <strong className="text-amber-300">{(editingButton.leadTime || 0) + (editingButton.lagTime || 0)}s</strong>
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[11px] font-semibold text-slate-300">Lead Time (Previo sec):</label>
+                        <span className="text-[9px] text-amber-400/80 font-bold">
+                          {editingButton.leadTime > 0
+                            ? `✂️ ${editingButton.leadTime}s antes`
+                            : editingButton.leadTime < 0
+                            ? `⏩ ${Math.abs(editingButton.leadTime)}s después`
+                            : '📍 En el clic'}
+                        </span>
+                      </div>
+                      <input
+                        type="number"
+                        min={-120}
+                        max={300}
+                        value={editingButton.leadTime}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setEditingButton({ ...editingButton, leadTime: val === '' ? ('' as any) : parseInt(val, 10) || 0 });
+                        }}
+                        onBlur={() => {
+                          if (typeof editingButton.leadTime !== 'number' || isNaN(editingButton.leadTime)) {
+                            setEditingButton({ ...editingButton, leadTime: 0 });
+                          }
+                        }}
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 text-xs font-mono font-bold focus:outline-none focus:border-amber-400"
+                      />
+                      <p className="text-[9px] text-slate-500 mt-1">
+                        Admite números negativos (ej: -3 hace que el corte comience 3s después del clic).
+                      </p>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[11px] font-semibold text-slate-300">Lag Time (Posterior sec):</label>
+                        <span className="text-[9px] text-amber-400/80 font-bold">
+                          {editingButton.lagTime > 0
+                            ? `🏁 ${editingButton.lagTime}s después`
+                            : editingButton.lagTime < 0
+                            ? `⏪ ${Math.abs(editingButton.lagTime)}s antes`
+                            : '📍 En el clic'}
+                        </span>
+                      </div>
+                      <input
+                        type="number"
+                        min={-120}
+                        max={300}
+                        value={editingButton.lagTime}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setEditingButton({ ...editingButton, lagTime: val === '' ? ('' as any) : parseInt(val, 10) || 0 });
+                        }}
+                        onBlur={() => {
+                          if (typeof editingButton.lagTime !== 'number' || isNaN(editingButton.lagTime)) {
+                            setEditingButton({ ...editingButton, lagTime: 0 });
+                          }
+                        }}
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 text-xs font-mono font-bold focus:outline-none focus:border-amber-400"
+                      />
+                      <p className="text-[9px] text-slate-500 mt-1">
+                        Segundos a añadir tras el momento del evento (ej: 8s para capturar la resolución).
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Preajustes rápidos de corte */}
+                  <div className="pt-1">
+                    <span className="text-[10px] text-slate-400 font-semibold mb-1.5 block">Plantillas rápidas de corte:</span>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setEditingButton({ ...editingButton, leadTime: 5, lagTime: 5 })}
+                        className={`px-2 py-1 rounded-lg text-[10px] border font-semibold transition ${
+                          editingButton.leadTime === 5 && editingButton.lagTime === 5
+                            ? 'bg-amber-500/20 text-amber-300 border-amber-500/50'
+                            : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                        }`}
+                      >
+                        Estándar (-5s/+5s)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingButton({ ...editingButton, leadTime: -3, lagTime: 10 })}
+                        className={`px-2 py-1 rounded-lg text-[10px] border font-semibold transition ${
+                          editingButton.leadTime === -3 && editingButton.lagTime === 10
+                            ? 'bg-amber-500/20 text-amber-300 border-amber-500/50'
+                            : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                        }`}
+                      >
+                        Retardado (+3s/+10s)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingButton({ ...editingButton, leadTime: 10, lagTime: 15 })}
+                        className={`px-2 py-1 rounded-lg text-[10px] border font-semibold transition ${
+                          editingButton.leadTime === 10 && editingButton.lagTime === 15
+                            ? 'bg-amber-500/20 text-amber-300 border-amber-500/50'
+                            : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                        }`}
+                      >
+                        Jugada Larga (-10s/+15s)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingButton({ ...editingButton, leadTime: 2, lagTime: 3 })}
+                        className={`px-2 py-1 rounded-lg text-[10px] border font-semibold transition ${
+                          editingButton.leadTime === 2 && editingButton.lagTime === 3
+                            ? 'bg-amber-500/20 text-amber-300 border-amber-500/50'
+                            : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                        }`}
+                      >
+                        Acción Corta (-2s/+3s)
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1925,6 +2393,50 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                 </div>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal for Deleting Template/Pizarra */}
+      {deleteConfirmTemplate && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-4 animate-fade-in">
+          <div className="w-full max-w-md bg-slate-900 border border-red-500/40 rounded-2xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3 text-red-400">
+              <div className="p-2.5 rounded-xl bg-red-950/60 border border-red-800/80">
+                <AlertCircle className="w-6 h-6 text-red-400" />
+              </div>
+              <div>
+                <h3 className="font-extrabold text-slate-100 text-sm">
+                  ¿Eliminar Pizarra "{deleteConfirmTemplate.name}"?
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Esta acción requiere confirmación previa.
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 bg-slate-950 p-3 rounded-xl border border-slate-800 leading-relaxed">
+              La botonera y su diseño de botones se eliminarán permanentemente. Los eventos etiquetados previamente en partidos se mantendrán intactos.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmTemplate(null)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="button"
+                onClick={confirmDeleteTemplate}
+                className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold shadow-lg shadow-red-950/40 cursor-pointer flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Sí, Eliminar Pizarra</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

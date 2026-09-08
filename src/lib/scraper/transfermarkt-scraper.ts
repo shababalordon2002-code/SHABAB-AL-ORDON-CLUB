@@ -67,9 +67,24 @@ async function scrapeTransfermarktViaPuppeteer(): Promise<Player[]> {
       const numberText = numberElem ? (numberElem as HTMLElement).innerText.trim() : '';
       const number = parseInt(numberText, 10) || (results.length + 1);
 
-      // 3. Photo URL e.g. <img src="..." title="Name" ...>
-      const imgElem = row.querySelector('td.hauptlink img, img.bilderrahmen-fixed, img.inline-table');
-      const photoUrl = imgElem ? (imgElem.getAttribute('src') || imgElem.getAttribute('data-src') || '') : '';
+      // 3. Photo URL e.g. <img data-src="..." src="..." title="Name" ...>
+      const imgElem = row.querySelector('td.hauptlink img, img.bilderrahmen-fixed, img.inline-table, img[data-src*="portrait"]');
+      let photoUrl = '';
+      if (imgElem) {
+        const dataSrc = imgElem.getAttribute('data-src');
+        const srcAttr = imgElem.getAttribute('src');
+        if (dataSrc && (dataSrc.includes('portrait') || dataSrc.includes('transfermarkt'))) {
+          photoUrl = dataSrc;
+        } else if (srcAttr && (srcAttr.includes('portrait') || srcAttr.includes('transfermarkt'))) {
+          photoUrl = srcAttr;
+        } else {
+          photoUrl = dataSrc || srcAttr || '';
+        }
+      }
+
+      if (photoUrl.startsWith('//')) {
+        photoUrl = `https:${photoUrl}`;
+      }
 
       // 4. Position e.g. Goalkeeper, Centre-Back, etc.
       const inlineTablePos = row.querySelector('table.inline-table tr:nth-child(2) td');
@@ -90,7 +105,10 @@ async function scrapeTransfermarktViaPuppeteer(): Promise<Player[]> {
       // 6. Nationality & Flag e.g. <img src="..." title="Jordan" class="flaggenrahmen">
       const flagImg = row.querySelector('img.flaggenrahmen');
       const nationality = flagImg ? (flagImg.getAttribute('title') || 'Jordania') : 'Jordania';
-      const flagUrl = flagImg ? (flagImg.getAttribute('src') || '') : '';
+      let flagUrl = flagImg ? (flagImg.getAttribute('src') || flagImg.getAttribute('data-src') || '') : '';
+      if (flagUrl.startsWith('//')) {
+        flagUrl = `https:${flagUrl}`;
+      }
 
       results.push({
         id: `ply_tm_${results.length + 1}_${name.toLowerCase().replace(/[^a-z0-9]/g, '_')}`,
@@ -158,8 +176,11 @@ async function scrapeTransfermarktViaFetch(): Promise<Player[]> {
       const numberMatch = rowHtml.match(/<div class="rn_nummer">(\d+)<\/div>/) || rowHtml.match(/rueckennummer[^>]*>(\d+)/);
       const number = numberMatch ? parseInt(numberMatch[1], 10) : index;
 
-      const photoMatch = rowHtml.match(/<img[^>]*src="([^"]*portrait[^"]*)"/) || rowHtml.match(/data-src="([^"]*portrait[^"]*)"/);
-      const photoUrl = photoMatch ? photoMatch[1] : undefined;
+      const photoMatch = rowHtml.match(/data-src="([^"]*portrait[^"]*)"/) || rowHtml.match(/src="([^"]*portrait[^"]*)"/);
+      let photoUrl = photoMatch ? photoMatch[1] : undefined;
+      if (photoUrl && photoUrl.startsWith('//')) {
+        photoUrl = `https:${photoUrl}`;
+      }
 
       const posMatch = rowHtml.match(/<\/tr>\s*<tr>\s*<td>\s*([^<]+)\s*<\/td>\s*<\/tr>/) || rowHtml.match(/title="(Goalkeeper|Centre-Back|Left-Back|Right-Back|Defensive Midfield|Central Midfield|Attacking Midfield|Left Winger|Right Winger|Centre-Forward|Forward)"/);
       const rawPosition = posMatch ? posMatch[1].trim() : 'Jugador';

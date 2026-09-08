@@ -13,7 +13,11 @@ import {
   CheckCircle2,
   AlertCircle,
   X,
-  UserPlus
+  UserPlus,
+  Hash,
+  MapPin,
+  Cake,
+  Flag as FlagIcon
 } from 'lucide-react';
 import { dbStore } from '@/lib/store/db-store';
 import { getPlayersFromSupabase } from '@/lib/services/players-service';
@@ -36,6 +40,215 @@ const SPANISH_POSITIONS = [
   'Delantero'
 ];
 
+function PlayerAvatar({ photoUrl, name, size = 40 }: { photoUrl?: string; name: string; size?: number }) {
+  const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    setHasError(false);
+  }, [photoUrl]);
+
+  let cleanUrl = (photoUrl || '').trim();
+  if (cleanUrl.startsWith('//')) {
+    cleanUrl = `https:${cleanUrl}`;
+  }
+
+  const initials = name
+    ? name
+        .split(' ')
+        .filter(Boolean)
+        .map((part) => part[0])
+        .join('')
+        .substring(0, 2)
+        .toUpperCase()
+    : 'J';
+
+  if (!cleanUrl || hasError) {
+    return (
+      <div
+        className="rounded-full bg-slate-950 border border-slate-800 flex items-center justify-center overflow-hidden shrink-0 shadow font-bold text-xs text-amber-400"
+        style={{ width: `${size}px`, height: `${size}px` }}
+      >
+        {initials}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="rounded-full bg-slate-950 border border-slate-800 flex items-center justify-center overflow-hidden shrink-0 shadow"
+      style={{ width: `${size}px`, height: `${size}px` }}
+    >
+      <img
+        src={cleanUrl}
+        alt={name}
+        referrerPolicy="no-referrer"
+        className="w-full h-full object-cover"
+        onError={() => setHasError(true)}
+      />
+    </div>
+  );
+}
+
+function NumberBadge({ number, size = 40 }: { number: number; size?: number }) {
+  return (
+    <div
+      className="rounded-xl bg-gradient-to-br from-slate-800 to-slate-950 border border-slate-700/80 flex items-center justify-center shrink-0 shadow-inner"
+      style={{ width: `${size}px`, height: `${size}px` }}
+    >
+      <span
+        className="font-black italic text-amber-400 leading-none select-none"
+        style={{ fontSize: `${size * 0.5}px`, textShadow: '0 1px 3px rgba(0,0,0,0.6)' }}
+      >
+        {number}
+      </span>
+    </div>
+  );
+}
+
+function PlayerProfileModal({
+  player,
+  mappings,
+  onClose
+}: {
+  player: Player;
+  mappings: PlayerMapping[];
+  onClose: () => void;
+}) {
+  const [hasError, setHasError] = useState(false);
+
+  let cleanUrl = (player.photo_url || '').trim();
+  if (cleanUrl.startsWith('//')) {
+    cleanUrl = `https:${cleanUrl}`;
+  }
+
+  const initials = player.name
+    ? player.name
+        .split(' ')
+        .filter(Boolean)
+        .map((part) => part[0])
+        .join('')
+        .substring(0, 2)
+        .toUpperCase()
+    : 'J';
+
+  const playerMappings = mappings.filter(m => m.player_id === player.id);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4"
+      onClick={onClose}
+    >
+      <div
+        className="relative w-full max-w-md rounded-3xl overflow-hidden shadow-2xl border border-slate-800 bg-slate-900 animate-[fadeIn_0.15s_ease-out]"
+        onClick={e => e.stopPropagation()}
+      >
+        <button
+          onClick={onClose}
+          className="absolute top-3 right-3 z-10 p-2 rounded-full bg-slate-950/60 hover:bg-slate-950 text-slate-300 hover:text-white transition-colors cursor-pointer backdrop-blur"
+        >
+          <X className="w-4 h-4" />
+        </button>
+
+        {/* Hero */}
+        <div className="relative h-56 bg-gradient-to-br from-slate-800 via-slate-900 to-slate-950 flex items-center justify-center overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-transparent" />
+          <div className="absolute -top-10 -right-10 w-40 h-40 rounded-full bg-amber-500/10 blur-3xl" />
+          <div className="absolute -bottom-10 -left-10 w-40 h-40 rounded-full bg-red-600/10 blur-3xl" />
+
+          {!hasError && cleanUrl ? (
+            <>
+              <img
+                src={cleanUrl}
+                alt=""
+                aria-hidden="true"
+                referrerPolicy="no-referrer"
+                className="absolute inset-0 h-full w-full object-cover blur-2xl scale-110 opacity-40"
+              />
+              <img
+                src={cleanUrl}
+                alt={player.name}
+                referrerPolicy="no-referrer"
+                className="relative z-[1] h-full w-auto max-w-full object-contain"
+                onError={() => setHasError(true)}
+              />
+            </>
+          ) : (
+            <div className="relative z-[1] w-32 h-32 rounded-full bg-slate-950 border-4 border-slate-800 flex items-center justify-center font-extrabold text-3xl text-amber-400 shadow-xl">
+              {initials}
+            </div>
+          )}
+
+          <div className="absolute top-3 left-3">
+            <NumberBadge number={player.number} size={52} />
+          </div>
+        </div>
+
+        {/* Info */}
+        <div className="p-6 space-y-5">
+          <div>
+            <h2 className="text-lg font-extrabold text-white leading-tight">{player.name}</h2>
+            <p className="text-xs text-slate-400 mt-0.5">{player.team_name}</p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center gap-2.5">
+              <MapPin className="w-4 h-4 text-amber-400 shrink-0" />
+              <div>
+                <div className="text-slate-500 text-[10px] uppercase tracking-wide">Posición</div>
+                <div className="text-slate-200 font-semibold">{player.position}</div>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center gap-2.5">
+              <Cake className="w-4 h-4 text-amber-400 shrink-0" />
+              <div>
+                <div className="text-slate-500 text-[10px] uppercase tracking-wide">Edad</div>
+                <div className="text-slate-200 font-semibold">{player.age ? `${player.age} años` : '-'}</div>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center gap-2.5 col-span-2">
+              {player.flag_url ? (
+                <img
+                  src={player.flag_url.startsWith('//') ? `https:${player.flag_url}` : player.flag_url}
+                  alt={player.nationality || 'Bandera'}
+                  referrerPolicy="no-referrer"
+                  className="w-5 h-3.5 object-cover rounded-sm shrink-0"
+                  onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }}
+                />
+              ) : (
+                <FlagIcon className="w-4 h-4 text-amber-400 shrink-0" />
+              )}
+              <div>
+                <div className="text-slate-500 text-[10px] uppercase tracking-wide">Nacionalidad</div>
+                <div className="text-slate-200 font-semibold">{player.nationality || 'Jordania'}</div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div className="flex items-center gap-1.5 text-slate-500 text-[10px] uppercase tracking-wide mb-1.5">
+              <Hash className="w-3 h-3" />
+              <span>Alias vinculados en XML</span>
+            </div>
+            {playerMappings.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5">
+                {playerMappings.map(pm => (
+                  <span key={pm.id} className="px-2 py-1 rounded-lg bg-blue-500/10 text-blue-300 border border-blue-500/20 text-[11px] font-mono">
+                    "{pm.longomatch_name}"
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <span className="text-slate-500 text-[11px] italic">Sin alias vinculados</span>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function JugadoresPage() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [mappings, setMappings] = useState<PlayerMapping[]>([]);
@@ -57,6 +270,9 @@ export default function JugadoresPage() {
   const [selectedPlayerForAlias, setSelectedPlayerForAlias] = useState<Player | null>(null);
   const [aliasInput, setAliasInput] = useState('');
   const [isAliasModalOpen, setIsAliasModalOpen] = useState(false);
+
+  // Player Profile Modal State
+  const [selectedProfilePlayer, setSelectedProfilePlayer] = useState<Player | null>(null);
 
   const loadData = async () => {
     let localPlayers = dbStore.getPlayers();
@@ -301,38 +517,29 @@ export default function JugadoresPage() {
                 return (
                   <tr key={p.id} className="hover:bg-slate-800/40 transition-colors">
                     {/* Dorsal */}
-                    <td className="py-3.5 px-4 font-mono font-extrabold text-amber-400 text-sm">
-                      #{p.number}
+                    <td className="py-3.5 px-4">
+                      <NumberBadge number={p.number} size={36} />
                     </td>
 
                     {/* Foto & Nombre */}
                     <td className="py-3.5 px-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-slate-950 border border-slate-800 flex items-center justify-center overflow-hidden shrink-0 shadow">
-                          {p.photo_url ? (
-                            <img
-                              src={p.photo_url}
-                              alt={p.name}
-                              className="w-full h-full object-cover"
-                              onError={(e) => {
-                                (e.target as HTMLElement).style.display = 'none';
-                              }}
-                            />
-                          ) : (
-                            <span className="font-bold text-xs text-amber-400">
-                              {p.name.substring(0, 2).toUpperCase()}
-                            </span>
-                          )}
+                      <button
+                        onClick={() => setSelectedProfilePlayer(p)}
+                        className="flex items-center gap-3 text-left group cursor-pointer"
+                        title="Ver perfil del jugador"
+                      >
+                        <div className="ring-0 group-hover:ring-2 ring-amber-500/50 rounded-full transition-all">
+                          <PlayerAvatar photoUrl={p.photo_url} name={p.name} size={40} />
                         </div>
                         <div>
-                          <div className="font-bold text-slate-100 flex items-center gap-1.5">
+                          <div className="font-bold text-slate-100 group-hover:text-amber-300 flex items-center gap-1.5 transition-colors">
                             <span>{p.name}</span>
                           </div>
                           <div className="text-[10px] text-slate-500">
                             {p.team_name}
                           </div>
                         </div>
-                      </div>
+                      </button>
                     </td>
 
                     {/* Posición en español */}
@@ -352,8 +559,9 @@ export default function JugadoresPage() {
                       <div className="flex items-center gap-2">
                         {p.flag_url ? (
                           <img
-                            src={p.flag_url}
+                            src={p.flag_url.startsWith('//') ? `https:${p.flag_url}` : p.flag_url}
                             alt={p.nationality || 'Bandera'}
+                            referrerPolicy="no-referrer"
                             className="w-4 h-3 object-cover rounded-sm shrink-0"
                             onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }}
                           />
@@ -575,6 +783,15 @@ export default function JugadoresPage() {
             </div>
           </form>
         </div>
+      )}
+
+      {/* Player Profile Modal */}
+      {selectedProfilePlayer && (
+        <PlayerProfileModal
+          player={selectedProfilePlayer}
+          mappings={mappings}
+          onClose={() => setSelectedProfilePlayer(null)}
+        />
       )}
     </div>
   );

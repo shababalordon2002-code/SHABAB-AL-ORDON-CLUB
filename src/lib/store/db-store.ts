@@ -25,6 +25,7 @@ const STORAGE_KEYS = {
   BOTONERA_ACTIVE_SESSION: 'sao_analytics_active_session_v1',
   MATCH_ANALYSES: 'sao_analytics_match_analyses_v1',
   MATCH_DASHBOARDS: 'sao_analytics_match_dashboards_v1',
+  TRASH_EVENTS: 'sao_analytics_trash_events_v1',
 };
 
 export const SEED_MATCH_ANALYSES: MatchAnalysis[] = [
@@ -34,6 +35,8 @@ export const SEED_MATCH_ANALYSES: MatchAnalysis[] = [
     title: 'Análisis Táctico Completo vs Al-Faisaly',
     analyst_name: 'Analista Principal (SAO)',
     status: 'completed',
+    video_type: 'link',
+    video_url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
     created_at: '2026-09-01T20:45:00Z',
     updated_at: '2026-09-01T20:45:00Z',
     events: []
@@ -451,6 +454,35 @@ export const dbStore = {
     setToStorage(STORAGE_KEYS.EVENTS, filtered);
   },
 
+  // Trash & Recovery Backup (protection against accidental deletion)
+  getTrashEvents(): NormalizedEvent[] {
+    return getFromStorage<NormalizedEvent[]>(STORAGE_KEYS.TRASH_EVENTS, []);
+  },
+
+  backupDeletedEvents(eventsToBackup: NormalizedEvent[]): void {
+    if (!eventsToBackup || eventsToBackup.length === 0) return;
+    const currentTrash = this.getTrashEvents();
+    const merged = [...eventsToBackup, ...currentTrash].slice(0, 500);
+    setToStorage(STORAGE_KEYS.TRASH_EVENTS, merged);
+  },
+
+  restoreTrashEvents(matchId?: string): NormalizedEvent[] {
+    const trash = this.getTrashEvents();
+    if (trash.length === 0) return [];
+
+    const toRestore = matchId ? trash.filter(e => e.match_id === matchId) : trash;
+    if (toRestore.length > 0) {
+      this.saveNormalizedEvents(toRestore, false);
+      const remainingTrash = trash.filter(e => !toRestore.some(r => r.event_id === e.event_id));
+      setToStorage(STORAGE_KEYS.TRASH_EVENTS, remainingTrash);
+    }
+    return toRestore;
+  },
+
+  clearTrash(): void {
+    setToStorage(STORAGE_KEYS.TRASH_EVENTS, []);
+  },
+
   // Players
   getPlayers(): Player[] {
     const list = getFromStorage<Player[]>(STORAGE_KEYS.PLAYERS, SEED_PLAYERS);
@@ -660,10 +692,10 @@ export const dbStore = {
   getAnalyses(matchId?: string): MatchAnalysis[] {
     const list = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
     
-    // Deduplicate list by match_id keeping the one with most events or newest timestamp
+    // Deduplicate list by analysis ID (falling back to match_id if no ID present)
     const deduplicatedMap = new Map<string, MatchAnalysis>();
     list.forEach((item) => {
-      const key = item.match_id || item.id;
+      const key = item.id || item.match_id;
       const existing = deduplicatedMap.get(key);
       if (!existing) {
         deduplicatedMap.set(key, item);
@@ -700,7 +732,7 @@ export const dbStore = {
 
   saveAnalysis(analysis: MatchAnalysis): void {
     const all = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
-    const idx = all.findIndex(a => a.id === analysis.id || (a.match_id && a.match_id === analysis.match_id));
+    const idx = all.findIndex(a => a.id === analysis.id);
     let updated: MatchAnalysis;
     if (idx >= 0) {
       const existing = all[idx];
@@ -721,10 +753,10 @@ export const dbStore = {
       all.unshift(updated);
     }
 
-    // Deduplicate remaining entries in storage for the same match_id
+    // Deduplicate remaining entries in storage by analysis ID
     const finalMap = new Map<string, MatchAnalysis>();
     all.forEach((item) => {
-      const key = item.match_id || item.id;
+      const key = item.id || item.match_id;
       if (!finalMap.has(key)) {
         finalMap.set(key, item);
       }

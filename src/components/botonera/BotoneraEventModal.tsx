@@ -1,16 +1,20 @@
 'use client';
 
 import React, { useState } from 'react';
-import { BotoneraButton, Player } from '@/types';
+import { BotoneraButton, Player, Match } from '@/types';
 import { BotoneraPitchCanvas } from './BotoneraPitchCanvas';
-import { Check, X, Tag, User, AlertCircle } from 'lucide-react';
+import { Check, X, Tag, User, AlertCircle, Shield, PanelRight, Eye, Maximize2, Clock } from 'lucide-react';
+import { PlayerAvatar, NumberBadge } from '@/components/player/PlayerBadge';
 
 interface BotoneraEventModalProps {
   button: BotoneraButton;
   initialGlobalDescriptors: string[]; // Active descriptors from the main UI
   players?: Player[];
   selectedPlayerId?: string | null;
-  onSave: (finalDescriptors: string[], pitchData?: any, selectedPlayerId?: string | null) => void;
+  currentMatch?: Match | null;
+  clickTimestamp?: number;
+  clickPeriod?: number;
+  onSave: (finalDescriptors: string[], pitchData?: any, selectedPlayerId?: string | null, selectedTeamName?: string | null) => void;
   onCancel: () => void;
 }
 
@@ -19,14 +23,23 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
   initialGlobalDescriptors,
   players = [],
   selectedPlayerId: initialPlayerId = null,
+  currentMatch = null,
+  clickTimestamp,
+  clickPeriod,
   onSave,
   onCancel,
 }) => {
+  // Side-docking state so event modal sits on the right side without covering the match video
+  const [isSideDocked, setIsSideDocked] = useState<boolean>(true);
+
   // Descriptors state
   const [selectedDescriptors, setSelectedDescriptors] = useState<string[]>([...initialGlobalDescriptors]);
 
   // Player selection state
   const [modalPlayerId, setModalPlayerId] = useState<string | null>(initialPlayerId);
+
+  // Team selection state
+  const [modalTeamName, setModalTeamName] = useState<string | null>(null);
 
   // Pitch state
   const [startX, setStartX] = useState<number | null>(null);
@@ -41,6 +54,14 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
   const hasPitch = button.pitchRequired && button.pitchRequired !== 'none';
   const showPlayerSelection = button.playerRequiredMode && button.playerRequiredMode !== 'none';
   const isPlayerMandatory = button.playerRequiredMode === 'required';
+
+  const showTeamSelection = button.teamRequiredMode && button.teamRequiredMode !== 'none';
+  const isTeamMandatory = button.teamRequiredMode === 'required';
+
+  const homeTeamName = currentMatch?.home_team || 'Equipo Local';
+  const awayTeamName = currentMatch?.away_team || 'Equipo Visitante';
+  const homeTeamLogo = currentMatch?.home_team_logo;
+  const awayTeamLogo = currentMatch?.away_team_logo;
 
   const toggleDescriptor = (desc: string) => {
     if (selectedDescriptors.includes(desc)) {
@@ -71,6 +92,11 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
     return !!modalPlayerId;
   };
 
+  const isTeamValid = (): boolean => {
+    if (!isTeamMandatory) return true;
+    return !!modalTeamName;
+  };
+
   const getMissingRequiredDescriptors = (): string[] => {
     if (!hasGroupDescriptors) return [];
     const missing: string[] = [];
@@ -91,7 +117,7 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
   const missingRequiredDescriptors = getMissingRequiredDescriptors();
   const isDescriptorsValid = missingRequiredDescriptors.length === 0;
 
-  const isValid = isPitchValid() && isPlayerValid() && isDescriptorsValid;
+  const isValid = isPitchValid() && isPlayerValid() && isTeamValid() && isDescriptorsValid;
 
   const handleSave = () => {
     if (!isValid) return;
@@ -106,42 +132,84 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
         }
       : undefined;
 
-    onSave(selectedDescriptors, pitchData, modalPlayerId);
+    onSave(selectedDescriptors, pitchData, modalPlayerId, modalTeamName);
   };
 
   const selectedPlayer = players.find((p) => p.id === modalPlayerId);
 
   return (
-    <div className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-4xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
+    <div
+      className={`fixed inset-0 z-[100] transition-all duration-300 ${
+        isSideDocked
+          ? 'bg-black/20 pointer-events-none flex justify-end items-stretch p-2 sm:p-4'
+          : 'bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4'
+      }`}
+    >
+      <div
+        className={`bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl flex flex-col overflow-hidden pointer-events-auto transition-all duration-300 ${
+          isSideDocked
+            ? 'w-full max-w-xl lg:max-w-2xl xl:max-w-3xl max-h-[96vh] h-full ring-1 ring-amber-500/30'
+            : 'w-full max-w-4xl max-h-[90vh]'
+        }`}
+      >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-950/50">
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-800 bg-slate-950/70 shrink-0">
           <div>
-            <h3 className="font-black text-lg text-white flex items-center gap-2">
-              <div className="w-4 h-4 rounded-full" style={{ backgroundColor: button.color.startsWith('#') ? button.color : undefined }} />
-              Registrando: {button.name}
-            </h3>
-            <p className="text-xs text-slate-400 mt-0.5">Completa los datos del evento antes de guardarlo en el registro táctico.</p>
+            <div className="flex items-center gap-2">
+              <h3 className="font-black text-base md:text-lg text-white flex items-center gap-2">
+                <div className="w-3.5 h-3.5 rounded-full shrink-0" style={{ backgroundColor: button.color.startsWith('#') ? button.color : undefined }} />
+                Registrando: {button.name}
+              </h3>
+              {clickTimestamp !== undefined && (
+                <span className="text-[11px] font-mono text-amber-300 font-bold bg-amber-500/10 px-2 py-0.5 rounded-lg border border-amber-500/30 flex items-center gap-1">
+                  <Clock className="w-3 h-3 text-amber-400" />
+                  Punto de Clic: {(() => {
+                    const m = Math.floor(clickTimestamp / 60);
+                    const s = Math.floor(clickTimestamp % 60);
+                    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+                  })()} {clickPeriod ? `(Parte ${clickPeriod})` : ''}
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-slate-400 mt-0.5">Completa los datos del evento antes de guardarlo en el registro táctico.</p>
           </div>
-          <button onClick={onCancel} className="p-2 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-xl transition">
-            <X className="w-5 h-5" />
-          </button>
+
+          <div className="flex items-center gap-2">
+            {/* Dock/Center position toggle button */}
+            <button
+              type="button"
+              onClick={() => setIsSideDocked(!isSideDocked)}
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 border ${
+                isSideDocked
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
+                  : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700 hover:text-white'
+              }`}
+              title={isSideDocked ? "Cambiar a ventana centrada" : "Alinear a la derecha para no tapar el vídeo del partido"}
+            >
+              {isSideDocked ? <Eye className="w-4 h-4 text-amber-400" /> : <PanelRight className="w-4 h-4" />}
+              <span className="hidden sm:inline">{isSideDocked ? 'Modo Lateral (Vídeo Visible)' : 'Centrar Ventana'}</span>
+            </button>
+
+            <button onClick={onCancel} className="p-2 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-xl transition" title="Cerrar modal">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Content Body */}
         <div className="flex-1 flex flex-col md:flex-row overflow-hidden divide-y md:divide-y-0 md:divide-x divide-slate-800">
           
-          {/* Left Column: Player Selection & Descriptors */}
+          {/* Left Column: Team Selection, Player Selection & Descriptors */}
           <div className={`p-6 flex flex-col gap-5 overflow-y-auto ${hasPitch ? 'md:w-1/2' : 'w-full'}`}>
             
-            {/* 1. SELECCIÓN DE JUGADOR */}
-            {showPlayerSelection && (
+            {/* 1. SELECCIÓN DE EQUIPO */}
+            {showTeamSelection && (
               <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
-                    <User className="w-3.5 h-3.5 text-emerald-400" /> Jugador del Evento:
+                    <Shield className="w-3.5 h-3.5 text-cyan-400" /> Equipo del Evento:
                   </label>
-                  {isPlayerMandatory ? (
+                  {isTeamMandatory ? (
                     <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-500/20 text-red-300 border border-red-500/40">
                       ⚠️ OBLIGATORIO
                     </span>
@@ -152,19 +220,91 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
                   )}
                 </div>
 
+                <div className="grid grid-cols-2 gap-2.5">
+                  {/* Local Team Button */}
+                  <button
+                    type="button"
+                    onClick={() => setModalTeamName(modalTeamName === homeTeamName && !isTeamMandatory ? null : homeTeamName)}
+                    className={`p-2.5 rounded-xl border flex items-center gap-2.5 transition cursor-pointer ${
+                      modalTeamName === homeTeamName
+                        ? 'bg-cyan-500/20 border-cyan-400 text-slate-100 ring-2 ring-cyan-500/40 font-bold shadow-lg shadow-cyan-950/40'
+                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                    }`}
+                  >
+                    {homeTeamLogo ? (
+                      <img src={homeTeamLogo} alt={homeTeamName} className="w-7 h-7 object-contain rounded bg-slate-950 p-0.5 shrink-0" />
+                    ) : (
+                      <div className="w-7 h-7 rounded-lg bg-emerald-600/30 border border-emerald-500/50 flex items-center justify-center text-xs shrink-0 font-bold text-emerald-300">
+                        🏠
+                      </div>
+                    )}
+                    <div className="text-left min-w-0 flex-1">
+                      <span className="text-[9px] uppercase tracking-wider text-slate-500 block font-bold">Local</span>
+                      <span className="text-xs font-extrabold text-slate-100 truncate block">{homeTeamName}</span>
+                    </div>
+                    {modalTeamName === homeTeamName && <Check className="w-4 h-4 text-cyan-400 shrink-0" />}
+                  </button>
+
+                  {/* Away Team Button */}
+                  <button
+                    type="button"
+                    onClick={() => setModalTeamName(modalTeamName === awayTeamName && !isTeamMandatory ? null : awayTeamName)}
+                    className={`p-2.5 rounded-xl border flex items-center gap-2.5 transition cursor-pointer ${
+                      modalTeamName === awayTeamName
+                        ? 'bg-amber-500/20 border-amber-400 text-slate-100 ring-2 ring-amber-500/40 font-bold shadow-lg shadow-amber-950/40'
+                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                    }`}
+                  >
+                    {awayTeamLogo ? (
+                      <img src={awayTeamLogo} alt={awayTeamName} className="w-7 h-7 object-contain rounded bg-slate-950 p-0.5 shrink-0" />
+                    ) : (
+                      <div className="w-7 h-7 rounded-lg bg-amber-600/30 border border-amber-500/50 flex items-center justify-center text-xs shrink-0 font-bold text-amber-300">
+                        ✈️
+                      </div>
+                    )}
+                    <div className="text-left min-w-0 flex-1">
+                      <span className="text-[9px] uppercase tracking-wider text-slate-500 block font-bold">Visitante</span>
+                      <span className="text-xs font-extrabold text-slate-100 truncate block">{awayTeamName}</span>
+                    </div>
+                    {modalTeamName === awayTeamName && <Check className="w-4 h-4 text-amber-400 shrink-0" />}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 2. SELECCIÓN DE JUGADOR */}
+            {showPlayerSelection && (
+              <div className="p-3.5 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-3 shadow-lg">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-extrabold text-slate-200 flex items-center gap-2">
+                    <User className="w-4 h-4 text-emerald-400" /> Jugador del Evento:
+                  </label>
+                  {isPlayerMandatory ? (
+                    <span className="px-2 py-0.5 rounded-md text-[10px] font-black bg-red-500/20 text-red-300 border border-red-500/40 animate-pulse">
+                      ⚠️ OBLIGATORIO
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold text-slate-400 bg-slate-900 border border-slate-800">
+                      ⚪ Opcional
+                    </span>
+                  )}
+                </div>
+
                 {/* Selected Player Banner */}
                 {selectedPlayer ? (
-                  <div className="flex items-center justify-between p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30">
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded bg-emerald-500 text-slate-950 font-black text-xs flex items-center justify-center">
-                        #{selectedPlayer.number}
+                  <div className="flex items-center justify-between p-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/40 shadow-inner">
+                    <div className="flex items-center gap-3">
+                      <NumberBadge number={selectedPlayer.number} size={32} selected={true} />
+                      <PlayerAvatar photoUrl={selectedPlayer.photo_url} name={selectedPlayer.name} size={32} />
+                      <div>
+                        <span className="text-xs font-black text-slate-100 block leading-tight">{selectedPlayer.name}</span>
+                        <span className="text-[10px] text-emerald-400 font-bold">{selectedPlayer.position}</span>
                       </div>
-                      <span className="text-xs font-bold text-slate-100">{selectedPlayer.name}</span>
                     </div>
                     {!isPlayerMandatory && (
                       <button
                         onClick={() => setModalPlayerId(null)}
-                        className="text-[10px] text-slate-400 hover:text-red-400 px-1.5 py-0.5 rounded"
+                        className="text-[10px] text-slate-400 hover:text-red-400 px-2 py-1 rounded-lg bg-slate-900 border border-slate-800 font-bold transition"
                       >
                         Quitar
                       </button>
@@ -176,8 +316,8 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
                   </p>
                 )}
 
-                {/* Player Quick Grid */}
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-32 overflow-y-auto pr-1">
+                {/* Player Quick Grid with Modern Dorsals & Player Photos */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1">
                   {players.map((p) => {
                     const isSelected = modalPlayerId === p.id;
                     return (
@@ -185,16 +325,18 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
                         key={p.id}
                         type="button"
                         onClick={() => setModalPlayerId(isSelected && !isPlayerMandatory ? null : p.id)}
-                        className={`flex items-center gap-1.5 p-1.5 rounded-lg border text-left transition ${
+                        className={`flex items-center gap-2 p-2 rounded-xl border text-left transition-all cursor-pointer ${
                           isSelected
-                            ? 'bg-emerald-600/30 border-emerald-500 text-emerald-300 font-bold'
-                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-850 hover:text-slate-200'
+                            ? 'bg-emerald-600/25 border-emerald-400 text-emerald-300 font-bold shadow-md ring-2 ring-emerald-500/40'
+                            : 'bg-slate-900/90 border-slate-800 text-slate-300 hover:bg-slate-800 hover:border-slate-700'
                         }`}
                       >
-                        <span className={`w-5 h-5 rounded text-[10px] font-bold flex items-center justify-center shrink-0 ${isSelected ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-400'}`}>
-                          #{p.number}
-                        </span>
-                        <span className="text-[11px] truncate leading-tight">{p.name}</span>
+                        <NumberBadge number={p.number} size={28} selected={isSelected} />
+                        <PlayerAvatar photoUrl={p.photo_url} name={p.name} size={28} />
+                        <div className="min-w-0 flex-1">
+                          <span className="text-[11px] font-extrabold truncate leading-tight block text-slate-100">{p.name}</span>
+                          <span className="text-[9px] text-slate-400 truncate block">{p.position}</span>
+                        </div>
                       </button>
                     );
                   })}

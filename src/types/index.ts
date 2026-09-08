@@ -91,6 +91,30 @@ export interface Player {
   is_demo?: boolean;
 }
 
+export interface TeamCircleStyle {
+  primaryColor: string;
+  secondaryColor?: string;
+  pattern: 'solid' | 'striped' | 'split' | 'ring';
+}
+
+export interface LineupPlayerItem {
+  id: string;
+  number: number | string;
+  name: string;
+  position?: string;
+  isStarter?: boolean;
+  x?: number;
+  y?: number;
+}
+
+export interface TeamLineupConfig {
+  formation: string;
+  circleStyle: TeamCircleStyle;
+  starters: LineupPlayerItem[];
+  substitutes: LineupPlayerItem[];
+  customPositions?: Record<string, { x: number; y: number }>;
+}
+
 export interface PlayerMapping {
   id: string;
   longomatch_name: string;
@@ -215,6 +239,7 @@ export interface BotoneraButton {
   pitchRequired?: PitchRequiredType;
   pitchViewMode?: 'full' | 'half'; // Campo entero vs Medio campo
   playerRequiredMode?: 'none' | 'optional' | 'required'; // 'none' (Desactivado), 'optional' (Opcional), 'required' (Obligatorio)
+  teamRequiredMode?: 'none' | 'optional' | 'required'; // 'none' (Desactivado), 'optional' (Opcional), 'required' (Obligatorio)
   descriptors?: string[]; // Predefined flat descriptors (legacy)
   descriptorGroups?: DescriptorGroup[]; // Dynamic Descriptor Groups (Tipo -> Posibilidades)
 }

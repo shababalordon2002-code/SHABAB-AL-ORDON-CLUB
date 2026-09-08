@@ -13,6 +13,7 @@ interface BotoneraPitchCanvasProps {
   selectedZone: string | null;
   onSelectZone: (zoneName: string | null) => void;
   initialMode?: PitchRequiredType;
+  lockMode?: boolean;
   pitchViewMode?: 'full' | 'half';
   zoneCounts?: Record<string, number>;
   onUpdateZoneCount?: (zoneName: string, newCount: number) => void;
@@ -29,6 +30,7 @@ export const BotoneraPitchCanvas: React.FC<BotoneraPitchCanvasProps> = ({
   selectedZone,
   onSelectZone,
   initialMode = 'vector_arrow',
+  lockMode = false,
   pitchViewMode = 'full',
   zoneCounts = {},
   onUpdateZoneCount,
@@ -231,67 +233,80 @@ export const BotoneraPitchCanvas: React.FC<BotoneraPitchCanvasProps> = ({
 
       {/* Mode Switcher Buttons */}
       <div className="flex items-center justify-between gap-2 overflow-x-auto pb-1 scrollbar-none">
-        <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-[11px] gap-1 shrink-0">
-          <button
-            type="button"
-            onClick={() => setActiveMode('vector_arrow')}
-            className={`px-2.5 py-1 rounded-lg font-bold transition ${
-              isVectorMode ? 'bg-emerald-600 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Flecha
-          </button>
+        {lockMode ? (
+          <div className="flex items-center gap-2 bg-slate-950 px-3 py-1.5 rounded-xl border border-emerald-500/40 text-[11px] font-black text-emerald-300 shadow-sm shrink-0">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+            <span>
+              {isVectorMode
+                ? '🏹 MODALIDAD: VECTOR / FLECHA (ORIGEN ➔ DESTINO) • MODO FIJO'
+                : isPointMode
+                ? '📍 MODALIDAD: PUNTO (X, Y) • MODO FIJO'
+                : `🔷 MODALIDAD: ${activeMode.toUpperCase()} • MODO FIJO`}
+            </span>
+          </div>
+        ) : (
+          <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-[11px] gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={() => setActiveMode('vector_arrow')}
+              className={`px-2.5 py-1 rounded-lg font-bold transition ${
+                isVectorMode ? 'bg-emerald-600 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Flecha
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setActiveMode('point_full')}
-            className={`px-2.5 py-1 rounded-lg font-bold transition ${
-              isPointMode ? 'bg-emerald-600 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Punto
-          </button>
+            <button
+              type="button"
+              onClick={() => setActiveMode('point_full')}
+              className={`px-2.5 py-1 rounded-lg font-bold transition ${
+                isPointMode ? 'bg-emerald-600 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Punto
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setActiveMode('zone_bandas_centro')}
-            className={`px-2.5 py-1 rounded-lg font-bold transition ${
-              activeMode === 'zone_bandas_centro' ? 'bg-emerald-600 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Bandas-Centro
-          </button>
+            <button
+              type="button"
+              onClick={() => setActiveMode('zone_bandas_centro')}
+              className={`px-2.5 py-1 rounded-lg font-bold transition ${
+                activeMode === 'zone_bandas_centro' ? 'bg-emerald-600 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Bandas-Centro
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setActiveMode('zone_3_hitos')}
-            className={`px-2.5 py-1 rounded-lg font-bold transition ${
-              activeMode === 'zone_3_hitos' ? 'bg-emerald-600 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            3 Zonas
-          </button>
+            <button
+              type="button"
+              onClick={() => setActiveMode('zone_3_hitos')}
+              className={`px-2.5 py-1 rounded-lg font-bold transition ${
+                activeMode === 'zone_3_hitos' ? 'bg-emerald-600 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              3 Zonas
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setActiveMode('zone_remate')}
-            className={`px-2.5 py-1 rounded-lg font-bold transition ${
-              activeMode === 'zone_remate' ? 'bg-emerald-600 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Remate
-          </button>
+            <button
+              type="button"
+              onClick={() => setActiveMode('zone_remate')}
+              className={`px-2.5 py-1 rounded-lg font-bold transition ${
+                activeMode === 'zone_remate' ? 'bg-emerald-600 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Remate
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setActiveMode('zone_counter')}
-            className={`px-2.5 py-1 rounded-lg font-bold transition ${
-              activeMode === 'zone_counter' ? 'bg-emerald-600 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Conteo
-          </button>
-        </div>
+            <button
+              type="button"
+              onClick={() => setActiveMode('zone_counter')}
+              className={`px-2.5 py-1 rounded-lg font-bold transition ${
+                activeMode === 'zone_counter' ? 'bg-emerald-600 text-slate-950 shadow' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Conteo
+            </button>
+          </div>
+        )}
 
         <button
           type="button"
@@ -308,9 +323,9 @@ export const BotoneraPitchCanvas: React.FC<BotoneraPitchCanvasProps> = ({
         {/* Grass Stripes */}
         <div className="absolute inset-0 bg-[linear-gradient(to_bottom,#022c22_0%,#064e3b_10%,#022c22_20%,#064e3b_30%,#022c22_40%,#064e3b_50%,#022c22_60%,#064e3b_70%,#022c22_80%,#064e3b_90%,#022c22_100%)] opacity-90 pointer-events-none" />
 
-        {/* Attack Indicator */}
-        <div className="absolute top-2 left-1/2 transform -translate-x-1/2 z-20 px-2.5 py-0.5 rounded-full bg-slate-950/80 border border-emerald-500/40 text-[9px] font-bold text-emerald-300 uppercase tracking-widest flex items-center gap-1">
-          <ArrowUp className="w-3 h-3 text-emerald-400 animate-bounce" />
+        {/* Attack Indicator - Positioned on top-right endline corner so goal frame (portería) is 100% unblocked */}
+        <div className="absolute top-1.5 right-2 z-20 px-2.5 py-0.5 rounded-md bg-slate-950/85 border border-emerald-500/40 text-[9px] font-bold text-emerald-300 uppercase tracking-wider flex items-center gap-1 shadow-md pointer-events-none">
+          <ArrowUp className="w-3 h-3 text-emerald-400" />
           <span>Ataque Rival</span>
         </div>
 

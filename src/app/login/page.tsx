@@ -3,13 +3,14 @@
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import { Mail, Lock, LogIn, AlertCircle, Sparkles, UserPlus, User, CheckCircle2 } from 'lucide-react';
+import { Mail, Lock, LogIn, AlertCircle, Sparkles, UserPlus, User, CheckCircle2, Eye, EyeOff } from 'lucide-react';
 
 export default function LoginPage() {
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -25,7 +26,7 @@ export default function LoginPage() {
     try {
       if (mode === 'login') {
         const { data, error } = await supabase.auth.signInWithPassword({
-          email,
+          email: email.trim(),
           password,
         });
 
@@ -45,8 +46,7 @@ export default function LoginPage() {
         }
 
         if (data.session) {
-          router.push('/');
-          router.refresh();
+          window.location.href = '/';
         }
       } else {
         // Sign Up with auto-confirmation via admin endpoint if service role key is present
@@ -280,14 +280,22 @@ export default function LoginPage() {
                   <Lock className="w-4 h-4" />
                 </div>
                 <input
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   required
                   minLength={6}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full pl-9 pr-4 py-2.5 bg-slate-950/80 border border-slate-800 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition-colors"
+                  className="w-full pl-9 pr-10 py-2.5 bg-slate-950/80 border border-slate-800 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition-colors"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-500 hover:text-slate-300 transition-colors cursor-pointer"
+                  title={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
             </div>
 
@@ -310,13 +318,24 @@ export default function LoginPage() {
                 </>
               )}
             </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                router.push('/');
+                router.refresh();
+              }}
+              className="w-full py-2.5 px-4 bg-slate-800/80 hover:bg-slate-700/80 text-slate-200 font-semibold rounded-xl text-sm border border-slate-700/60 transition-all flex items-center justify-center gap-2 mt-3 cursor-pointer"
+            >
+              <span>Acceder en Modo Local / Demo (Sin Supabase)</span>
+            </button>
           </form>
 
           {/* Info Badge */}
           <div className="mt-8 pt-6 border-t border-slate-800/80 text-center space-y-2">
             <div className="inline-flex items-center gap-1.5 text-[11px] text-slate-400 bg-slate-950/50 px-3 py-1.5 rounded-full border border-slate-800">
               <Sparkles className="w-3 h-3 text-amber-400" />
-              <span>Autenticación segura con Supabase Auth</span>
+              <span>Autenticación con Supabase Auth / Modo Demo Local</span>
             </div>
           </div>
         </div>

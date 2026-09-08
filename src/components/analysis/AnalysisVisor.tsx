@@ -19,6 +19,7 @@ import { MatchStatsPanel } from '@/components/pitch/MatchStatsPanel';
 import { BotoneraVideoPlayer } from '@/components/botonera/BotoneraVideoPlayer';
 import { BotoneraEventLog } from '@/components/botonera/BotoneraEventLog';
 import { BotoneraLiveStats } from '@/components/botonera/BotoneraLiveStats';
+import { dbStore } from '@/lib/store/db-store';
 
 interface AnalysisVisorProps {
   match: Match;
@@ -142,8 +143,10 @@ export const AnalysisVisor: React.FC<AnalysisVisorProps> = ({
     xmlString += `  <events>\n`;
 
     events.forEach((e) => {
-      const startTime = Math.max(0, (e.timestamp || 0) - (e.metadata?.leadTime || 5));
-      const stopTime = (e.timestamp || 0) + (e.metadata?.lagTime || 5);
+      const lead = e.metadata?.leadTime ?? 5;
+      const lag = e.metadata?.lagTime ?? 5;
+      const startTime = Math.max(0, (e.timestamp || 0) - lead);
+      const stopTime = Math.max(startTime + 1, (e.timestamp || 0) + lag);
 
       xmlString += `    <event>\n`;
       xmlString += `      <id>${e.event_id}</id>\n`;
@@ -179,9 +182,15 @@ export const AnalysisVisor: React.FC<AnalysisVisorProps> = ({
     downloadAnchor.remove();
   };
 
+  const templates = dbStore.getBotoneraTemplates();
+  const activeTemplate =
+    templates.find((t) => t.id === analysis.botonera_template_id || t.id === match.botonera_template_id) ||
+    templates[0];
+  const templateButtons = activeTemplate?.buttons || [];
+
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/90 backdrop-blur-md p-2 sm:p-4 overflow-y-auto">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-7xl w-full max-h-[94vh] flex flex-col shadow-2xl overflow-hidden animate-fade-in my-auto">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/90 backdrop-blur-md p-1 sm:p-3 overflow-y-auto">
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-[98vw] w-full max-h-[96vh] flex flex-col shadow-2xl overflow-hidden animate-fade-in my-auto">
         {/* Visor Header */}
         <div className="p-4 bg-slate-950 border-b border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-3">
@@ -270,13 +279,20 @@ export const AnalysisVisor: React.FC<AnalysisVisorProps> = ({
                   onSeekToEvent={handleSeekToEvent}
                   onExportXml={handleExportXml}
                   onExportJson={handleExportJson}
+                  buttons={templateButtons}
                   readOnly={true}
                 />
               </div>
 
               {/* ── COLUMNA DERECHA (5/12): Estadísticas Provisionales + Panel de Métricas Detalladas (Sin Botonera) ── */}
               <div className="lg:col-span-5 flex flex-col gap-4">
-                <BotoneraLiveStats events={events} />
+                <BotoneraLiveStats
+                  events={events}
+                  videoUrl={resolvedVideoUrl}
+                  onSeekVideoToTime={(t) => seekVideoTo(t, true)}
+                  onSeekToEvent={handleSeekToEvent}
+                  buttons={templateButtons}
+                />
                 <MatchStatsPanel events={events} />
               </div>
             </div>

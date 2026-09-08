@@ -16,6 +16,7 @@ import { BotoneraVideoPlayer, toEmbedUrl } from '@/components/botonera/BotoneraV
 import { BotoneraLiveStats } from '@/components/botonera/BotoneraLiveStats';
 import { BotoneraStopwatch, PERIOD_BASE_SECONDS } from '@/components/botonera/BotoneraStopwatch';
 import { BotoneraEventModal } from '@/components/botonera/BotoneraEventModal';
+import { BotoneraLiveScoreboard } from '@/components/botonera/BotoneraLiveScoreboard';
 import { AnalysisVisor } from '@/components/analysis/AnalysisVisor';
 import { Compass, Flame, Sliders, PlayCircle, Trophy, CheckCircle2, FileCode2, Save, Radio, Pencil, Ban, X, Home, FolderOpen, Eye, Edit3, Trash2, AlertTriangle, User, Video } from 'lucide-react';
 
@@ -46,6 +47,8 @@ export default function BotoneraPage() {
   const [eventModalData, setEventModalData] = useState<{
     button: BotoneraButton;
     activeDescriptors: string[];
+    clickTimestamp: number;
+    clickPeriod: number;
   } | null>(null);
 
   // Active Player State
@@ -230,11 +233,13 @@ export default function BotoneraPage() {
   const videoDrivenRef = useRef(false);
   const periodRef = useRef(period);
   const periodVideoOffsetsRef = useRef(periodVideoOffsets);
+  const isTimerRunningRef = useRef(isTimerRunning);
   useEffect(() => {
     videoDrivenRef.current = isVideoDriven;
     periodRef.current = period;
     periodVideoOffsetsRef.current = periodVideoOffsets;
-  }, [isVideoDriven, period, periodVideoOffsets]);
+    isTimerRunningRef.current = isTimerRunning;
+  }, [isVideoDriven, period, periodVideoOffsets, isTimerRunning]);
 
   // Última lectura del playhead aceptada como buena, usada para detectar ruido.
   const lastGoodVideoTimeRef = useRef(0);
@@ -245,9 +250,7 @@ export default function BotoneraPage() {
 
   /**
    * Único punto que proyecta el playhead del vídeo sobre el crono de partido.
-   * Todas las fuentes (vídeo local, poll de la API de YouTube y mensajes
-   * infoDelivery) pasan por aquí para que no escriban dos minutajes distintos
-   * en el mismo segundo: eso hacía parpadear el crono entre 00:00 y el minuto real.
+   * Calcula el tiempo transcurrido en la parte activa: (videoTime - periodVideoOffset).
    *
    * `trusted` salta el filtro de ruido (playhead de un <video> local, exacto).
    */
@@ -282,8 +285,8 @@ export default function BotoneraPage() {
 
     const offset = offsets[activeP];
     if (offset === undefined) return;
-    const base = PERIOD_BASE_SECONDS[activeP] ?? 0;
-    const matchTime = Math.max(0, Math.floor(videoTime - offset + base));
+
+    const matchTime = Math.max(0, Math.floor(videoTime - offset));
     setTimerSeconds((prev) => (prev === matchTime ? prev : matchTime));
   }, []);
 
@@ -543,6 +546,31 @@ export default function BotoneraPage() {
     template,
   ]);
 
+  const handleStartNewRegistration = () => {
+    if (isSessionConfigured || events.length > 0) {
+      const ok = confirm(
+        '¿Deseas iniciar una NUEVA sesión de registro desde cero? Se configurará una nueva sesión limpia.'
+      );
+      if (!ok) return;
+    }
+
+    dbStore.clearActiveBotoneraSession();
+    setIsSessionConfigured(false);
+    setEditingAnalysisId(null);
+    setEvents([]);
+    setTimerSeconds(0);
+    setIsTimerRunning(false);
+    setPeriod(1);
+    setPeriodVideoOffsets({});
+    setSelectedPlayerId(null);
+    setVideoType(null);
+    setVideoSourceName(null);
+    setVideoUrl(null);
+    setVideoFile(null);
+
+    setPageMode('analysis');
+  };
+
   const handleSetupComplete = (config: {
     videoType: BotoneraProjectVideoType;
     videoSourceName: string | null;
@@ -551,11 +579,21 @@ export default function BotoneraPage() {
     matchId: string;
     templateId: string;
   }) => {
+    // Reset all old session/analysis states so this NEW project starts 100% clean
+    dbStore.clearActiveBotoneraSession(config.matchId);
+    setEditingAnalysisId(null);
+    setEvents([]);
+    setTimerSeconds(0);
+    setIsTimerRunning(false);
+    setPeriod(1);
+    setPeriodVideoOffsets({});
+    setSelectedPlayerId(null);
+
+    setSelectedMatchId(config.matchId);
     setVideoType(config.videoType);
     setVideoSourceName(config.videoSourceName);
     setVideoUrl(config.videoUrl);
     setVideoFile(config.videoFile);
-    handleSelectMatch(config.matchId);
 
     const chosenTemplate = dbStore.getBotoneraTemplates().find((t) => t.id === config.templateId);
     if (chosenTemplate) setTemplate(chosenTemplate);
@@ -1000,24 +1038,25 @@ export default function BotoneraPage() {
    * move together. When the chrono is video-driven the player's own play/pause
    * events are the source of truth and will confirm (or correct) this state.
    */
+  /** Pausa o reproduce tanto el vídeo como el cronómetro de partido desde el botón del crono. */
   const handleToggleTimer = () => {
-    const videoIsPlaying = getVideoIsPlaying();
-    // Con el crono ligado al vídeo manda el estado REAL del reproductor, para que
-    // el botón nunca quede invertido respecto a lo que se ve en pantalla.
-    const willRun = isVideoDriven && videoIsPlaying !== null ? !videoIsPlaying : !isTimerRunning;
-    setVideoPlaying(willRun);
-    setIsTimerRunning(willRun);
+    const isPlaying = getVideoIsPlaying();
+    const willPlay = isPlaying !== null ? !isPlaying : !isTimerRunning;
+    setVideoPlaying(willPlay);
+    setIsTimerRunning(willPlay);
   };
 
   /**
-   * Manual chrono changes (-10s / +10s / editing mm:ss) move the video too when
-   * the current period is synced, so the video never drifts from the chrono.
+   * Los botones (-10s / +10s / edición de tiempo) mueven directamente el vídeo
+   * retrocediéndolo o avanzándolo, y el crono se ajusta automáticamente.
    */
   const handleTimerChange = (seconds: number, seekVideo = true) => {
     const target = Math.max(0, seconds);
-    if (seekVideo && isVideoDriven) {
-      const videoTime = videoTimeFromMatchTime(target);
-      if (videoTime !== null) seekVideoTo(videoTime);
+    const offset = periodVideoOffsets[period];
+    if (offset !== undefined) {
+      seekVideoTo(offset + target, isTimerRunning);
+    } else {
+      seekVideoTo(Math.max(0, getCurrentVideoTime() + (seconds - timerSeconds)), isTimerRunning);
     }
     setTimerSeconds(target);
   };
@@ -1079,9 +1118,27 @@ export default function BotoneraPage() {
     });
   };
 
-  /** "Marcar aquí": uses the live playhead as the start of a period. */
+  /** Al pulsar uno de los 4 botones de parte en el crono:
+   * 1. Registra el segundo del vídeo como inicio de esa parte.
+   * 2. Activa el periodo (poniendo el botón verde).
+   * 3. Inicia el cronómetro desde 0 (00:00).
+   * 4. Enciende el cronómetro (isTimerRunning = true).
+   */
+  const handlePeriodSelect = (p: number) => {
+    setPeriod(p);
+    const videoTime = getCurrentVideoTime();
+    handleUpdatePeriodOffset(p, videoTime);
+    setTimerSeconds(0);
+    setIsTimerRunning(true);
+  };
+
+  /** "Iniciar [Periodo]": graba el minuto del vídeo como saque inicial y activa ese periodo de partido. */
   const handleCapturePeriodOffset = (p: number) => {
-    handleUpdatePeriodOffset(p, getCurrentVideoTime());
+    setPeriod(p);
+    const videoTime = getCurrentVideoTime();
+    handleUpdatePeriodOffset(p, videoTime);
+    const base = PERIOD_BASE_SECONDS[p] ?? 0;
+    setTimerSeconds(base);
   };
 
   /**
@@ -1228,34 +1285,52 @@ export default function BotoneraPage() {
     const hasPitch = btn.pitchRequired && btn.pitchRequired !== 'none';
     const hasPlayerRequirement = btn.playerRequiredMode && btn.playerRequiredMode !== 'none';
 
+    // Freeze exact click timestamp and period at the precise moment the button is pressed
+    const clickTimestamp = timerSeconds;
+    const clickPeriod = period;
+
     if (hasDescriptors || hasPitch || hasPlayerRequirement) {
-      setEventModalData({ button: btn, activeDescriptors });
+      setEventModalData({ button: btn, activeDescriptors, clickTimestamp, clickPeriod });
     } else {
-      commitEvent(btn, activeDescriptors);
+      commitEvent(btn, activeDescriptors, undefined, undefined, undefined, clickTimestamp, clickPeriod);
     }
   };
 
-  const commitEvent = (btn: BotoneraButton, descriptorsToSave: string[], pitchData?: any, overridePlayerId?: string | null) => {
+  const commitEvent = (
+    btn: BotoneraButton,
+    descriptorsToSave: string[],
+    pitchData?: any,
+    overridePlayerId?: string | null,
+    overrideTeamName?: string | null,
+    eventTimestamp?: number,
+    eventPeriod?: number
+  ) => {
     const targetPlayerId = overridePlayerId !== undefined ? overridePlayerId : selectedPlayerId;
     const activePlayer = players.find((p) => p.id === targetPlayerId);
     let outcomeVal = descriptorsToSave.find((d) => ['Éxito', 'Fallido', 'Gol', 'A puerta', 'Fuera'].includes(d)) || null;
+
+    const chosenTeamName = overrideTeamName || (activePlayer ? activePlayer.team_name : 'Shabab Al Ordon Club');
+
+    // Use frozen click timestamp or current timer if absent
+    const exactTimestamp = eventTimestamp !== undefined ? eventTimestamp : timerSeconds;
+    const exactPeriod = eventPeriod !== undefined ? eventPeriod : period;
 
     const newEvt: NormalizedEvent = {
       event_id: `evt_tag_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
       source_event_id: `src_${Date.now()}`,
       match_id: selectedMatchId === 'free_session' ? 'free_session' : selectedMatchId,
       team_id: activePlayer ? activePlayer.team_id : 'team_shabab_al_ordon',
-      team_name: activePlayer ? activePlayer.team_name : 'Shabab Al Ordon Club',
+      team_name: chosenTeamName,
       player_id: activePlayer ? activePlayer.id : null,
       player_name: activePlayer ? activePlayer.name : 'Jugador Sin Asignar',
       event_type: btn.name,
       category: btn.category || btn.name,
       subcategory: descriptorsToSave.join(', ') || null,
-      timestamp: timerSeconds,
-      minute: Math.floor(timerSeconds / 60),
-      second: Math.floor(timerSeconds % 60),
+      timestamp: exactTimestamp,
+      minute: Math.floor(exactTimestamp / 60),
+      second: Math.floor(exactTimestamp % 60),
       duration: btn.leadTime + btn.lagTime,
-      period: period,
+      period: exactPeriod,
       x: pitchData?.startX ?? null,
       y: pitchData?.startY ?? null,
       end_x: pitchData?.endX ?? null,
@@ -1280,7 +1355,17 @@ export default function BotoneraPage() {
   };
 
   const handleDeleteEvent = (eventId: string) => {
-    setEvents((prev) => prev.filter((e) => e.event_id !== eventId));
+    setEvents((prev) => {
+      const target = prev.find((e) => e.event_id === eventId);
+      if (target) {
+        dbStore.backupDeletedEvents([target]);
+      }
+      const next = prev.filter((e) => e.event_id !== eventId);
+      if (selectedMatchId && selectedMatchId !== 'free_session') {
+        dbStore.saveNormalizedEvents(next, true);
+      }
+      return next;
+    });
   };
 
   const handleUpdateEvent = (updatedEvt: NormalizedEvent) => {
@@ -1294,9 +1379,27 @@ export default function BotoneraPage() {
   };
 
   const handleClearAllEvents = () => {
-    if (confirm('¿Estás seguro de borrar todos los eventos registrados en esta sesión?')) {
-      setEvents([]);
+    setEvents((prev) => {
+      if (prev.length > 0) {
+        dbStore.backupDeletedEvents(prev);
+      }
+      if (selectedMatchId && selectedMatchId !== 'free_session') {
+        dbStore.saveNormalizedEvents([], true);
+      }
       dbStore.clearActiveBotoneraSession();
+      return [];
+    });
+  };
+
+  const handleRestoreDeletedEvents = () => {
+    const targetMatchId = selectedMatchId === 'free_session' ? undefined : selectedMatchId;
+    const restored = dbStore.restoreTrashEvents(targetMatchId);
+    if (restored.length > 0) {
+      setEvents((prev) => {
+        const prevIds = new Set(prev.map((e) => e.event_id));
+        const newOnes = restored.filter((r) => !prevIds.has(r.event_id));
+        return [...newOnes, ...prev];
+      });
     }
   };
 
@@ -1318,10 +1421,10 @@ export default function BotoneraPage() {
       setMatches(dbStore.getMatches());
     }
 
-    // Save or update the permanent Match Analysis card (deduplicated by match / analysis ID)
+    // Save or update the permanent Match Analysis card
+    const resolvedAnalysisId = editingAnalysisId || `analysis_${targetId}_${Date.now()}`;
     const existingAnalyses = dbStore.getAnalyses(targetId);
-    const resolvedAnalysisId = editingAnalysisId || (existingAnalyses.length > 0 ? existingAnalyses[0].id : `analysis_${targetId}`);
-    const existingObj = existingAnalyses.find((a) => a.id === resolvedAnalysisId) || existingAnalyses[0];
+    const existingObj = existingAnalyses.find((a) => a.id === resolvedAnalysisId);
 
     const newAnalysis: MatchAnalysis = {
       id: resolvedAnalysisId,
@@ -1359,8 +1462,10 @@ export default function BotoneraPage() {
     xmlString += `  <events>\n`;
 
     events.forEach((e) => {
-      const startTime = Math.max(0, (e.timestamp || 0) - (e.metadata?.leadTime || 5));
-      const stopTime = (e.timestamp || 0) + (e.metadata?.lagTime || 5);
+      const lead = e.metadata?.leadTime ?? 5;
+      const lag = e.metadata?.lagTime ?? 5;
+      const startTime = Math.max(0, (e.timestamp || 0) - lead);
+      const stopTime = Math.max(startTime + 1, (e.timestamp || 0) + lag);
 
       xmlString += `    <event>\n`;
       xmlString += `      <id>${e.event_id}</id>\n`;
@@ -1460,7 +1565,7 @@ export default function BotoneraPage() {
 
             <div className="flex bg-slate-950 p-1.5 rounded-2xl border border-slate-800 shadow-inner">
               <button
-                onClick={() => setPageMode('analysis')}
+                onClick={handleStartNewRegistration}
                 className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-black transition-all ${
                   pageMode === 'analysis'
                     ? 'bg-emerald-600 text-slate-950 shadow-lg shadow-emerald-950/40'
@@ -1497,7 +1602,7 @@ export default function BotoneraPage() {
           {/* Main Action Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 max-w-3xl mx-auto">
             <button
-              onClick={() => setPageMode('analysis')}
+              onClick={handleStartNewRegistration}
               className="group p-8 rounded-2xl bg-slate-900 border border-slate-800 hover:border-emerald-500/50 hover:bg-slate-900/80 text-left transition-all shadow-xl cursor-pointer"
             >
               <div className="w-14 h-14 rounded-2xl bg-emerald-600/15 border border-emerald-500/30 flex items-center justify-center mb-4 group-hover:scale-105 transition-transform">
@@ -1547,76 +1652,139 @@ export default function BotoneraPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {savedAnalyses.map((an) => {
                   const m = matches.find((match) => match.id === an.match_id);
+                  const rawUrl = an.video_url || m?.video_url;
+                  let ytThumb: string | null = null;
+                  if (rawUrl) {
+                    const matchId = rawUrl.match(/(?:v=|\/embed\/|\/shorts\/|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+                    if (matchId && matchId[1]) {
+                      ytThumb = `https://img.youtube.com/vi/${matchId[1]}/hqdefault.jpg`;
+                    }
+                  }
 
                   return (
                     <div
                       key={an.id}
-                      className="p-4 rounded-xl bg-slate-950 border border-slate-800 hover:border-amber-500/40 space-y-3 transition-all flex flex-col justify-between shadow-lg"
+                      className="rounded-xl bg-slate-950 border border-slate-800 hover:border-amber-500/50 space-y-3 transition-all flex flex-col justify-between shadow-xl overflow-hidden group hover:shadow-2xl hover:shadow-amber-500/10"
                     >
-                      <div>
-                        <div className="flex items-center justify-between text-[11px] text-slate-400 pb-2 border-b border-slate-800/60">
-                          <span className="font-mono text-slate-300">
-                            {new Date(an.updated_at || an.created_at).toLocaleDateString()}
-                          </span>
-                          <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
-                              an.status === 'completed'
-                                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                                : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
-                            }`}
-                          >
-                            {an.status === 'completed' ? 'Finalizado' : 'En progreso'}
-                          </span>
-                        </div>
-
-                        <h4 className="font-extrabold text-sm text-white mt-2.5 line-clamp-1">{an.title}</h4>
-                        {m && (
-                          <p className="text-xs text-amber-400 font-semibold mt-0.5">
-                            {m.home_team} vs {m.away_team}
-                          </p>
-                        )}
-                        <p className="text-xs text-slate-400 mt-1 flex items-center gap-1.5">
-                          <User className="w-3.5 h-3.5 text-slate-500" />
-                          <span>{an.analyst_name || 'Analista Principal'}</span>
-                        </p>
-
-                        <div className="flex items-center gap-2 mt-3 text-[11px] text-slate-300 font-mono">
-                          <span className="bg-slate-900 px-2 py-1 rounded border border-slate-800">
-                            {an.events?.length || 0} eventos
-                          </span>
-                          {an.video_type && (
-                            <span className="bg-slate-900 px-2 py-1 rounded border border-slate-800 text-sky-400 flex items-center gap-1">
-                              <Video className="w-3 h-3" />
-                              <span>{an.video_type === 'link' ? 'Vídeo URL' : an.video_type === 'local' ? 'Vídeo Local' : 'Sin vídeo'}</span>
+                      {/* Miniatura de Vídeo de YouTube / Enlace */}
+                      {ytThumb ? (
+                        <div className="relative aspect-video w-full bg-slate-900 overflow-hidden shrink-0">
+                          <img
+                            src={ytThumb}
+                            alt={an.title}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                            onError={(e) => {
+                              (e.currentTarget.parentElement as HTMLElement).style.display = 'none';
+                            }}
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent" />
+                          <div className="absolute top-2 left-2 right-2 flex items-center justify-between z-10">
+                            {m?.round ? (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-black bg-amber-500 text-slate-950 shadow-md">
+                                {m.round}
+                              </span>
+                            ) : <div />}
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold border backdrop-blur-md ${
+                                an.status === 'completed'
+                                  ? 'bg-emerald-950/90 text-emerald-300 border-emerald-500/40 shadow-sm'
+                                  : 'bg-rose-950/90 text-rose-300 border-rose-500/40 shadow-sm'
+                              }`}
+                            >
+                              {an.status === 'completed' ? 'Finalizado' : 'En progreso'}
                             </span>
-                          )}
+                          </div>
+                          <div className="absolute bottom-2 left-3 right-3 flex items-center justify-between text-[11px] font-mono text-slate-200 z-10">
+                            <span className="bg-slate-950/80 px-2 py-0.5 rounded text-[10px] font-bold text-amber-300 border border-amber-500/30 backdrop-blur-md">
+                              {new Date(an.updated_at || an.created_at).toLocaleDateString()}
+                            </span>
+                            {an.video_type && (
+                              <span className="bg-slate-950/80 px-2 py-0.5 rounded text-[10px] font-bold text-sky-300 border border-sky-500/30 backdrop-blur-md flex items-center gap-1">
+                                <Video className="w-3 h-3" />
+                                <span>{an.video_type === 'link' ? 'Vídeo Enlace' : 'Vídeo Local'}</span>
+                              </span>
+                            )}
+                          </div>
                         </div>
-                      </div>
+                      ) : null}
 
-                      <div className="flex items-center gap-2 pt-2 border-t border-slate-800/60">
-                        <button
-                          onClick={() => setActiveVisorAnalysis(an)}
-                          className="flex-1 py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-extrabold text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                          <span>Abrir Visor</span>
-                        </button>
+                      <div className="p-4 space-y-3 flex-1 flex flex-col justify-between">
+                        <div>
+                          {!ytThumb && (
+                            <div className="flex items-center justify-between text-[11px] text-slate-400 pb-2 border-b border-slate-800/60">
+                              <span className="font-mono text-slate-300">
+                                {new Date(an.updated_at || an.created_at).toLocaleDateString()}
+                              </span>
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                                  an.status === 'completed'
+                                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                                    : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                                }`}
+                              >
+                                {an.status === 'completed' ? 'Finalizado' : 'En progreso'}
+                              </span>
+                            </div>
+                          )}
 
-                        <button
-                          onClick={() => handleEditAnalysisInBotonera(an)}
-                          className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 transition-colors cursor-pointer"
-                          title="Editar en Botonera"
-                        >
-                          <Edit3 className="w-4 h-4" />
-                        </button>
+                          <h4 className="font-extrabold text-sm text-white line-clamp-1 group-hover:text-amber-300 transition-colors">
+                            {an.title}
+                          </h4>
+                          {m && (
+                            <div className="flex items-center justify-between gap-2 mt-0.5">
+                              <p className="text-xs text-amber-400 font-semibold truncate">
+                                {m.home_team} vs {m.away_team}
+                              </p>
+                              {m.round && (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/40 shrink-0">
+                                  {m.round}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                          <p className="text-xs text-slate-400 mt-1 flex items-center gap-1.5">
+                            <User className="w-3.5 h-3.5 text-slate-500" />
+                            <span>{an.analyst_name || 'Analista Principal'}</span>
+                          </p>
 
-                        <button
-                          onClick={() => setDeleteConfirmAnalysis(an)}
-                          className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-rose-400 border border-slate-700 transition-colors cursor-pointer"
-                          title="Eliminar Registro"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                          <div className="flex items-center gap-2 mt-3 text-[11px] text-slate-300 font-mono">
+                            <span className="bg-slate-900 px-2.5 py-1 rounded-lg border border-slate-800 font-bold text-emerald-400">
+                              {an.events?.length || 0} eventos
+                            </span>
+                            {!ytThumb && an.video_type && (
+                              <span className="bg-slate-900 px-2 py-1 rounded border border-slate-800 text-sky-400 flex items-center gap-1">
+                                <Video className="w-3 h-3" />
+                                <span>{an.video_type === 'link' ? 'Vídeo URL' : an.video_type === 'local' ? 'Vídeo Local' : 'Sin vídeo'}</span>
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 pt-3 border-t border-slate-800/60">
+                          <button
+                            onClick={() => setActiveVisorAnalysis(an)}
+                            className="flex-1 py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-extrabold text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-md"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>Abrir Visor</span>
+                          </button>
+
+                          <button
+                            onClick={() => handleEditAnalysisInBotonera(an)}
+                            className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-amber-400 border border-slate-800 transition-colors cursor-pointer"
+                            title="Editar en Botonera"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+
+                          <button
+                            onClick={() => setDeleteConfirmAnalysis(an)}
+                            className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-rose-400 border border-slate-800 transition-colors cursor-pointer"
+                            title="Eliminar Registro"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   );
@@ -1632,6 +1800,14 @@ export default function BotoneraPage() {
         <BotoneraSetupWizard
           matches={matches}
           templates={dbStore.getBotoneraTemplates()}
+          onDeleteTemplate={(tmplId) => {
+            dbStore.deleteBotoneraTemplate(tmplId);
+            const remaining = dbStore.getBotoneraTemplates();
+            if (remaining.length > 0) {
+              setTemplate(remaining[0]);
+            }
+          }}
+          onCancel={() => setPageMode(null)}
           onComplete={handleSetupComplete}
         />
       )}
@@ -1639,6 +1815,21 @@ export default function BotoneraPage() {
       {/* ----------------- MODO 1: MODO ANÁLISIS / ETIQUETADO EN DIRECTO ----------------- */}
       {pageMode === 'analysis' && isSessionConfigured && (
         <div className="space-y-4 animate-fade-in">
+          {/* Top Live Broadcast Scoreboard Banner */}
+          <BotoneraLiveScoreboard
+            match={selectedMatch || null}
+            events={events}
+            timerSeconds={timerSeconds}
+            period={period}
+            onUpdateLineup={(team, _config, updatedPlayers) => {
+              const teamName = team === 'home' ? (selectedMatch?.home_team || 'Equipo Local') : (selectedMatch?.away_team || 'Equipo Visitante');
+              setPlayers((prev) => [
+                ...prev.filter((p) => p.team_name !== teamName),
+                ...updatedPlayers,
+              ]);
+            }}
+          />
+
           {videoType && videoType !== 'none' && !isVideoPoppedOut ? (
             /*
              * LAYOUT 1 — CON VÍDEO EN PÁGINA
@@ -1679,6 +1870,7 @@ export default function BotoneraPage() {
                   onDeleteEvent={handleDeleteEvent}
                   onUpdateEvent={handleUpdateEvent}
                   onClearAllEvents={handleClearAllEvents}
+                  onRestoreDeletedEvents={handleRestoreDeletedEvents}
                   onExportXml={handleExportXml}
                   onExportJson={handleExportJson}
                   onSeekToEvent={handleSeekToEvent}
@@ -1693,7 +1885,7 @@ export default function BotoneraPage() {
                 {/* 1. Cronómetro compacto — DIRECTAMENTE encima de la botonera */}
                 <BotoneraStopwatch
                   period={period}
-                  onPeriodChange={setPeriod}
+                  onPeriodChange={handlePeriodSelect}
                   timerSeconds={timerSeconds}
                   onTimerChange={handleTimerChange}
                   isTimerRunning={isTimerRunning}
@@ -1720,7 +1912,13 @@ export default function BotoneraPage() {
                 )}
 
                 {/* 3. Estadísticas provisionales — debajo de la botonera */}
-                <BotoneraLiveStats events={events} />
+                <BotoneraLiveStats
+                  events={events}
+                  videoUrl={videoUrl}
+                  onSeekVideoToTime={(t) => seekVideoTo(t, true)}
+                  onSeekToEvent={handleSeekToEvent}
+                  buttons={template?.buttons || []}
+                />
               </div>
             </div>
           ) : (
@@ -1764,7 +1962,7 @@ export default function BotoneraPage() {
                 {/* 1. Cronómetro compacto — encima de la botonera */}
                 <BotoneraStopwatch
                   period={period}
-                  onPeriodChange={setPeriod}
+                  onPeriodChange={handlePeriodSelect}
                   timerSeconds={timerSeconds}
                   onTimerChange={handleTimerChange}
                   isTimerRunning={isTimerRunning}
@@ -1812,6 +2010,7 @@ export default function BotoneraPage() {
                   onDeleteEvent={handleDeleteEvent}
                   onUpdateEvent={handleUpdateEvent}
                   onClearAllEvents={handleClearAllEvents}
+                  onRestoreDeletedEvents={handleRestoreDeletedEvents}
                   onExportXml={handleExportXml}
                   onExportJson={handleExportJson}
                   onSeekToEvent={handleSeekToEvent}
@@ -1819,7 +2018,13 @@ export default function BotoneraPage() {
                   players={players}
                 />
 
-                <BotoneraLiveStats events={events} />
+                <BotoneraLiveStats
+                  events={events}
+                  videoUrl={videoUrl}
+                  onSeekVideoToTime={(t) => seekVideoTo(t, true)}
+                  onSeekToEvent={handleSeekToEvent}
+                  buttons={template?.buttons || []}
+                />
               </div>
             </div>
           )}
@@ -1980,8 +2185,19 @@ export default function BotoneraPage() {
           initialGlobalDescriptors={eventModalData.activeDescriptors}
           players={players}
           selectedPlayerId={selectedPlayerId}
-          onSave={(finalDescriptors, pitchData, modalPlayerId) =>
-            commitEvent(eventModalData.button, finalDescriptors, pitchData, modalPlayerId)
+          currentMatch={matches.find((m) => m.id === selectedMatchId) || null}
+          clickTimestamp={eventModalData.clickTimestamp}
+          clickPeriod={eventModalData.clickPeriod}
+          onSave={(finalDescriptors, pitchData, modalPlayerId, modalTeamName) =>
+            commitEvent(
+              eventModalData.button,
+              finalDescriptors,
+              pitchData,
+              modalPlayerId,
+              modalTeamName,
+              eventModalData.clickTimestamp,
+              eventModalData.clickPeriod
+            )
           }
           onCancel={() => setEventModalData(null)}
         />
