@@ -239,7 +239,7 @@ export default function DashboardsPage() {
       <div className="space-y-4">
         {blocks.map((block) => {
           const liveSession = activeSessionsMap[block.match.id];
-          const isLiveTagging = dashboardConfig.showLiveBadge && liveSession && (liveSession.isConfigured || liveSession.isTimerRunning);
+          const isLiveTagging = dashboardConfig.showLiveBadge && liveSession && liveSession.isTimerRunning;
           const currentEventsCount = isLiveTagging ? (liveSession.events?.length || 0) : (block.events.length || block.analyses.reduce((acc, a) => acc + (a.events?.length || 0), 0));
           const primaryAnalysis = block.analyses[0];
           const resolvedVideoUrl = primaryAnalysis?.video_url || block.match.video_url;

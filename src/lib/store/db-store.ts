@@ -6,7 +6,8 @@ import {
   saveAnalysisSessionToSupabase,
   getAnalysisSessionFromSupabase,
   getAllActiveSessionsFromSupabase,
-  deleteAnalysisSessionFromSupabase
+  deleteAnalysisSessionFromSupabase,
+  clearAnalysisEventsFromSupabase
 } from '@/lib/services/botonera-service';
 import { saveMatchesToSupabase, getMatchesFromSupabase } from '@/lib/services/matches-service';
 import { getPlayersFromSupabase } from '@/lib/services/players-service';
@@ -806,8 +807,16 @@ export const dbStore = {
 
   deleteAnalysis(id: string): void {
     const all = this.getAnalyses();
+    const target = all.find(a => a.id === id);
+    const matchId = target?.match_id || (id.startsWith('analysis_') ? id.replace('analysis_', '') : undefined);
+
     const filtered = all.filter(a => a.id !== id);
     setToStorage(STORAGE_KEYS.MATCH_ANALYSES, filtered);
+
+    if (matchId) {
+      this.clearActiveBotoneraSession(matchId);
+      clearAnalysisEventsFromSupabase(matchId).catch(() => {});
+    }
 
     deleteAnalysisFromSupabase(id).catch(err => {
       console.warn("Could not delete analysis from Supabase:", err);

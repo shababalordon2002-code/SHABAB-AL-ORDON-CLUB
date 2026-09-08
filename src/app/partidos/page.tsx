@@ -219,7 +219,7 @@ export default function PartidosPage() {
           const isShababHome = m.home_team.toLowerCase().includes('shabab al ordon');
           const isShababAway = m.away_team.toLowerCase().includes('shabab al ordon');
           const activeSession = activeSessionsMap[m.id];
-          const isLiveActive = !!(activeSession && (activeSession.isTimerRunning || activeSession.isConfigured));
+          const isLiveActive = !!(activeSession && activeSession.isTimerRunning);
           const savedAnalyses = dbStore.getAnalyses(m.id);
           const totalEventsCount = isLiveActive 
             ? (activeSession.events?.length || 0) 
