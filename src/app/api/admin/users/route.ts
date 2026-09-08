@@ -180,14 +180,21 @@ export async function PATCH(request: Request) {
 
     const adminSupabase = createAdminClient();
 
-    // Fetch existing auth user to get email and current user_metadata
+    // 1. Fetch existing Auth user to get email and current metadata
     const { data: authUserData } = await adminSupabase.auth.admin.getUserById(userId);
     const authUser = authUserData?.user;
 
-    const userEmail = email || authUser?.email || '';
-    const userFullName = full_name !== undefined ? full_name : (authUser?.user_metadata?.full_name || authUser?.email?.split('@')[0] || '');
+    // 2. Fetch existing profile from DB (if exists)
+    const { data: existingProfile } = await adminSupabase
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .maybeSingle();
 
-    // 1. Update Auth user_metadata so login session / JWT reflects new role immediately
+    const safeEmail = (email || authUser?.email || existingProfile?.email || `user_${userId.substring(0, 8)}@club.local`).trim();
+    const safeFullName = full_name !== undefined ? full_name : (existingProfile?.full_name || authUser?.user_metadata?.full_name || safeEmail.split('@')[0]);
+
+    // 3. Update Auth user_metadata so login session / JWT reflects new role immediately
     if (role || full_name !== undefined) {
       const currentMeta = authUser?.user_metadata || {};
       const newMeta = { ...currentMeta };
@@ -203,34 +210,70 @@ export async function PATCH(request: Request) {
       }
     }
 
-    // 2. Update or insert profiles table
-    const profilePayload: Record<string, any> = {
-      id: userId,
-      email: userEmail,
-      full_name: userFullName,
-      updated_at: new Date().toISOString(),
-    };
-    if (role) profilePayload.role = role;
-    if (full_name !== undefined) profilePayload.full_name = full_name;
+    // 4. Update existing profile row (UPDATE) or insert new profile row (INSERT)
+    let profileData = null;
+    let profileError = null;
 
-    let { data: profileData, error: profileError } = await adminSupabase
-      .from('profiles')
-      .upsert(profilePayload, { onConflict: 'id' })
-      .select()
-      .maybeSingle();
+    if (existingProfile) {
+      // Profile exists: ONLY update fields that changed. Never pass null/empty for email!
+      const updatePayload: Record<string, any> = {};
+      if (role) updatePayload.role = role;
+      if (full_name !== undefined) updatePayload.full_name = full_name;
+      if (safeEmail && (!existingProfile.email || existingProfile.email === '')) {
+        updatePayload.email = safeEmail;
+      }
+
+      const res = await adminSupabase
+        .from('profiles')
+        .update(updatePayload)
+        .eq('id', userId)
+        .select()
+        .maybeSingle();
+
+      profileData = res.data;
+      profileError = res.error;
+    } else {
+      // Profile does not exist yet: INSERT complete row with non-null email
+      const insertPayload: Record<string, any> = {
+        id: userId,
+        email: safeEmail,
+        full_name: safeFullName,
+        role: role || 'viewer',
+        created_at: new Date().toISOString(),
+      };
+
+      const res = await adminSupabase
+        .from('profiles')
+        .insert(insertPayload)
+        .select()
+        .maybeSingle();
+
+      profileData = res.data;
+      profileError = res.error;
+    }
 
     // Fallback: If DB table has check constraint rejecting 'viewer', fallback to 'user' in profiles table while user_metadata retains 'viewer'
     if (profileError && role === 'viewer' && profileError.message.includes('check constraint')) {
       console.warn('profiles_role_check constraint error on "viewer". Falling back to "user" role in DB table.');
-      profilePayload.role = 'user';
-      const fallbackResult = await adminSupabase
-        .from('profiles')
-        .upsert(profilePayload, { onConflict: 'id' })
-        .select()
-        .maybeSingle();
-
-      profileData = fallbackResult.data;
-      profileError = fallbackResult.error;
+      const fallbackRole = 'user';
+      if (existingProfile) {
+        const res = await adminSupabase
+          .from('profiles')
+          .update({ role: fallbackRole })
+          .eq('id', userId)
+          .select()
+          .maybeSingle();
+        profileData = res.data;
+        profileError = res.error;
+      } else {
+        const res = await adminSupabase
+          .from('profiles')
+          .insert({ id: userId, email: safeEmail, full_name: safeFullName, role: fallbackRole })
+          .select()
+          .maybeSingle();
+        profileData = res.data;
+        profileError = res.error;
+      }
     }
 
     if (profileError) {
