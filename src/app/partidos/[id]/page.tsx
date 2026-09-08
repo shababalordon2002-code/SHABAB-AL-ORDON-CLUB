@@ -171,6 +171,31 @@ export default function PartidoDetailPage({ params }: { params: Promise<{ id: st
           </div>
 
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => {
+                const targetAnalysis = analyses[0] || {
+                  id: `analysis_${match.id}`,
+                  match_id: match.id,
+                  title: `Análisis ${match.home_team} vs ${match.away_team}`,
+                  analyst_name: 'Analista Principal (SAO)',
+                  status: 'completed' as const,
+                  video_type: match.video_type || (match.video_url ? (match.video_url.includes('http') ? 'link' : 'local') : undefined),
+                  video_url: match.video_url,
+                  video_source_name: match.video_source_name,
+                  p1_video_start_time: match.p1_video_start_time,
+                  p2_video_start_time: match.p2_video_start_time,
+                  events: events,
+                  created_at: match.date || new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                };
+                setActiveVisorAnalysis(targetAnalysis);
+              }}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-amber-500 hover:from-emerald-400 hover:to-amber-400 text-slate-950 font-black text-xs shadow-md transition-all cursor-pointer"
+            >
+              <Eye className="w-4 h-4 stroke-[2.5]" />
+              <span>Abrir Visor (Vídeo + Botonera)</span>
+            </button>
+
             <Link
               href={`/botonera?match_id=${match.id}`}
               className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs shadow-md transition-all"

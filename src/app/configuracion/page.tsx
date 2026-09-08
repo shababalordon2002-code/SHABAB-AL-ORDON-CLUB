@@ -2,8 +2,19 @@
 
 import React from 'react';
 import { Settings, ShieldCheck, Database, Layers, CheckCircle2 } from 'lucide-react';
+import { useRequireRole } from '@/components/providers/AuthProvider';
 
 export default function ConfiguracionPage() {
+  const { allowed, loading } = useRequireRole(['admin', 'analyst']);
+
+  if (loading || !allowed) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh] text-slate-400 text-sm">
+        {loading ? 'Comprobando sesión…' : 'Acceso restringido. Redirigiendo…'}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
       <div>

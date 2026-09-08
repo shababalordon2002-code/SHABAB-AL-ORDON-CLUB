@@ -1,4 +1,4 @@
-import { Match, Player, PlayerMapping, Team, Competition, ImportLog, NormalizedEvent, BotoneraTemplate, ActiveBotoneraSession, MatchAnalysis, MatchDashboard } from '@/types';
+import { Match, Player, PlayerMapping, Team, Competition, ImportLog, NormalizedEvent, BotoneraTemplate, ActiveBotoneraSession, MatchAnalysis, MatchDashboard, DashboardGlobalConfig } from '@/types';
 import {
   saveBotoneraTemplateToSupabase,
   deleteBotoneraTemplateFromSupabase,
@@ -26,6 +26,21 @@ const STORAGE_KEYS = {
   MATCH_ANALYSES: 'sao_analytics_match_analyses_v1',
   MATCH_DASHBOARDS: 'sao_analytics_match_dashboards_v1',
   TRASH_EVENTS: 'sao_analytics_trash_events_v1',
+  DASHBOARD_CONFIG: 'sao_analytics_dashboard_config_v1',
+};
+
+export const DEFAULT_DASHBOARD_CONFIG: DashboardGlobalConfig = {
+  showVideoPreview: true,
+  showStatsBar: true,
+  showLineups: true,
+  showLiveBadge: true,
+  showH2HComparison: true,
+  defaultVisorTab: 'editor_view',
+  selectedH2HCategories: ['Tiro', 'Remate', 'Pase', 'Falta', 'Córner', 'Presión', 'Recuperación', 'Entrada'],
+  h2hDisplayMode: 'both',
+  lineupsViewMode: 'both',
+  lineupFormation: '4-3-3',
+  buttonConfigs: {},
 };
 
 export const SEED_MATCH_ANALYSES: MatchAnalysis[] = [
@@ -692,10 +707,10 @@ export const dbStore = {
   getAnalyses(matchId?: string): MatchAnalysis[] {
     const list = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
     
-    // Deduplicate list by analysis ID (falling back to match_id if no ID present)
+    // Deduplicate list by match_id (falling back to analysis id if no match_id)
     const deduplicatedMap = new Map<string, MatchAnalysis>();
     list.forEach((item) => {
-      const key = item.id || item.match_id;
+      const key = item.match_id || item.id;
       const existing = deduplicatedMap.get(key);
       if (!existing) {
         deduplicatedMap.set(key, item);
@@ -715,7 +730,7 @@ export const dbStore = {
 
   getAnalysisById(id: string): MatchAnalysis | undefined {
     const list = this.getAnalyses();
-    return list.find(a => a.id === id);
+    return list.find(a => a.id === id || a.match_id === id);
   },
 
   async syncAnalysesFromSupabase(matchId?: string): Promise<MatchAnalysis[]> {
@@ -732,7 +747,7 @@ export const dbStore = {
 
   saveAnalysis(analysis: MatchAnalysis): void {
     const all = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
-    const idx = all.findIndex(a => a.id === analysis.id);
+    const idx = all.findIndex(a => a.id === analysis.id || (analysis.match_id && a.match_id === analysis.match_id));
     let updated: MatchAnalysis;
     if (idx >= 0) {
       const existing = all[idx];
@@ -753,11 +768,12 @@ export const dbStore = {
       all.unshift(updated);
     }
 
-    // Deduplicate remaining entries in storage by analysis ID
+    // Deduplicate remaining entries in storage by match_id (or item.id)
     const finalMap = new Map<string, MatchAnalysis>();
     all.forEach((item) => {
-      const key = item.id || item.match_id;
-      if (!finalMap.has(key)) {
+      const key = item.match_id || item.id;
+      const existing = finalMap.get(key);
+      if (!existing || (item.events?.length || 0) >= (existing.events?.length || 0)) {
         finalMap.set(key, item);
       }
     });
@@ -765,6 +781,7 @@ export const dbStore = {
     const deduplicated = Array.from(finalMap.values());
     setToStorage(STORAGE_KEYS.MATCH_ANALYSES, deduplicated);
 
+    // Sync analysis asynchronously to Supabase
     saveAnalysisToSupabase(updated).catch(err => {
       console.warn("Could not sync analysis to Supabase:", err);
     });
@@ -783,8 +800,28 @@ export const dbStore = {
   // Match Dashboards (pizarras configurables por partido)
   getDashboards(matchId?: string): MatchDashboard[] {
     const list = getFromStorage<MatchDashboard[]>(STORAGE_KEYS.MATCH_DASHBOARDS, []);
-    if (!matchId) return list;
-    return list.filter(d => d.match_id === matchId);
+    
+    // Deduplicate by id and by match_id + name combination
+    const deduplicatedMap = new Map<string, MatchDashboard>();
+    list.forEach((item) => {
+      const keyByCombo = `${item.match_id}_${item.name.trim().toLowerCase()}`;
+      const existing = deduplicatedMap.get(item.id) || deduplicatedMap.get(keyByCombo);
+      
+      if (!existing) {
+        deduplicatedMap.set(item.id, item);
+        deduplicatedMap.set(keyByCombo, item);
+      } else {
+        // Keep the dashboard with more widgets or latest updated_at
+        if ((item.widgets?.length || 0) >= (existing.widgets?.length || 0)) {
+          deduplicatedMap.set(item.id, item);
+          deduplicatedMap.set(keyByCombo, item);
+        }
+      }
+    });
+
+    const uniqueDashboards = Array.from(new Set(deduplicatedMap.values()));
+    if (!matchId) return uniqueDashboards;
+    return uniqueDashboards.filter(d => d.match_id === matchId);
   },
 
   getDashboardById(id: string): MatchDashboard | undefined {
@@ -798,25 +835,51 @@ export const dbStore = {
       const remoteIds = new Set(remote.map(d => d.id));
       const localOnly = allLocal.filter(d => !remoteIds.has(d.id));
       const merged = [...remote, ...localOnly];
-      setToStorage(STORAGE_KEYS.MATCH_DASHBOARDS, merged);
-      return matchId ? merged.filter(d => d.match_id === matchId) : merged;
+      
+      // Deduplicate merged array
+      const deduplicatedMap = new Map<string, MatchDashboard>();
+      merged.forEach(item => {
+        const keyByCombo = `${item.match_id}_${item.name.trim().toLowerCase()}`;
+        if (!deduplicatedMap.has(item.id) && !deduplicatedMap.has(keyByCombo)) {
+          deduplicatedMap.set(item.id, item);
+          deduplicatedMap.set(keyByCombo, item);
+        }
+      });
+      const uniqueMerged = Array.from(new Set(deduplicatedMap.values()));
+
+      setToStorage(STORAGE_KEYS.MATCH_DASHBOARDS, uniqueMerged);
+      return matchId ? uniqueMerged.filter(d => d.match_id === matchId) : uniqueMerged;
     }
     return this.getDashboards(matchId);
   },
 
   saveDashboard(dashboard: MatchDashboard): void {
     const all = this.getDashboards();
-    const idx = all.findIndex(d => d.id === dashboard.id);
+    const idx = all.findIndex(
+      d => d.id === dashboard.id || (d.match_id === dashboard.match_id && d.name.trim().toLowerCase() === dashboard.name.trim().toLowerCase())
+    );
     const now = new Date().toISOString();
     let updated: MatchDashboard;
     if (idx >= 0) {
-      updated = { ...dashboard, updated_at: now };
+      updated = { ...all[idx], ...dashboard, updated_at: now };
       all[idx] = updated;
     } else {
       updated = { ...dashboard, created_at: dashboard.created_at || now, updated_at: now };
       all.unshift(updated);
     }
-    setToStorage(STORAGE_KEYS.MATCH_DASHBOARDS, all);
+
+    // Clean up any remaining duplicates in storage
+    const deduplicatedMap = new Map<string, MatchDashboard>();
+    all.forEach(item => {
+      const keyByCombo = `${item.match_id}_${item.name.trim().toLowerCase()}`;
+      if (!deduplicatedMap.has(item.id) && !deduplicatedMap.has(keyByCombo)) {
+        deduplicatedMap.set(item.id, item);
+        deduplicatedMap.set(keyByCombo, item);
+      }
+    });
+    const uniqueList = Array.from(new Set(deduplicatedMap.values()));
+
+    setToStorage(STORAGE_KEYS.MATCH_DASHBOARDS, uniqueList);
 
     saveDashboardToSupabase(updated).catch(err => {
       console.warn("Could not sync dashboard to Supabase:", err);
@@ -830,6 +893,17 @@ export const dbStore = {
     deleteDashboardFromSupabase(id).catch(err => {
       console.warn("Could not delete dashboard from Supabase:", err);
     });
+  },
+
+  // Dashboard Customization Config
+  getDashboardConfig(): DashboardGlobalConfig {
+    const cfg = getFromStorage<DashboardGlobalConfig | null>(STORAGE_KEYS.DASHBOARD_CONFIG, null);
+    if (!cfg) return DEFAULT_DASHBOARD_CONFIG;
+    return { ...DEFAULT_DASHBOARD_CONFIG, ...cfg };
+  },
+
+  saveDashboardConfig(config: DashboardGlobalConfig): void {
+    setToStorage(STORAGE_KEYS.DASHBOARD_CONFIG, config);
   }
 };
 

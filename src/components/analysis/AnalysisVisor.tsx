@@ -213,7 +213,7 @@ export const AnalysisVisor: React.FC<AnalysisVisorProps> = ({
 
           <div className="flex items-center gap-2 flex-wrap">
             <Link
-              href={`/botonera?match_id=${match.id}&analysis_id=${analysis.id}`}
+              href={`/botonera?match_id=${match.id}&analysis_id=${analysis.id}&mode=tag`}
               className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black transition-all shadow-md flex items-center gap-1.5"
             >
               <Edit3 className="w-4 h-4 stroke-[2.5]" />

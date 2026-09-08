@@ -40,7 +40,6 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const isLoginPage = request.nextUrl.pathname.startsWith('/login');
-  const isAdminPage = request.nextUrl.pathname.startsWith('/admin');
   const isApiPage = request.nextUrl.pathname.startsWith('/api');
 
   // If user is not signed in and trying to access protected page (exclude login and api routes)
@@ -52,20 +51,10 @@ export async function middleware(request: NextRequest) {
 
   // Allow /login page to always be accessible (e.g. for account switching or re-authenticating)
 
-  // If trying to access admin pages, verify admin role
-  if (user && isAdminPage) {
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single();
-
-    if (profile?.role !== 'admin') {
-      const url = request.nextUrl.clone();
-      url.pathname = '/';
-      return NextResponse.redirect(url);
-    }
-  }
+  // Admin-only pages (e.g. /admin/usuarios) are gated client-side (AdminGuard) and, more
+  // importantly, at the API layer (/api/admin/* verifies role with the service-role key on
+  // every request) — not here. Doing the role check here against the cookie-based session
+  // client proved unreliable (RLS/cookie propagation), so we don't rely on it for security.
 
   return supabaseResponse;
 }

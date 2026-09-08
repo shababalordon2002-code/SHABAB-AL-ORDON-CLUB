@@ -25,6 +25,8 @@ export interface NormalizedEvent {
   outcome: string | null;   // "éxito", "fallido", etc.
   metadata: Record<string, any>; // información adicional
   source: 'longomatch' | 'manual' | string;
+  created_by?: string | null;      // auth.users id del analista que registró el evento
+  created_by_name?: string | null; // nombre visible del analista, para atribución en vivo
   created_at: string;
   updated_at: string;
 }
@@ -374,4 +376,27 @@ export interface MatchDashboard {
   global_filters: DashboardFilter[];
   created_at: string;
   updated_at: string;
+}
+
+export interface ButtonDashboardConfig {
+  visible: boolean;
+  displayAs: 'bar' | 'kpi' | 'pitch' | 'matrix';
+  customColor?: string;
+}
+
+export interface DashboardGlobalConfig {
+  showVideoPreview: boolean;
+  showStatsBar: boolean;
+  showLineups: boolean;
+  showLiveBadge: boolean;
+  showH2HComparison: boolean;
+  defaultVisorTab: 'editor_view' | 'pitch';
+  // H2H Bar Charts Config
+  selectedH2HCategories?: string[];
+  h2hDisplayMode?: 'count' | 'percentage' | 'both';
+  // Lineup Visual Config
+  lineupsViewMode?: 'field' | 'list' | 'both';
+  lineupFormation?: '4-3-3' | '4-2-3-1' | '4-4-2' | '3-5-2';
+  // Fine-grained Button-by-Button Config
+  buttonConfigs?: Record<string, ButtonDashboardConfig>;
 }

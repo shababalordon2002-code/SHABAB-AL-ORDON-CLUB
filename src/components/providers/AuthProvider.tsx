@@ -1,9 +1,10 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { User } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/client';
-import { UserProfile } from '@/types/auth';
+import { UserProfile, UserRole } from '@/types/auth';
 
 interface AuthContextType {
   user: User | null;
@@ -136,3 +137,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 }
 
 export const useAuth = () => useContext(AuthContext);
+
+/**
+ * Redirects away from the current page if the signed-in user's role is not in `allowedRoles`
+ * (e.g. keep "visor" / role 'user' out of Botonera and Configuración, which are for
+ * admin/analyst only). Returns { allowed, loading } so the page can render a placeholder
+ * while the auth state is still resolving, instead of flashing restricted content.
+ */
+export function useRequireRole(allowedRoles: UserRole[]) {
+  const { profile, loading } = useAuth();
+  const router = useRouter();
+  const allowed = !!profile && allowedRoles.includes(profile.role);
+
+  useEffect(() => {
+    if (!loading && !allowed) {
+      router.replace('/');
+    }
+  }, [loading, allowed, router]);
+
+  return { allowed, loading };
+}

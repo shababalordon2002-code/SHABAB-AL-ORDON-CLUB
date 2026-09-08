@@ -22,6 +22,7 @@ import {
 import { NormalizedEvent, BotoneraButton } from '@/types';
 import { getButtonColorHex } from './BotoneraPanelEditor';
 import { TeamLogo } from '@/components/player/PlayerBadge';
+import { dbStore } from '@/lib/store/db-store';
 
 interface BotoneraLiveStatsProps {
   events: NormalizedEvent[];
@@ -153,14 +154,20 @@ export const BotoneraLiveStats: React.FC<BotoneraLiveStatsProps> = ({
       { label: 'ACCIONES EXITOSAS', valA: succA, valB: succB },
     ];
 
-    // Collect all unique button / action category names
+    // Collect and filter all unique button / action category names according to dashboard config
     const categoriesSet = new Set<string>();
     events.forEach((e) => {
       const name = getEventButtonName(e);
       if (name) categoriesSet.add(name);
     });
 
+    const dashboardConfig = dbStore.getDashboardConfig();
+    const selectedCats = (dashboardConfig.selectedH2HCategories || []).map((c) => c.toLowerCase());
+
     Array.from(categoriesSet).sort().forEach((catName) => {
+      const matchCat = selectedCats.length === 0 || selectedCats.some((sc) => catName.toLowerCase().includes(sc) || sc.includes(catName.toLowerCase()));
+      if (!matchCat) return;
+
       const countA = evtsA.filter((e) => getEventButtonName(e) === catName).length;
       const countB = evtsB.filter((e) => getEventButtonName(e) === catName).length;
       if (countA > 0 || countB > 0) {

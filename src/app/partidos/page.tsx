@@ -321,15 +321,13 @@ export default function PartidosPage() {
                 </div>
 
                 <div className="flex flex-col gap-2 pt-1">
-                  {activeSession && (
-                    <Link
-                      href={`/botonera?match_id=${m.id}`}
-                      className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-rose-600 via-amber-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-slate-950 font-black text-xs shadow-md shadow-rose-950/40 transition-all flex items-center justify-center gap-1.5"
-                    >
-                      <PlayCircle className="w-4 h-4 stroke-[2.5]" />
-                      <span>Entrar en el Análisis</span>
-                    </Link>
-                  )}
+                  <Link
+                    href={`/botonera?match_id=${m.id}`}
+                    className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-500 via-amber-600 to-amber-500 hover:from-emerald-400 hover:to-amber-400 text-slate-950 font-black text-xs shadow-md shadow-amber-950/40 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <PlayCircle className="w-4 h-4 stroke-[2.5]" />
+                    <span>Entrar en el Análisis</span>
+                  </Link>
 
                   <div className="flex items-center gap-2">
                     <Link

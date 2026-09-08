@@ -111,19 +111,7 @@ export const Header: React.FC = () => {
       <div className="flex items-center gap-3">
         <Link
           href="/importar-xml"
-          onClick={(e) => {
-            if (recordingLocked && pathname !== '/importar-xml') {
-              e.preventDefault();
-              window.alert(
-                'Tienes un registro en directo activo en la Botonera. Finaliza o pausa la sesión antes de salir de la pantalla.'
-              );
-            }
-          }}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-xs shadow-md transition-all ${
-            recordingLocked
-              ? 'bg-slate-800 text-slate-600 cursor-not-allowed shadow-none'
-              : 'bg-gradient-to-r from-red-600 to-amber-500 text-slate-950 hover:from-red-500 hover:to-amber-400 shadow-red-950/50 hover:scale-[1.02] active:scale-[0.98]'
-          }`}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-xs shadow-md transition-all bg-gradient-to-r from-red-600 to-amber-500 text-slate-950 hover:from-red-500 hover:to-amber-400 shadow-red-950/50 hover:scale-[1.02] active:scale-[0.98]"
         >
           <UploadCloud className="w-4 h-4 stroke-[2.5]" />
           <span>+ Importar XML</span>

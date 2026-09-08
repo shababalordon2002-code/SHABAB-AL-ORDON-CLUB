@@ -12,10 +12,29 @@ import {
   Plus,
   Trash2,
   X,
+  Eye,
+  Settings,
+  Radio,
+  Video,
+  Users,
+  PlayCircle,
+  Activity,
 } from 'lucide-react';
-import { dbStore } from '@/lib/store/db-store';
-import { BotoneraTemplate, Match, MatchAnalysis, MatchDashboard, NormalizedEvent } from '@/types';
+import { dbStore, DEFAULT_DASHBOARD_CONFIG } from '@/lib/store/db-store';
+import {
+  BotoneraTemplate,
+  Match,
+  MatchAnalysis,
+  MatchDashboard,
+  NormalizedEvent,
+  ActiveBotoneraSession,
+  DashboardGlobalConfig,
+} from '@/types';
 import { createDashboard } from '@/components/dashboards/dashboard-presets';
+import { AnalysisVisor } from '@/components/analysis/AnalysisVisor';
+import { useAuth } from '@/components/providers/AuthProvider';
+import { AdminDashboardConfigModal } from '@/components/dashboards/AdminDashboardConfigModal';
+import { TacticalLineupPitch } from '@/components/pitch/TacticalLineupPitch';
 
 interface MatchBlock {
   match: Match;
@@ -24,16 +43,33 @@ interface MatchBlock {
   dashboards: MatchDashboard[];
 }
 
+const getYouTubeThumbnail = (url?: string | null) => {
+  if (!url) return null;
+  const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
+  if (match && match[1]) {
+    return `https://img.youtube.com/vi/${match[1]}/hqdefault.jpg`;
+  }
+  return null;
+};
+
 export default function DashboardsPage() {
   const router = useRouter();
+  const { isAdmin } = useAuth();
   const [blocks, setBlocks] = useState<MatchBlock[]>([]);
   const [templates, setTemplates] = useState<BotoneraTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [creatingFor, setCreatingFor] = useState<MatchBlock | null>(null);
+  const [activeVisor, setActiveVisor] = useState<{ match: Match; analysis: MatchAnalysis } | null>(null);
+
+  // Admin Customization & Live Sync States
+  const [dashboardConfig, setDashboardConfig] = useState<DashboardGlobalConfig>(DEFAULT_DASHBOARD_CONFIG);
+  const [showAdminModal, setShowAdminModal] = useState(false);
+  const [activeSessionsMap, setActiveSessionsMap] = useState<Record<string, ActiveBotoneraSession>>({});
 
   const load = () => {
     const matches = dbStore.getMatches();
     const dashboards = dbStore.getDashboards();
+    setDashboardConfig(dbStore.getDashboardConfig());
 
     const next: MatchBlock[] = matches
       .map((match) => {
@@ -57,9 +93,25 @@ export default function DashboardsPage() {
     load();
     setLoading(false);
 
-    Promise.all([dbStore.syncDashboardsFromSupabase(), dbStore.syncAnalysesFromSupabase(), dbStore.syncBotoneraTemplatesFromSupabase()])
+    Promise.all([
+      dbStore.syncDashboardsFromSupabase(),
+      dbStore.syncAnalysesFromSupabase(),
+      dbStore.syncBotoneraTemplatesFromSupabase(),
+    ])
       .then(load)
       .catch(() => {});
+  }, []);
+
+  // Poll Active Live Session Status every 3 seconds for real-time live tagging updates
+  useEffect(() => {
+    const syncSessions = () => {
+      dbStore.getAllActiveSessions().then((sessions) => {
+        if (sessions) setActiveSessionsMap(sessions);
+      });
+    };
+    syncSessions();
+    const interval = setInterval(syncSessions, 3000);
+    return () => clearInterval(interval);
   }, []);
 
   const totalDashboards = useMemo(() => blocks.reduce((acc, b) => acc + b.dashboards.length, 0), [blocks]);
@@ -72,13 +124,21 @@ export default function DashboardsPage() {
 
   return (
     <div className="p-5 sm:p-7 space-y-6 max-w-[1500px] mx-auto">
+      {/* Top Bar Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-start gap-3">
           <div className="w-11 h-11 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center shrink-0">
             <BarChart3 className="w-5 h-5" />
           </div>
           <div>
-            <h1 className="text-lg font-extrabold text-white tracking-tight">Dashboards por partido</h1>
+            <h1 className="text-lg font-extrabold text-white tracking-tight flex items-center gap-2">
+              <span>Dashboards por partido</span>
+              {isAdmin && (
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                  Modo Admin
+                </span>
+              )}
+            </h1>
             <p className="text-xs text-slate-400 max-w-2xl leading-relaxed mt-0.5">
               Un dashboard por partido analizado. Cada pizarra se edita a tu gusto: eliges la botonera, sus campos y
               descriptores, y montas las gráficas, campogramas y tablas que quieras.
@@ -86,13 +146,25 @@ export default function DashboardsPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 text-[11px]">
-          <span className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300 font-mono">
-            {blocks.length} partidos
-          </span>
-          <span className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-emerald-400 font-mono">
-            {totalDashboards} dashboards
-          </span>
+        <div className="flex items-center gap-3 flex-wrap">
+          {isAdmin && (
+            <button
+              onClick={() => setShowAdminModal(true)}
+              className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs shadow-md transition-all flex items-center gap-2 cursor-pointer"
+            >
+              <Settings className="w-4 h-4 stroke-[2.5]" />
+              <span>⚙️ Personalizar Vista Dashboard (Admin)</span>
+            </button>
+          )}
+
+          <div className="flex items-center gap-2 text-[11px]">
+            <span className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300 font-mono">
+              {blocks.length} partidos
+            </span>
+            <span className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-emerald-400 font-mono">
+              {totalDashboards} dashboards
+            </span>
+          </div>
         </div>
       </div>
 
@@ -124,87 +196,179 @@ export default function DashboardsPage() {
 
       <div className="space-y-4">
         {blocks.map((block) => {
-          const totalEvents = block.events.length || block.analyses.reduce((acc, a) => acc + (a.events?.length || 0), 0);
+          const liveSession = activeSessionsMap[block.match.id];
+          const isLiveTagging = dashboardConfig.showLiveBadge && liveSession && (liveSession.isConfigured || liveSession.isTimerRunning);
+          const currentEventsCount = isLiveTagging ? (liveSession.events?.length || 0) : (block.events.length || block.analyses.reduce((acc, a) => acc + (a.events?.length || 0), 0));
+          const primaryAnalysis = block.analyses[0];
+          const resolvedVideoUrl = primaryAnalysis?.video_url || block.match.video_url;
+          const youtubeThumb = getYouTubeThumbnail(resolvedVideoUrl);
+
+          const openVisorForMatch = () => {
+            const analysis = block.analyses[0] || {
+              id: `analysis_${block.match.id}`,
+              match_id: block.match.id,
+              title: `Análisis ${block.match.home_team} vs ${block.match.away_team}`,
+              analyst_name: 'Analista Principal (SAO)',
+              status: 'completed' as const,
+              video_type: block.match.video_type || (block.match.video_url ? (block.match.video_url.includes('http') ? 'link' : 'local') : undefined),
+              video_url: block.match.video_url,
+              video_source_name: block.match.video_source_name,
+              p1_video_start_time: block.match.p1_video_start_time,
+              p2_video_start_time: block.match.p2_video_start_time,
+              events: block.events,
+              created_at: block.match.date || new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            };
+            setActiveVisor({ match: block.match, analysis });
+          };
 
           return (
-            <div key={block.match.id} className="rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden">
-              <div className="p-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/70">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 text-[10px] text-slate-500 font-semibold uppercase tracking-wider">
-                    <Calendar className="w-3 h-3" />
-                    <span>{block.match.date}</span>
-                    <span>·</span>
-                    <span>{block.match.competition}</span>
+            <div
+              key={block.match.id}
+              className={`rounded-xl bg-slate-900 border p-4 space-y-3 transition-all shadow-md ${
+                isLiveTagging ? 'border-rose-500/80 ring-1 ring-rose-500/40' : 'border-slate-800 hover:border-slate-700'
+              }`}
+            >
+              {/* Live Tagging Banner */}
+              {isLiveTagging && (
+                <div className="px-3 py-1.5 rounded-lg bg-rose-950/80 border border-rose-800/80 flex items-center justify-between gap-2 text-xs mb-1">
+                  <div className="flex items-center gap-2 font-bold text-rose-300 text-[11px]">
+                    <Radio className="w-3.5 h-3.5 text-rose-400 animate-pulse" />
+                    <span>🔴 EN DIRECTO - REGISTRANDO EVENTOS LIVE</span>
+                    <span className="font-mono bg-rose-950 px-1.5 py-0.5 rounded text-rose-200 border border-rose-800">
+                      {currentEventsCount} eventos
+                    </span>
                   </div>
-                  <h2 className="text-sm font-extrabold text-white mt-1 truncate">
-                    {block.match.home_team} <span className="text-slate-500 font-mono mx-1">{block.match.home_score}-{block.match.away_score}</span> {block.match.away_team}
-                  </h2>
-                  <div className="flex flex-wrap items-center gap-1.5 mt-1.5 text-[10px]">
-                    <span className="px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-300 font-mono">
-                      {totalEvents} eventos
-                    </span>
-                    <span className="px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-400 font-mono">
-                      {block.analyses.length} análisis
-                    </span>
-                    <Link
-                      href={`/partidos/${block.match.id}`}
-                      className="px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-sky-400 hover:text-sky-300"
+                  <Link
+                    href={`/botonera?match_id=${block.match.id}&mode=tag`}
+                    className="px-2.5 py-0.5 rounded bg-rose-600 hover:bg-rose-500 text-white font-black text-[10px] flex items-center gap-1 transition"
+                  >
+                    <PlayCircle className="w-3 h-3" />
+                    <span>Ir a Botonera</span>
+                  </Link>
+                </div>
+              )}
+
+              {/* Main Compact Row: Video Thumb + Minimal Info + Action Buttons */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3.5 min-w-0">
+                  {/* Video Thumbnail Box */}
+                  <div className="relative w-28 sm:w-36 aspect-video rounded-lg overflow-hidden bg-slate-950 border border-slate-800 shrink-0 group">
+                    {youtubeThumb ? (
+                      <img
+                        src={youtubeThumb}
+                        alt="Vídeo"
+                        className="w-full h-full object-cover group-hover:scale-105 transition-all duration-300"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex flex-col items-center justify-center text-slate-600 bg-slate-950">
+                        <Video className="w-5 h-5" />
+                        <span className="text-[9px] font-semibold text-slate-500 mt-0.5">Vídeo</span>
+                      </div>
+                    )}
+                    <button
+                      onClick={openVisorForMatch}
+                      className="absolute inset-0 bg-slate-950/40 hover:bg-slate-950/20 flex items-center justify-center transition-all cursor-pointer"
+                      title="Abrir Vídeo"
                     >
-                      Ver partido
-                    </Link>
+                      <div className="w-7 h-7 rounded-full bg-amber-500/90 text-slate-950 flex items-center justify-center shadow">
+                        <PlayCircle className="w-4.5 h-4.5 fill-slate-950 stroke-none" />
+                      </div>
+                    </button>
+                  </div>
+
+                  {/* Minimal Match Info: Date, Teams, Registros */}
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                      <Calendar className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                      <span className="font-semibold text-slate-300">{block.match.date}</span>
+                      <span>·</span>
+                      <span className="truncate text-slate-400">{block.match.competition}</span>
+                    </div>
+
+                    <h2 className="text-sm sm:text-base font-extrabold text-white truncate flex items-center gap-2">
+                      {block.match.home_team_logo && (
+                        <img src={block.match.home_team_logo} alt="" className="w-4.5 h-4.5 object-contain" />
+                      )}
+                      <span>{block.match.home_team}</span>
+                      <span className="px-1.5 py-0.5 rounded bg-slate-950 text-amber-400 font-mono text-xs border border-slate-800 font-bold">
+                        {block.match.home_score} - {block.match.away_score}
+                      </span>
+                      <span>{block.match.away_team}</span>
+                      {block.match.away_team_logo && (
+                        <img src={block.match.away_team_logo} alt="" className="w-4.5 h-4.5 object-contain" />
+                      )}
+                    </h2>
+
+                    <div className="flex items-center gap-2 text-[11px] pt-0.5">
+                      <span className="px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-emerald-400 font-mono font-semibold">
+                        {currentEventsCount} registros
+                      </span>
+                      <span className="px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-400 font-mono">
+                        {block.dashboards.length} dashboards
+                      </span>
+                      <Link
+                        href={`/partidos/${block.match.id}`}
+                        className="px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-sky-400 hover:text-sky-300 font-semibold"
+                      >
+                        Ver partido
+                      </Link>
+                    </div>
                   </div>
                 </div>
 
-                <button
-                  onClick={() => setCreatingFor(block)}
-                  className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-extrabold text-xs flex items-center gap-1.5 shrink-0"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Nuevo dashboard</span>
-                </button>
+                {/* Right Action Buttons */}
+                <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                  <button
+                    onClick={openVisorForMatch}
+                    className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-amber-500 hover:from-emerald-400 hover:to-amber-400 text-slate-950 font-black text-xs shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Eye className="w-3.5 h-3.5 stroke-[2.5]" />
+                    <span>Abrir Visor (Vídeo + Botonera)</span>
+                  </button>
+
+                  <button
+                    onClick={() => setCreatingFor(block)}
+                    className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-extrabold text-xs flex items-center gap-1.5 border border-slate-700 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Nuevo dashboard</span>
+                  </button>
+                </div>
               </div>
 
-              <div className="p-4">
-                {block.dashboards.length === 0 ? (
-                  <p className="text-[11px] text-slate-500">
-                    Sin dashboards todavía para este partido. Crea uno y monta la pizarra con los datos de tu botonera.
-                  </p>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                    {block.dashboards.map((dashboard) => {
-                      const analysis = block.analyses.find((a) => a.id === dashboard.analysis_id);
-                      return (
-                        <div
-                          key={dashboard.id}
-                          className="rounded-xl bg-slate-950 border border-slate-800 p-3 hover:border-emerald-600/40 transition group"
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <Link href={`/dashboards/${dashboard.id}`} className="min-w-0 flex items-start gap-2">
-                              <LayoutDashboard className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
-                              <div className="min-w-0">
-                                <p className="text-xs font-extrabold text-slate-100 truncate group-hover:text-emerald-300">
-                                  {dashboard.name}
-                                </p>
-                                <p className="text-[10px] text-slate-500 truncate">
-                                  {dashboard.widgets.length} visualizaciones ·{' '}
-                                  {analysis ? analysis.title : 'Todos los eventos del partido'}
-                                </p>
-                              </div>
-                            </Link>
-                            <button
-                              onClick={() => handleDelete(dashboard)}
-                              className="p-1.5 rounded-md bg-slate-900 hover:bg-slate-800 text-rose-400 border border-slate-800 opacity-0 group-hover:opacity-100 transition"
-                              title="Eliminar dashboard"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+              {/* Created Dashboards Pills Bar */}
+              {block.dashboards.length > 0 && (
+                <div className="pt-2.5 border-t border-slate-800/80 flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mr-1">
+                    Pizarras guardadas:
+                  </span>
+                  {block.dashboards.map((dashboard) => (
+                    <div
+                      key={dashboard.id}
+                      className="group inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 hover:border-emerald-500/50 transition-all text-xs"
+                    >
+                      <Link
+                        href={`/dashboards/${dashboard.id}`}
+                        className="flex items-center gap-1.5 font-bold text-slate-200 group-hover:text-emerald-400"
+                      >
+                        <LayoutDashboard className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>{dashboard.name}</span>
+                        <span className="text-[10px] font-mono text-slate-500">
+                          ({dashboard.widgets.length} visualizaciones)
+                        </span>
+                      </Link>
+                      <button
+                        onClick={() => handleDelete(dashboard)}
+                        className="text-slate-500 hover:text-rose-400 p-0.5 transition cursor-pointer"
+                        title="Eliminar dashboard"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           );
         })}
@@ -218,6 +382,30 @@ export default function DashboardsPage() {
           onCreate={(dashboard) => {
             dbStore.saveDashboard(dashboard);
             router.push(`/dashboards/${dashboard.id}`);
+          }}
+        />
+      )}
+
+      {/* Admin Customization Modal */}
+      {showAdminModal && (
+        <AdminDashboardConfigModal
+          currentConfig={dashboardConfig}
+          onClose={() => setShowAdminModal(false)}
+          onSave={(updatedConfig) => {
+            setDashboardConfig(updatedConfig);
+          }}
+        />
+      )}
+
+      {/* Visor Overlay Modal */}
+      {activeVisor && (
+        <AnalysisVisor
+          match={activeVisor.match}
+          analysis={activeVisor.analysis}
+          onClose={() => setActiveVisor(null)}
+          onUpdateAnalysis={(updated) => {
+            dbStore.saveAnalysis(updated);
+            load();
           }}
         />
       )}
@@ -312,7 +500,7 @@ const CreateDashboardModal: React.FC<{
                 })
               )
             }
-            className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 text-xs font-extrabold"
+            className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 text-xs font-extrabold cursor-pointer"
           >
             Crear dashboard
           </button>
