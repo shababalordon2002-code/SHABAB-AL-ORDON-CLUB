@@ -193,14 +193,14 @@ function ImportarXMLContent() {
 
       {/* Preset Match Notice */}
       {presetMatch && (
-        <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between text-xs text-emerald-300">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4 text-emerald-400" />
+        <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex flex-col sm:flex-row sm:items-center gap-2 sm:justify-between text-xs text-emerald-300">
+          <div className="flex items-start sm:items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5 sm:mt-0" />
             <span>
               Asignando XML al partido: <strong>{presetMatch.home_team} vs {presetMatch.away_team}</strong> ({presetMatch.date})
             </span>
           </div>
-          <span className="font-mono text-[10px] bg-emerald-500/20 px-2 py-0.5 rounded font-bold">
+          <span className="font-mono text-[10px] bg-emerald-500/20 px-2 py-0.5 rounded font-bold self-start sm:self-auto">
             Target Match ID: {presetMatch.id}
           </span>
         </div>
@@ -209,7 +209,7 @@ function ImportarXMLContent() {
       {/* STEP 1: Upload XML or Test Demo */}
       {step === 1 && (
         <div className="space-y-4">
-          <div className="p-8 rounded-2xl border-2 border-dashed border-slate-700 hover:border-emerald-500/50 bg-slate-900/60 transition-all text-center space-y-4">
+          <div className="p-4 sm:p-8 rounded-2xl border-2 border-dashed border-slate-700 hover:border-emerald-500/50 bg-slate-900/60 transition-all text-center space-y-4">
             <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center mx-auto shadow-inner">
               <UploadCloud className="w-7 h-7" />
             </div>
@@ -266,24 +266,24 @@ function ImportarXMLContent() {
       {/* STEP 3: Review Analysis & Confirm Import */}
       {step === 3 && analysis && (
         <div className="space-y-6">
-          <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-6 shadow-xl">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-              <div>
+          <div className="p-4 sm:p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-6 shadow-xl">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:justify-between border-b border-slate-800 pb-4">
+              <div className="min-w-0">
                 <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">INFORMACIÓN DETECTADA</span>
-                <h2 className="text-lg font-black text-white flex items-center gap-2 mt-0.5">
-                  <FileCode className="w-5 h-5 text-emerald-400" />
+                <h2 className="text-lg font-black text-white flex items-center gap-2 mt-0.5 break-all">
+                  <FileCode className="w-5 h-5 text-emerald-400 shrink-0" />
                   <span>{fileName}</span>
                 </h2>
               </div>
 
-              <div className="text-right">
+              <div className="text-left sm:text-right">
                 <span className="text-[10px] text-slate-500 font-mono">Hash SHA-256</span>
                 <p className="text-[11px] font-mono text-slate-400">{analysis.fileHash.substring(0, 16)}...</p>
               </div>
             </div>
 
             {/* Analysis Information Grid */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 rounded-xl bg-slate-950/80 border border-slate-800 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 p-4 rounded-xl bg-slate-950/80 border border-slate-800 text-xs">
               <div>
                 <span className="text-[10px] text-slate-500 font-semibold uppercase">Partido</span>
                 <p className="font-bold text-white text-sm mt-0.5">{analysis.homeTeam} vs {analysis.awayTeam}</p>
@@ -362,7 +362,7 @@ function ImportarXMLContent() {
                 <p className="text-[11px] text-slate-300">
                   Por favor selecciona cómo deseas proceder para evitar duplicar eventos silenciosamente:
                 </p>
-                <div className="flex items-center gap-4">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4">
                   <label className="flex items-center gap-2 text-xs font-semibold text-slate-200 cursor-pointer">
                     <input
                       type="radio"
@@ -389,7 +389,7 @@ function ImportarXMLContent() {
             )}
 
             {/* Actions Bar */}
-            <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-800">
+            <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center sm:justify-end gap-3 pt-4 border-t border-slate-800">
               <button
                 onClick={handleReset}
                 className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-colors"
@@ -421,7 +421,7 @@ function ImportarXMLContent() {
 
       {/* STEP 4: Success Result Screen */}
       {step === 4 && importSummary && (
-        <div className="p-8 rounded-2xl bg-slate-900 border border-slate-800 text-center space-y-6 shadow-2xl">
+        <div className="p-4 sm:p-8 rounded-2xl bg-slate-900 border border-slate-800 text-center space-y-6 shadow-2xl">
           <div className="w-16 h-16 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center justify-center mx-auto">
             <CheckCircle2 className="w-10 h-10" />
           </div>
@@ -461,7 +461,7 @@ function ImportarXMLContent() {
           </div>
 
           {/* Action Buttons */}
-          <div className="flex items-center justify-center gap-3 pt-2">
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
             <Link
               href={`/partidos/${importSummary.matchId}`}
               className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs border border-slate-700 flex items-center gap-2"

@@ -29,7 +29,7 @@ export default function ConfiguracionPage() {
 
       <div className="space-y-4">
         {/* Card 1: Club Settings */}
-        <div className="p-6 rounded-xl bg-slate-900 border border-slate-800 space-y-4">
+        <div className="p-4 sm:p-6 rounded-xl bg-slate-900 border border-slate-800 space-y-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center">
               <ShieldCheck className="w-5 h-5" />
@@ -63,7 +63,7 @@ export default function ConfiguracionPage() {
         </div>
 
         {/* Card 2: Parser & Data Sources */}
-        <div className="p-6 rounded-xl bg-slate-900 border border-slate-800 space-y-4">
+        <div className="p-4 sm:p-6 rounded-xl bg-slate-900 border border-slate-800 space-y-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20 flex items-center justify-center">
               <Database className="w-5 h-5" />
@@ -75,19 +75,19 @@ export default function ConfiguracionPage() {
           </div>
 
           <div className="space-y-2 text-xs">
-            <div className="p-3 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between">
+            <div className="p-3 rounded-lg bg-slate-950 border border-slate-800 flex flex-col sm:flex-row sm:items-center gap-2 sm:justify-between">
               <div className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                 <span className="font-bold text-slate-200">LongoMatch XML Ingestion Parser</span>
               </div>
-              <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">
+              <span className="self-start sm:self-auto px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">
                 ACTIVO
               </span>
             </div>
 
-            <div className="p-3 rounded-lg bg-slate-950/40 border border-slate-800/60 flex items-center justify-between text-slate-500">
+            <div className="p-3 rounded-lg bg-slate-950/40 border border-slate-800/60 flex flex-col sm:flex-row sm:items-center gap-2 sm:justify-between text-slate-500">
               <div className="flex items-center gap-2">
-                <Layers className="w-4 h-4" />
+                <Layers className="w-4 h-4 shrink-0" />
                 <span>Opta / StatsBomb / Wyscout Parsers</span>
               </div>
               <span className="text-[10px] font-mono">Preparado para Fase Futura</span>

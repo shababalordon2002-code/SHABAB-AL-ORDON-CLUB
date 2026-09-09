@@ -159,16 +159,16 @@ export default function LoginPage() {
       <div className="w-full max-w-md z-10 relative">
         {/* Header Branding with Official Logo */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-40 h-40 rounded-3xl bg-gradient-to-tr from-red-600 to-amber-500 p-1 mb-4 shadow-2xl shadow-red-950/40">
+          <div className="inline-flex items-center justify-center w-28 h-28 sm:w-40 sm:h-40 rounded-3xl bg-gradient-to-tr from-red-600 to-amber-500 p-1 mb-4 shadow-2xl shadow-red-950/40">
             <div className="w-full h-full bg-slate-950/80 backdrop-blur-sm rounded-[22px] flex items-center justify-center p-4">
-              <img 
-                src="/logo.png" 
-                alt="Shabab Al Ordon Club Logo" 
-                className="w-28 h-28 object-contain drop-shadow-xl" 
+              <img
+                src="/logo.png"
+                alt="Shabab Al Ordon Club Logo"
+                className="w-full h-full object-contain drop-shadow-xl"
               />
             </div>
           </div>
-          <h1 className="text-2xl font-extrabold text-slate-100 tracking-tight">
+          <h1 className="text-xl sm:text-2xl font-extrabold text-slate-100 tracking-tight">
             Shabab Al Ordon Club
           </h1>
           <p className="text-sm text-slate-400 mt-1 font-medium">

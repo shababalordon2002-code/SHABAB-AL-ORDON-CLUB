@@ -58,24 +58,38 @@ export default function PartidoDetailPage({ params }: { params: Promise<{ id: st
   });
 
   useEffect(() => {
-    const m = dbStore.getMatchById(matchId);
-    if (m) {
-      setMatch(m);
-      const evs = dbStore.getNormalizedEvents(matchId);
-      setEvents(evs);
-    }
-    dbStore.syncActiveSessionFromSupabase(matchId).then((sess) => {
-      if (sess && sess.selectedMatchId === matchId) {
-        setActiveSession(sess);
+    const loadMatchData = () => {
+      const m = dbStore.getMatchById(matchId);
+      if (m) {
+        setMatch(m);
+        const evs = dbStore.getNormalizedEvents(matchId);
+        setEvents(evs);
       }
-    });
-    dbStore.syncAnalysesFromSupabase(matchId).then((ans) => {
-      if (ans && ans.length > 0) {
-        setAnalyses(ans);
-      } else {
-        setAnalyses(dbStore.getAnalyses(matchId));
-      }
-    });
+      dbStore.syncActiveSessionFromSupabase(matchId).then((sess) => {
+        if (sess && sess.selectedMatchId === matchId) {
+          setActiveSession(sess);
+        }
+      });
+      dbStore.syncAnalysesFromSupabase(matchId).then((ans) => {
+        if (ans && ans.length > 0) {
+          setAnalyses(ans);
+          const updatedMatch = dbStore.getMatchById(matchId);
+          if (updatedMatch) {
+            setMatch(updatedMatch);
+            setEvents(dbStore.getNormalizedEvents(matchId));
+          }
+        } else {
+          setAnalyses(dbStore.getAnalyses(matchId));
+        }
+      });
+    };
+
+    loadMatchData();
+
+    // Auto-refresh: re-pull match/analysis data every 5 min so viewers see
+    // events registered live by analysts in Botonera without reloading.
+    const interval = setInterval(loadMatchData, 5 * 60 * 1000);
+    return () => clearInterval(interval);
   }, [matchId]);
 
   const handleDeleteAnalysisCard = (analysisId: string) => {
@@ -150,10 +164,10 @@ export default function PartidoDetailPage({ params }: { params: Promise<{ id: st
       </Link>
 
       {/* Match Header Hero Card */}
-      <div className="p-6 rounded-2xl bg-gradient-to-r from-slate-900 via-slate-900 to-slate-950 border border-slate-800 space-y-6 shadow-xl">
+      <div className="p-4 sm:p-6 rounded-2xl bg-gradient-to-r from-slate-900 via-slate-900 to-slate-950 border border-slate-800 space-y-6 shadow-xl">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="space-y-1">
-            <div className="flex items-center gap-2 text-xs text-slate-400">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
               <Calendar className="w-3.5 h-3.5 text-emerald-400" />
               <span>{match.date}</span>
               <span>•</span>
@@ -161,7 +175,7 @@ export default function PartidoDetailPage({ params }: { params: Promise<{ id: st
               <span>•</span>
               <span className="text-slate-400">Duración: {match.duration || "90' 00\""}</span>
             </div>
-            <h1 className="text-2xl font-black text-white tracking-tight flex items-center gap-4">
+            <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight flex flex-wrap items-center gap-2 sm:gap-4">
               <span>{match.home_team}</span>
               <span className="px-3 py-1 rounded bg-slate-950 border border-slate-800 font-mono text-emerald-400 font-bold">
                 {match.home_score} - {match.away_score}
@@ -170,7 +184,7 @@ export default function PartidoDetailPage({ params }: { params: Promise<{ id: st
             </h1>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <button
               onClick={() => {
                 const targetAnalysis = analyses[0] || {
@@ -237,7 +251,7 @@ export default function PartidoDetailPage({ params }: { params: Promise<{ id: st
         )}
 
         {/* View Mode Tabs */}
-        <div className="flex items-center gap-2 pt-2 border-t border-slate-800/80">
+        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-800/80">
           <button
             onClick={() => setActiveTab('pitch')}
             className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
@@ -385,7 +399,25 @@ export default function PartidoDetailPage({ params }: { params: Promise<{ id: st
               <PitchViewer
                 events={filteredEvents}
                 selectedEventId={selectedEvent?.event_id || null}
-                onSelectEvent={(evt) => setSelectedEvent(evt)}
+                onSelectEvent={(evt) => {
+                  setSelectedEvent(evt);
+                  const targetAnalysis = analyses[0] || {
+                    id: `analysis_${match.id}`,
+                    match_id: match.id,
+                    title: `Análisis ${match.home_team} vs ${match.away_team}`,
+                    analyst_name: 'Analista Principal (SAO)',
+                    status: 'completed' as const,
+                    video_type: match.video_type || (match.video_url ? (match.video_url.includes('http') ? 'link' : 'local') : undefined),
+                    video_url: match.video_url,
+                    video_source_name: match.video_source_name,
+                    p1_video_start_time: match.p1_video_start_time,
+                    p2_video_start_time: match.p2_video_start_time,
+                    events: events,
+                    created_at: match.date || new Date().toISOString(),
+                    updated_at: new Date().toISOString(),
+                  };
+                  setActiveVisorAnalysis(targetAnalysis);
+                }}
               />
             </div>
 
@@ -489,7 +521,7 @@ export default function PartidoDetailPage({ params }: { params: Promise<{ id: st
       {/* Selected Event Information Panel */}
       {selectedEvent && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-xl w-full p-6 space-y-4 shadow-2xl">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-xl w-full max-h-[90vh] overflow-y-auto p-4 sm:p-6 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <Activity className="w-5 h-5 text-emerald-400" />
@@ -503,7 +535,7 @@ export default function PartidoDetailPage({ params }: { params: Promise<{ id: st
               </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
               <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
                 <span className="text-[10px] text-slate-500 font-semibold uppercase">Jugador</span>
                 <p className="font-bold text-white mt-0.5">{selectedEvent.player_name}</p>

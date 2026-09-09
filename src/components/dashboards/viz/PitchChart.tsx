@@ -13,6 +13,7 @@ import {
 import { PITCH_ZONE_GEOMETRY, dominantZoneSet } from '@/lib/analytics/pitch-zones';
 import { VIZ, inkOn, sequentialColor, seriesColor } from './theme';
 import { ChartLegend, ChartTooltip, EmptyChart, useElementSize, useTooltip } from './primitives';
+import { ArrowUp, ArrowRight } from 'lucide-react';
 
 type PitchMode = 'points' | 'arrows' | 'heatmap' | 'zones';
 
@@ -113,8 +114,8 @@ export const PitchChart: React.FC<PitchChartProps> = ({
   return (
     <div ref={ref} className="viz-host relative h-full w-full">
       {pitchW > 40 && pitchH > 40 && (
-        <div className="relative mx-auto" style={{ width: pitchW, height: pitchH, marginLeft: offsetX }}>
-          <div className="absolute inset-0 rounded-xl bg-emerald-950 border border-emerald-900/70 overflow-hidden">
+        <div className={`relative mx-auto flex ${vertical ? 'flex-row' : 'flex-col'}`} style={{ width: pitchW, height: pitchH, marginLeft: offsetX }}>
+          <div className="relative flex-1 rounded-xl bg-emerald-950 border border-emerald-900/70 overflow-hidden">
             <svg width={pitchW} height={pitchH} className="block" onMouseLeave={hide}>
               <PitchMarkings vertical={vertical} pad={PAD} innerW={innerW} innerH={innerH} />
 
@@ -124,6 +125,22 @@ export const PitchChart: React.FC<PitchChartProps> = ({
               {mode === 'points' && renderPoints()}
             </svg>
           </div>
+          {/* Lateral Attack Strip */}
+          {vertical ? (
+            <div className="w-5 bg-slate-950/90 border-l border-emerald-800/60 flex flex-col items-center justify-center py-2 text-emerald-300 select-none pointer-events-none shrink-0 rounded-r-xl">
+              <ArrowUp className="w-3 h-3 text-emerald-400 shrink-0" />
+              <span className="text-[8px] font-black uppercase tracking-widest text-emerald-300 [writing-mode:vertical-rl] rotate-180 mt-1">
+                ATAQUE
+              </span>
+            </div>
+          ) : (
+            <div className="h-5 bg-slate-950/90 border-t border-emerald-800/60 flex flex-row items-center justify-center px-2 gap-1 text-emerald-300 select-none pointer-events-none shrink-0 rounded-b-xl">
+              <span className="text-[8px] font-black uppercase tracking-widest text-emerald-300">
+                ATAQUE
+              </span>
+              <ArrowRight className="w-3 h-3 text-emerald-400 shrink-0" />
+            </div>
+          )}
         </div>
       )}
       {showLegend && breakdown && <ChartLegend items={legendItems} />}

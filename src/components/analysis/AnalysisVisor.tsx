@@ -16,10 +16,11 @@ import { PitchViewer } from '@/components/pitch/PitchViewer';
 import { PitchFilterBar, FilterState } from '@/components/pitch/PitchFilterBar';
 import { MatchTimeline } from '@/components/pitch/MatchTimeline';
 import { MatchStatsPanel } from '@/components/pitch/MatchStatsPanel';
-import { BotoneraVideoPlayer } from '@/components/botonera/BotoneraVideoPlayer';
+import { BotoneraVideoPlayer, getCenteredPopUpFeatures, toEmbedUrl } from '@/components/botonera/BotoneraVideoPlayer';
 import { BotoneraEventLog } from '@/components/botonera/BotoneraEventLog';
 import { BotoneraLiveStats } from '@/components/botonera/BotoneraLiveStats';
 import { dbStore } from '@/lib/store/db-store';
+import { calculateEventVideoTime } from '@/lib/analytics/video-utils';
 
 interface AnalysisVisorProps {
   match: Match;
@@ -111,22 +112,26 @@ export const AnalysisVisor: React.FC<AnalysisVisorProps> = ({
   // Jump Video to Event Timestamp (considering period video offsets for 1st vs 2nd half)
   const handleSeekToEvent = (evt: NormalizedEvent) => {
     setSelectedEvent(evt);
-    const matchSec = evt.timestamp ?? (evt.minute !== null ? evt.minute * 60 + (evt.second || 0) : 0);
-    const evtPeriod = evt.period ?? (matchSec >= 2700 ? 2 : 1);
+    const periodOffsets: Record<number, number> = {
+      1: analysis.p1_video_start_time ?? match?.p1_video_start_time ?? 0,
+      2: analysis.p2_video_start_time ?? match?.p2_video_start_time ?? 0,
+    };
+    const seekTime = calculateEventVideoTime(evt, match, periodOffsets, 12);
 
-    const p1Offset = analysis.p1_video_start_time ?? match?.p1_video_start_time ?? 0;
-    const p2Offset = analysis.p2_video_start_time ?? match?.p2_video_start_time ?? 0;
-
-    let targetVideoTime = matchSec;
-    if (evtPeriod === 1) {
-      targetVideoTime = p1Offset + matchSec;
-    } else if (evtPeriod >= 2) {
-      const matchSecInPeriod = Math.max(0, matchSec - 2700);
-      targetVideoTime = p2Offset + matchSecInPeriod;
-    }
-
-    const seekTime = Math.max(0, targetVideoTime - 12);
+    // 1. Seek embedded player
     seekVideoTo(seekTime, true);
+
+    // 2. Open centered pop-up window so analyst gets a pop-up in the center of the screen
+    if (resolvedVideoType === 'link' && resolvedVideoUrl) {
+      try {
+        const embedUrl = new URL(toEmbedUrl(resolvedVideoUrl));
+        embedUrl.searchParams.set('start', Math.floor(seekTime).toString());
+        embedUrl.searchParams.set('autoplay', '1');
+        window.open(embedUrl.toString(), 'sao_clip_player', getCenteredPopUpFeatures(960, 560));
+      } catch {
+        // Fallback for non-standard URLs
+      }
+    }
   };
 
   const handleExportXml = () => {
@@ -230,7 +235,7 @@ export const AnalysisVisor: React.FC<AnalysisVisorProps> = ({
         </div>
 
         {/* Navigation Tabs Bar */}
-        <div className="px-4 py-2 bg-slate-900 border-b border-slate-800 flex items-center gap-2 shrink-0">
+        <div className="px-4 py-2 bg-slate-900 border-b border-slate-800 flex items-center gap-2 flex-wrap shrink-0">
           <button
             onClick={() => setActiveTab('editor_view')}
             className={`px-4 py-1.5 rounded-xl text-xs font-extrabold transition-all flex items-center gap-2 ${

@@ -25,7 +25,7 @@ export const MatchTimeline: React.FC<MatchTimelineProps> = ({
 
   return (
     <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3 shadow-lg select-none">
-      <div className="flex items-center justify-between text-xs text-slate-400">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
         <div className="flex items-center gap-2 font-bold text-slate-200">
           <Clock className="w-4 h-4 text-emerald-400" />
           <span>Timeline del Partido ({sortedEvents.length} eventos)</span>
@@ -34,7 +34,8 @@ export const MatchTimeline: React.FC<MatchTimelineProps> = ({
       </div>
 
       {/* TIMELINE AXIS & EVENT NODES */}
-      <div className="relative pt-6 pb-4 px-4">
+      <div className="overflow-x-auto">
+      <div className="relative pt-6 pb-4 px-4 min-w-[480px]">
         {/* Horizontal Track */}
         <div className="h-2 w-full bg-slate-950 rounded-full border border-slate-800/80 relative">
           <div className="absolute inset-y-0 left-0 bg-emerald-500/20 rounded-full w-full"></div>
@@ -57,7 +58,8 @@ export const MatchTimeline: React.FC<MatchTimelineProps> = ({
 
         {/* EVENT NODES ALONG THE TIMELINE */}
         {sortedEvents.map((evt) => {
-          const minute = evt.minute !== null ? evt.minute : Math.floor((evt.timestamp || 0) / 60);
+          const rawMin = evt.minute !== null ? evt.minute : Math.floor((evt.timestamp || 0) / 60);
+          const minute = Number(evt.period) === 2 && rawMin < 45 ? rawMin + 45 : rawMin;
           const leftPercent = Math.min(100, Math.max(0, (minute / maxMinute) * 100));
           const isSelected = selectedEventId === evt.event_id;
 
@@ -88,6 +90,7 @@ export const MatchTimeline: React.FC<MatchTimelineProps> = ({
             </button>
           );
         })}
+      </div>
       </div>
     </div>
   );

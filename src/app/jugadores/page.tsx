@@ -135,11 +135,11 @@ function PlayerProfileModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4 overflow-y-auto"
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-md rounded-3xl overflow-hidden shadow-2xl border border-slate-800 bg-slate-900 animate-[fadeIn_0.15s_ease-out]"
+        className="relative w-full max-w-md rounded-3xl overflow-hidden shadow-2xl border border-slate-800 bg-slate-900 animate-[fadeIn_0.15s_ease-out] max-h-[90vh] overflow-y-auto my-4"
         onClick={e => e.stopPropagation()}
       >
         <button
@@ -415,11 +415,11 @@ export default function JugadoresPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
           <button
             onClick={handleScrapeTransfermarkt}
             disabled={isScraping}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-bold text-xs shadow-md shadow-sky-950/40 transition-all cursor-pointer"
+            className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-bold text-xs shadow-md shadow-sky-950/40 transition-all cursor-pointer"
           >
             <Globe className={`w-4 h-4 ${isScraping ? 'animate-spin' : ''}`} />
             <span>{isScraping ? 'Sincronizando de Transfermarkt...' : 'Sincronizar Transfermarkt'}</span>
@@ -427,7 +427,7 @@ export default function JugadoresPage() {
 
           <button
             onClick={() => handleOpenEditModal()}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-red-600 to-amber-500 hover:from-red-500 hover:to-amber-400 text-slate-950 font-bold text-xs shadow-md shadow-red-950/40 transition-all cursor-pointer"
+            className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-red-600 to-amber-500 hover:from-red-500 hover:to-amber-400 text-slate-950 font-bold text-xs shadow-md shadow-red-950/40 transition-all cursor-pointer"
           >
             <UserPlus className="w-4 h-4 stroke-[2.5]" />
             <span>+ Nuevo Jugador</span>
@@ -437,7 +437,7 @@ export default function JugadoresPage() {
 
       {/* Notification Banner */}
       {message && (
-        <div className={`p-4 rounded-xl border flex items-center justify-between text-xs font-medium ${
+        <div className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center gap-2 sm:justify-between text-xs font-medium ${
           message.includes('Error') 
             ? 'bg-rose-950/40 border-rose-800/80 text-rose-300' 
             : 'bg-emerald-950/40 border-emerald-800/80 text-emerald-300'
@@ -484,7 +484,7 @@ export default function JugadoresPage() {
       </div>
 
       {/* Search Bar */}
-      <div className="relative max-w-sm">
+      <div className="relative w-full sm:max-w-sm">
         <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
         <input
           type="text"
@@ -626,8 +626,8 @@ export default function JugadoresPage() {
 
       {/* Edit / Add Player Modal */}
       {isPlayerModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
-          <form onSubmit={handleSavePlayer} className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 overflow-y-auto">
+          <form onSubmit={handleSavePlayer} className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-4 sm:p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto my-4">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <UserCheck className="w-5 h-5 text-amber-400" />
@@ -644,7 +644,7 @@ export default function JugadoresPage() {
               </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-4 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
               <div className="col-span-2 sm:col-span-1">
                 <label className="block text-slate-300 font-medium mb-1">Nombre Completo *</label>
                 <input
@@ -737,8 +737,8 @@ export default function JugadoresPage() {
 
       {/* Add Alias Modal */}
       {isAliasModalOpen && selectedPlayerForAlias && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
-          <form onSubmit={handleSaveAliasMapping} className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 overflow-y-auto">
+          <form onSubmit={handleSaveAliasMapping} className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-4 sm:p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto my-4">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h3 className="font-bold text-white text-sm">
                 Asociar Alias a {selectedPlayerForAlias.name}

@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import { BotoneraButton, BotoneraTemplate } from '@/types';
 import { dbStore } from '@/lib/store/db-store';
+import { BotoneraDashboardConfigModal } from './BotoneraDashboardConfigModal';
 
 interface BotoneraPanelEditorProps {
   template: BotoneraTemplate;
@@ -298,6 +299,7 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
   const [newTemplateDesc, setNewTemplateDesc] = useState<string>('');
   const [deleteConfirmTemplate, setDeleteConfirmTemplate] = useState<BotoneraTemplate | null>(null);
   const [saveSuccessToast, setSaveSuccessToast] = useState<string | null>(null);
+  const [isDashConfigOpen, setIsDashConfigOpen] = useState<boolean>(false);
 
   // Drag & Drop Descriptor Group Reordering State
   const [draggedGrpIdx, setDraggedGrpIdx] = useState<number | null>(null);
@@ -832,7 +834,7 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
   const selectedButton = template.buttons.find((b) => b.id === selectedBtnId);
 
   return (
-    <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl backdrop-blur-md space-y-4 select-none">
+    <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-2 sm:p-4 shadow-xl backdrop-blur-md space-y-4 select-none overflow-x-hidden">
       {/* Top Header Controls */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
         <div className="flex items-center gap-3">
@@ -1041,12 +1043,13 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
       )}
 
       {/* MAIN POWERPOINT FREEFORM CANVAS BOARD */}
+      <div className="w-full overflow-x-auto overflow-y-auto max-h-[80vh] sm:max-h-none">
       <div
         ref={canvasRef}
         onMouseDown={handleCanvasMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
-        className={`relative w-full min-h-[550px] aspect-[16/9] bg-slate-950 rounded-2xl border-2 overflow-hidden shadow-2xl transition-colors ${
+        className={`relative w-full min-w-[360px] min-h-[420px] sm:min-h-[550px] aspect-[16/9] bg-slate-950 rounded-2xl border-2 overflow-hidden shadow-2xl transition-colors ${
           isEditMode
             ? 'border-amber-500/50 bg-[radial-gradient(#334155_1.2px,transparent_1.2px)] [background-size:24px_24px]'
             : 'border-slate-800'
@@ -1318,6 +1321,7 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
           </>
         )}
       </div>
+      </div>
 
       {/* PROPERTY INSPECTOR BAR FOR SELECTED OBJECT IN EDIT MODE */}
       {isEditMode && selectedButton && (
@@ -1560,7 +1564,7 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
       {/* BUTTON CHARACTERISTICS EDITOR MODAL */}
       {editingButton && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-xl w-full shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3 sm:p-5 max-w-[95vw] sm:max-w-xl w-full shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-800 pb-2">
               <h3 className="font-bold text-slate-100 text-sm flex items-center gap-2">
                 <Pencil className="w-4 h-4 text-emerald-400" /> Configurar Objeto de Botonera
@@ -2367,6 +2371,30 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                 </div>
               )}
 
+              {/* 5. CONFIGURACIÓN DE PRESENTACIÓN EN DASHBOARDS */}
+              {editingButton.type === 'category' && (
+                <div className="p-3 rounded-xl bg-slate-950 border border-emerald-500/40 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <label className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
+                        <Sliders className="w-3.5 h-3.5" /> Presentación en Dashboards de Partido:
+                      </label>
+                      <span className="text-[10px] text-slate-400 block mt-0.5">
+                        Personaliza cómo se visualizarán el campograma y las gráficas al hacer clic en este evento desde el Dashboard.
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsDashConfigOpen(true)}
+                    className="w-full py-2 px-3 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/50 text-emerald-300 text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+                  >
+                    <Sliders className="w-4 h-4 text-emerald-400" />
+                    <span>📊 Configurar Campograma y Gráficas del Dashboard</span>
+                  </button>
+                </div>
+              )}
+
               <div className="flex items-center justify-between pt-2 border-t border-slate-800">
                 <button
                   type="button"
@@ -2440,6 +2468,21 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
           </div>
         </div>
       )}
+
+      {/* Botonera Dashboard Config Modal */}
+      <BotoneraDashboardConfigModal
+        isOpen={isDashConfigOpen}
+        onClose={() => setIsDashConfigOpen(false)}
+        button={editingButton}
+        onSave={(buttonId, config) => {
+          if (editingButton) {
+            setEditingButton({
+              ...editingButton,
+              dashboardConfig: config,
+            });
+          }
+        }}
+      />
     </div>
   );
 };

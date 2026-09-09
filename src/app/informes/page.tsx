@@ -6,7 +6,7 @@ import Link from 'next/link';
 
 export default function InformesPage() {
   return (
-    <div className="p-12 max-w-xl mx-auto text-center space-y-4">
+    <div className="p-6 sm:p-12 max-w-xl mx-auto text-center space-y-4">
       <div className="w-16 h-16 rounded-2xl bg-blue-500/10 text-blue-400 border border-blue-500/20 flex items-center justify-center mx-auto">
         <FileText className="w-8 h-8" />
       </div>

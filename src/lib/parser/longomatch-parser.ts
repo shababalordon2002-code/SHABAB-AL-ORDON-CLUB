@@ -136,7 +136,12 @@ export async function parseLongoMatchXML(
 
     const start = startAttr !== null ? parseFloat(startAttr) : undefined;
     const stop = stopAttr !== null ? parseFloat(stopAttr) : undefined;
-    const period = periodAttr !== null ? parseInt(periodAttr, 10) : 1;
+    const period =
+      periodAttr !== null
+        ? parseInt(periodAttr, 10)
+        : start !== undefined && start >= 2700
+        ? 2
+        : 1;
     const x = xAttr !== null ? parseFloat(xAttr) : undefined;
     const y = yAttr !== null ? parseFloat(yAttr) : undefined;
     const end_x = endXAttr !== null ? parseFloat(endXAttr) : undefined;

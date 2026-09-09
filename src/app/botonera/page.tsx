@@ -15,6 +15,7 @@ import {
 import { useAuth } from '@/components/providers/AuthProvider';
 import { Match, Player, NormalizedEvent, BotoneraTemplate, BotoneraButton, BotoneraProjectVideoType, MatchAnalysis } from '@/types';
 import { setRecordingLocked } from '@/lib/recording-lock';
+import { calculateEventVideoTime } from '@/lib/analytics/video-utils';
 
 import { BotoneraHeader } from '@/components/botonera/BotoneraHeader';
 import { BotoneraPitchCanvas } from '@/components/botonera/BotoneraPitchCanvas';
@@ -1353,26 +1354,28 @@ export default function BotoneraPage() {
   };
 
   /**
-   * Seeks the video to (periodOffset + eventMatchTimestamp - 12s).
-   * Called when the user clicks the ▶ play button on an event row in the Feed.
-   * Now opens in a POP-OUT window so the live tagging video is not disrupted.
+   * Seeks the video to (periodOffset + eventSecondsInPeriod - 12s) and opens a centered pop-up window.
+   * Called when the analyst clicks an event row in the Feed/Stats or an element in the Campograma.
    */
   const handleSeekToEvent = (evt: NormalizedEvent) => {
-    const evtPeriod = evt.period ?? 1;
-    const offset = periodVideoOffsets[evtPeriod] ?? 0;
-    const matchTimestamp = evt.timestamp ?? 0;
-    const evtBase = PERIOD_BASE_SECONDS[evtPeriod] ?? 0;
-    const targetVideoTime = Math.max(0, offset + (matchTimestamp - evtBase) - 12);
+    const targetVideoTime = calculateEventVideoTime(evt, selectedMatch || undefined, periodVideoOffsets, 12);
+    const matchTimestamp = evt.timestamp ?? (evt.minute !== null ? evt.minute * 60 + (evt.second || 0) : 0);
 
-    if (videoType === 'local' && videoElementRef.current?.src) {
-      const src = videoElementRef.current.src;
-      const win = window.open('', '_blank', getCenteredPopUpFeatures(960, 560));
+    // 1. Move embedded/slaved player to the target clip time
+    seekVideoTo(targetVideoTime, true);
+
+    // 2. Open centered pop-up window so the analyst can view the clip in the center of the screen
+    const clipTitle = `Revisión: ${evt.category} - ${evt.player_name || 'Jugador'} (${formatTime(matchTimestamp)})`;
+
+    if (videoType === 'local' && (localObjectUrl || videoElementRef.current?.src)) {
+      const src = localObjectUrl || videoElementRef.current?.src;
+      const win = window.open('', 'sao_clip_player', getCenteredPopUpFeatures(960, 560));
       if (win) {
         win.document.write(`
           <!doctype html>
           <html>
             <head>
-              <title>Revisión Evento: ${evt.category}</title>
+              <title>${clipTitle}</title>
               <style>
                 html, body { margin:0; padding:0; background:#000; height:100%; overflow:hidden; }
                 video { width:100%; height:100%; object-fit:contain; background:#000; }
@@ -1382,8 +1385,9 @@ export default function BotoneraPage() {
               <video id="v" src="${src}" controls autoplay></video>
               <script>
                 const v = document.getElementById('v');
-                v.currentTime = ${targetVideoTime};
-                v.addEventListener('loadedmetadata', () => { v.currentTime = ${targetVideoTime}; });
+                const startAt = ${targetVideoTime};
+                v.currentTime = startAt;
+                v.addEventListener('loadedmetadata', () => { v.currentTime = startAt; });
               </script>
             </body>
           </html>
@@ -1391,14 +1395,15 @@ export default function BotoneraPage() {
         win.document.close();
       }
     } else if (videoType === 'link' && videoUrl) {
-      const embedUrl = new URL(toEmbedUrl(videoUrl));
-      embedUrl.searchParams.set('start', Math.floor(targetVideoTime).toString());
-      embedUrl.searchParams.set('autoplay', '1');
-      window.open(embedUrl.toString(), '_blank', getCenteredPopUpFeatures(960, 560));
-    } else {
-      alert(
-        `Para buscar este evento en el vídeo, rebobina a ${Math.floor(targetVideoTime / 60)}:${String(Math.floor(targetVideoTime % 60)).padStart(2, '0')} del vídeo.`
-      );
+      try {
+        const embedUrl = new URL(toEmbedUrl(videoUrl));
+        embedUrl.searchParams.set('start', Math.floor(targetVideoTime).toString());
+        embedUrl.searchParams.set('autoplay', '1');
+        window.open(embedUrl.toString(), 'sao_clip_player', getCenteredPopUpFeatures(960, 560));
+      } catch {
+        // Fallback for non-standard video URLs
+        window.open(videoUrl, 'sao_clip_player', getCenteredPopUpFeatures(960, 560));
+      }
     }
   };
 
@@ -1598,6 +1603,8 @@ export default function BotoneraPage() {
       p1_video_start_time: periodVideoOffsets[1] || null,
       p2_video_start_time: periodVideoOffsets[2] || null,
       botonera_template_id: template?.id || null,
+      home_lineup: targetMatch?.home_lineup || selectedMatch?.home_lineup || null,
+      away_lineup: targetMatch?.away_lineup || selectedMatch?.away_lineup || null,
       events: normalizedEvts,
       created_at: existingObj?.created_at || new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -1670,9 +1677,9 @@ export default function BotoneraPage() {
   const selectedMatch = matches.find((m) => m.id === selectedMatchId);
 
   return (
-    <div className="-m-6 px-4 py-4 space-y-4 w-[calc(100%+3rem)] min-h-screen">
+    <div className="-m-6 px-2 sm:px-4 py-4 space-y-4 w-[calc(100%+3rem)] min-h-screen overflow-x-hidden">
       {/* Top Header Controls Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-900/80 p-4 rounded-2xl border border-slate-800 backdrop-blur-md">
+      <div className="flex flex-wrap items-center justify-between gap-3 sm:gap-4 bg-slate-900/80 p-3 sm:p-4 rounded-2xl border border-slate-800 backdrop-blur-md">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-amber-500 flex items-center justify-center shadow-lg shadow-emerald-950/50">
             <Flame className="w-5 h-5 text-slate-950 fill-amber-300" />
@@ -1707,22 +1714,24 @@ export default function BotoneraPage() {
 
         {/* DUAL MODE TOGGLE BUTTONS (only shown once an operating mode has been chosen) */}
         {pageMode !== null && (
-          <div className="flex items-center gap-2.5">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-2.5 w-full lg:w-auto">
             {pageMode === 'analysis' && isSessionConfigured && (
               <>
                 <button
                   onClick={() => setIsEditPanelOpen(true)}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 transition-all"
+                  className="flex items-center gap-2 px-3 py-2 sm:px-4 sm:py-2.5 rounded-xl text-xs font-black bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 transition-all"
                 >
                   <Pencil className="w-4 h-4" />
-                  <span>✏️ EDITAR BOTONERA</span>
+                  <span className="hidden sm:inline">✏️ EDITAR BOTONERA</span>
+                  <span className="sm:hidden">✏️</span>
                 </button>
                 <button
                   onClick={handleEndSession}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-extrabold bg-emerald-500 hover:bg-emerald-400 text-slate-950 transition-all shadow-md shadow-emerald-500/20"
+                  className="flex items-center gap-2 px-3 py-2 sm:px-4 sm:py-2.5 rounded-xl text-xs font-extrabold bg-emerald-500 hover:bg-emerald-400 text-slate-950 transition-all shadow-md shadow-emerald-500/20"
                 >
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>FINALIZAR Y GUARDAR REGISTRO</span>
+                  <span className="hidden sm:inline">FINALIZAR Y GUARDAR REGISTRO</span>
+                  <span className="sm:hidden">FINALIZAR</span>
                 </button>
               </>
             )}
@@ -1730,31 +1739,32 @@ export default function BotoneraPage() {
             {!isSessionConfigured && (
               <button
                 onClick={() => setPageMode(null)}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all"
+                className="flex items-center gap-2 px-3 py-2 sm:px-4 sm:py-2.5 rounded-xl text-xs font-black bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all"
               >
                 <Home className="w-4 h-4" />
                 <span>Volver a Elegir</span>
               </button>
             )}
 
-            <div className="flex bg-slate-950 p-1.5 rounded-2xl border border-slate-800 shadow-inner">
+            <div className="flex flex-wrap bg-slate-950 p-1.5 rounded-2xl border border-slate-800 shadow-inner">
               <button
                 onClick={handleStartNewRegistration}
-                className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-black transition-all ${
+                className={`flex items-center gap-2 px-3 py-2 sm:px-5 sm:py-2 rounded-xl text-xs font-black transition-all ${
                   pageMode === 'analysis'
                     ? 'bg-emerald-600 text-slate-950 shadow-lg shadow-emerald-950/40'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
                 <PlayCircle className="w-4 h-4 fill-slate-950" />
-                <span>⚡ MODO ANÁLISIS (REGISTRAR PARTIDO)</span>
+                <span className="hidden md:inline">⚡ MODO ANÁLISIS (REGISTRAR PARTIDO)</span>
+                <span className="md:hidden">⚡ ANÁLISIS</span>
               </button>
 
               <button
                 onClick={() => setPageMode('edit')}
                 disabled={isSessionConfigured}
                 title={isSessionConfigured ? 'Finaliza el registro en curso para acceder al diseño de pizarras' : undefined}
-                className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-black transition-all ${
+                className={`flex items-center gap-2 px-3 py-2 sm:px-5 sm:py-2 rounded-xl text-xs font-black transition-all ${
                   pageMode === 'edit'
                     ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-950/40'
                     : isSessionConfigured
@@ -1763,7 +1773,8 @@ export default function BotoneraPage() {
                 }`}
               >
                 <Sliders className="w-4 h-4 text-slate-950" />
-                <span>🎨 MODO CONFIGURACIÓN (DISEÑAR PIZARRAS)</span>
+                <span className="hidden md:inline">🎨 MODO CONFIGURACIÓN (DISEÑAR PIZARRAS)</span>
+                <span className="md:hidden">🎨 PIZARRAS</span>
               </button>
             </div>
           </div>
@@ -1995,12 +2006,25 @@ export default function BotoneraPage() {
             events={events}
             timerSeconds={timerSeconds}
             period={period}
-            onUpdateLineup={(team, _config, updatedPlayers) => {
+            onAddEvent={(newEvt) => {
+              setEvents((prev) => [...prev, newEvt]);
+            }}
+            onUpdateLineup={(team, config, updatedPlayers) => {
               const teamName = team === 'home' ? (selectedMatch?.home_team || 'Equipo Local') : (selectedMatch?.away_team || 'Equipo Visitante');
               setPlayers((prev) => [
                 ...prev.filter((p) => p.team_name !== teamName),
                 ...updatedPlayers,
               ]);
+              const targetMatch = matches.find((m) => m.id === selectedMatchId) || selectedMatch;
+              if (targetMatch) {
+                const updatedMatch = {
+                  ...targetMatch,
+                  [team === 'home' ? 'home_lineup' : 'away_lineup']: config,
+                };
+                dbStore.saveMatch(updatedMatch);
+                setMatches(dbStore.getMatches());
+              }
+              updatedPlayers.forEach((p) => dbStore.savePlayer(p));
             }}
           />
 
@@ -2013,10 +2037,10 @@ export default function BotoneraPage() {
              * │  Feed Eventos (abajo)   │  Estadísticas            │
              * └─────────────────────────┴──────────────────────────┘
              */
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-5 items-stretch">
 
               {/* ── COLUMNA IZQUIERDA (7/12): Vídeo + Feed de Eventos ── */}
-              <div className="lg:col-span-7 flex flex-col gap-5 h-full">
+              <div className="lg:col-span-7 flex flex-col gap-4 sm:gap-5 h-full">
                 <BotoneraVideoPlayer
                   videoType={videoType}
                   videoUrl={videoUrl}

@@ -243,31 +243,31 @@ export default function AdminUsuariosPage() {
 
       {/* Alert Notifications */}
       {error && (
-        <div className="p-4 bg-red-950/60 border border-red-800/80 rounded-xl flex items-center justify-between text-red-200 text-sm">
-          <div className="flex items-center gap-3">
+        <div className="p-4 bg-red-950/60 border border-red-800/80 rounded-xl flex items-start sm:items-center justify-between gap-3 text-red-200 text-sm">
+          <div className="flex items-start sm:items-center gap-3">
             <AlertCircle className="w-5 h-5 text-red-400 shrink-0" />
             <span>{error}</span>
           </div>
-          <button onClick={() => setError(null)} className="text-red-400 hover:text-red-200">
+          <button onClick={() => setError(null)} className="text-red-400 hover:text-red-200 shrink-0">
             <X className="w-4 h-4" />
           </button>
         </div>
       )}
 
       {success && (
-        <div className="p-4 bg-emerald-950/60 border border-emerald-800/80 rounded-xl flex items-center justify-between text-emerald-200 text-sm">
-          <div className="flex items-center gap-3">
+        <div className="p-4 bg-emerald-950/60 border border-emerald-800/80 rounded-xl flex items-start sm:items-center justify-between gap-3 text-emerald-200 text-sm">
+          <div className="flex items-start sm:items-center gap-3">
             <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
             <span>{success}</span>
           </div>
-          <button onClick={() => setSuccess(null)} className="text-emerald-400 hover:text-emerald-200">
+          <button onClick={() => setSuccess(null)} className="text-emerald-400 hover:text-emerald-200 shrink-0">
             <X className="w-4 h-4" />
           </button>
         </div>
       )}
 
       {/* Summary KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
         <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-4 flex items-center gap-4">
           <div className="p-3 bg-slate-800 rounded-lg text-slate-300">
             <Users className="w-6 h-6" />
@@ -310,9 +310,9 @@ export default function AdminUsuariosPage() {
       </div>
 
       {/* SECTION: Invite & Registration Links */}
-      <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 space-y-4 shadow-xl">
+      <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4 shadow-xl">
         <div className="flex items-center gap-2">
-          <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400">
+          <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 shrink-0">
             <LinkIcon className="w-5 h-5" />
           </div>
           <div>
@@ -329,7 +329,7 @@ export default function AdminUsuariosPage() {
           {/* 1. Invite Link for Analysts */}
           <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3 flex flex-col justify-between">
             <div className="space-y-1">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:justify-between">
                 <span className="flex items-center gap-1.5 font-bold text-sm text-blue-400">
                   <ShieldCheck className="w-4 h-4" />
                   <span>Enlace para ANALISTAS DEPORTIVOS</span>
@@ -352,7 +352,7 @@ export default function AdminUsuariosPage() {
                 />
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                 <button
                   onClick={() => handleCopyLink('analyst')}
                   className="flex-1 py-2 px-3 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer shadow"
@@ -376,7 +376,7 @@ export default function AdminUsuariosPage() {
           {/* 2. Invite Link for Viewers */}
           <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3 flex flex-col justify-between">
             <div className="space-y-1">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:justify-between">
                 <span className="flex items-center gap-1.5 font-bold text-sm text-emerald-400">
                   <Eye className="w-4 h-4" />
                   <span>Enlace para VISORES (Solo Lectura)</span>
@@ -399,7 +399,7 @@ export default function AdminUsuariosPage() {
                 />
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                 <button
                   onClick={() => handleCopyLink('viewer')}
                   className="flex-1 py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-black text-xs flex items-center justify-center gap-1.5 transition cursor-pointer shadow"
@@ -423,8 +423,8 @@ export default function AdminUsuariosPage() {
       </div>
 
       {/* Filter and Table Control */}
-      <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 space-y-4">
-        <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
+      <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4">
+        <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-4">
           <div className="relative w-full sm:w-80">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
             <input
@@ -566,8 +566,8 @@ export default function AdminUsuariosPage() {
 
       {/* Modal: Create User */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-5">
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-4 sm:p-6 shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto my-4">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <UserCheck className="w-5 h-5 text-amber-400" />

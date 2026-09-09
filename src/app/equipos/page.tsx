@@ -30,7 +30,7 @@ export default function EquiposPage() {
         </p>
       </div>
 
-      <div className="relative max-w-sm">
+      <div className="relative w-full sm:max-w-sm">
         <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
         <input
           type="text"
@@ -41,7 +41,7 @@ export default function EquiposPage() {
         />
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {filteredTeams.map((t) => (
           <div key={t.id} className="p-5 rounded-xl bg-slate-900 border border-slate-800 space-y-3 card-hover-effect">
             <div className="flex items-center justify-between">

@@ -54,6 +54,13 @@ export default function PartidosPage() {
     Promise.all([
       dbStore.syncAnalysesFromSupabase(),
     ]).then(loadMatches).catch(() => {});
+
+    // Auto-refresh: re-sync matches/analyses every 5 min so counts and
+    // statuses stay live while analysts are tagging in Botonera.
+    const interval = setInterval(() => {
+      Promise.all([dbStore.syncAnalysesFromSupabase()]).then(loadMatches).catch(() => {});
+    }, 5 * 60 * 1000);
+    return () => clearInterval(interval);
   }, []);
 
   const handleScrapeFlashscore = async () => {
@@ -126,11 +133,11 @@ export default function PartidosPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
           <button
             onClick={handleScrapeFlashscore}
             disabled={isScraping}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-bold text-xs shadow-md shadow-sky-950/40 transition-all cursor-pointer"
+            className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-bold text-xs shadow-md shadow-sky-950/40 transition-all cursor-pointer"
           >
             <Globe className={`w-4 h-4 ${isScraping ? 'animate-spin' : ''}`} />
             <span>{isScraping ? 'Sincronizando de Flashscore...' : 'Sincronizar Flashscore (Resultados)'}</span>
@@ -138,7 +145,7 @@ export default function PartidosPage() {
 
           <Link
             href="/importar-xml"
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-red-600 to-amber-500 hover:from-red-500 hover:to-amber-400 text-slate-950 font-bold text-xs shadow-md shadow-red-950/40 transition-all"
+            className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-red-600 to-amber-500 hover:from-red-500 hover:to-amber-400 text-slate-950 font-bold text-xs shadow-md shadow-red-950/40 transition-all"
           >
             <UploadCloud className="w-4 h-4 stroke-[2.5]" />
             <span>Importar XML</span>
@@ -148,9 +155,9 @@ export default function PartidosPage() {
 
       {/* Scrape Notification Banner */}
       {scrapeMessage && (
-        <div className={`p-4 rounded-xl border flex items-center justify-between text-xs font-medium ${
-          scrapeMessage.includes('Error') 
-            ? 'bg-rose-950/40 border-rose-800/80 text-rose-300' 
+        <div className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center gap-2 sm:justify-between text-xs font-medium ${
+          scrapeMessage.includes('Error')
+            ? 'bg-rose-950/40 border-rose-800/80 text-rose-300'
             : 'bg-emerald-950/40 border-emerald-800/80 text-emerald-300'
         }`}>
           <div className="flex items-center gap-2.5">
@@ -185,7 +192,7 @@ export default function PartidosPage() {
         </div>
 
         {/* Dropdown Filters */}
-        <div className="flex items-center gap-3 w-full md:w-auto">
+        <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
           <div className="flex items-center gap-1.5 text-xs text-slate-400">
             <Filter className="w-3.5 h-3.5" />
             <span>Filtros:</span>
@@ -194,7 +201,7 @@ export default function PartidosPage() {
           <select
             value={statusFilter}
             onChange={e => setStatusFilter(e.target.value)}
-            className="py-1.5 px-3 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-amber-500"
+            className="py-1.5 px-3 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-amber-500 flex-1 sm:flex-none min-w-0"
           >
             <option value="todos">Todos los estados</option>
             <option value="Finalizado">Finalizados</option>
@@ -204,7 +211,7 @@ export default function PartidosPage() {
           <select
             value={importFilter}
             onChange={e => setImportFilter(e.target.value)}
-            className="py-1.5 px-3 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-amber-500"
+            className="py-1.5 px-3 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-amber-500 flex-1 sm:flex-none min-w-0"
           >
             <option value="todos">Estado XML (Todos)</option>
             <option value="XML Importado">XML Importado</option>

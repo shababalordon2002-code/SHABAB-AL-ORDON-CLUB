@@ -70,6 +70,34 @@ export function toEmbedUrl(rawUrl: string): string {
   }
 }
 
+/**
+ * Calculates features string for window.open to ensure the pop-out window
+ * is centered on the user's active monitor screen.
+ */
+export function getCenteredPopUpFeatures(w = 960, h = 560) {
+  if (typeof window === 'undefined') {
+    return `width=${w},height=${h}`;
+  }
+  const screenLeft = window.screenLeft !== undefined ? window.screenLeft : window.screenX;
+  const screenTop = window.screenTop !== undefined ? window.screenTop : window.screenY;
+
+  const screenWidth = window.innerWidth
+    ? window.innerWidth
+    : document.documentElement.clientWidth
+    ? document.documentElement.clientWidth
+    : window.screen.width;
+  const screenHeight = window.innerHeight
+    ? window.innerHeight
+    : document.documentElement.clientHeight
+    ? document.documentElement.clientHeight
+    : window.screen.height;
+
+  const left = Math.max(0, Math.round(screenLeft + (screenWidth - w) / 2));
+  const top = Math.max(0, Math.round(screenTop + (screenHeight - h) / 2));
+
+  return `width=${w},height=${h},top=${top},left=${left},menubar=no,toolbar=no,location=no,resizable=yes`;
+}
+
 export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
   videoType,
   videoUrl,
@@ -218,7 +246,7 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
   /* ── Sincronización vídeo ↔ partido ──────────────────────────────────
      Muestra el minutaje del vídeo registrado para cada parte (editable a mano) */
   const syncBar = (
-    <div className="px-3 py-2 bg-slate-950/90 border-b border-slate-800/80 space-y-1.5">
+    <div className="px-2 sm:px-3 py-2 bg-slate-950/90 border-b border-slate-800/80 space-y-1.5 overflow-x-auto">
       <div className="flex items-center gap-1.5">
         <Clock className="w-3.5 h-3.5 text-emerald-400" />
         <span className="text-xs font-black text-slate-200 uppercase tracking-wider">
@@ -326,14 +354,14 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
   if (isPoppedOut) {
     return (
       <div className="rounded-2xl bg-slate-900 border border-amber-500/30 shadow-xl overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 bg-amber-500/10">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-3 sm:px-4 py-2.5 bg-amber-500/10">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-300 shrink-0">
               <ExternalLink className="w-4 h-4" />
             </div>
             <div className="min-w-0">
               <div className="font-bold text-amber-200 text-xs">VÍDEO EN VENTANA EXTERNA</div>
-              <div className="text-[11px] text-amber-400/80">
+              <div className="text-[11px] text-amber-400/80 hidden sm:block">
                 La página aprovecha todo el ancho para la botonera. El crono sigue atado a esa ventana.
               </div>
             </div>
@@ -345,7 +373,8 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
             className="px-3.5 py-2 rounded-xl bg-amber-500 text-slate-950 font-black text-xs hover:bg-amber-400 transition flex items-center gap-1.5 shrink-0"
           >
             <ArrowLeftRight className="w-4 h-4" />
-            <span>Acoplar Vídeo a la Página</span>
+            <span className="hidden sm:inline">Acoplar Vídeo a la Página</span>
+            <span className="sm:hidden">Acoplar</span>
           </button>
         </div>
 
@@ -356,13 +385,13 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
 
   return (
     <div className="rounded-2xl bg-slate-900 border border-slate-800 shadow-xl overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-800 bg-slate-950/60">
-        <div className="flex items-center gap-2 text-xs font-bold text-slate-200">
-          <VideoIcon className="w-4 h-4 text-emerald-400" />
-          <span>{videoType === 'local' ? (videoSourceName || 'Vídeo Local') : 'Vídeo Enlace (YouTube)'}</span>
+      <div className="flex flex-wrap items-center justify-between gap-2 px-3 sm:px-4 py-2.5 border-b border-slate-800 bg-slate-950/60">
+        <div className="flex items-center gap-2 text-xs font-bold text-slate-200 min-w-0">
+          <VideoIcon className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span className="truncate">{videoType === 'local' ? (videoSourceName || 'Vídeo Local') : 'Vídeo Enlace (YouTube)'}</span>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           {onEditVideoSettings && (
             <button
               onClick={onEditVideoSettings}
@@ -370,7 +399,7 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold transition cursor-pointer"
             >
               <Pencil className="w-3.5 h-3.5" />
-              <span>Editar Vídeo</span>
+              <span className="hidden sm:inline">Editar Vídeo</span>
             </button>
           )}
 
@@ -390,7 +419,7 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-amber-500/20 text-slate-300 hover:text-amber-300 border border-slate-700 hover:border-amber-500/40 text-[11px] font-semibold transition"
           >
             <ExternalLink className="w-3.5 h-3.5" />
-            <span>Sacar Ventana</span>
+            <span className="hidden sm:inline">Sacar Ventana</span>
           </button>
 
           <button

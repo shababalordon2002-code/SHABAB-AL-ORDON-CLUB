@@ -29,8 +29,24 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
   onSave,
   onCancel,
 }) => {
-  // Side-docking state (false by default so event modal appears centered in screen)
-  const [isSideDocked, setIsSideDocked] = useState<boolean>(false);
+  // Side-docking state (defaults to true so the modal opens docked to the right side without covering the video)
+  const [isSideDocked, setIsSideDocked] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('sao_botonera_side_docked');
+      if (saved !== null) return saved === 'true';
+    }
+    return true;
+  });
+
+  const toggleSideDocked = () => {
+    setIsSideDocked((prev) => {
+      const next = !prev;
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('sao_botonera_side_docked', String(next));
+      }
+      return next;
+    });
+  };
 
   // Descriptors state
   const [selectedDescriptors, setSelectedDescriptors] = useState<string[]>([...initialGlobalDescriptors]);
@@ -146,14 +162,14 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
       }`}
     >
       <div
-        className={`bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl flex flex-col overflow-hidden pointer-events-auto transition-all duration-300 ${
+        className={`bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl flex flex-col overflow-hidden pointer-events-auto transition-all duration-300 max-w-[95vw] ${
           isSideDocked
-            ? 'w-full max-w-xl lg:max-w-2xl xl:max-w-3xl max-h-[96vh] h-full ring-1 ring-amber-500/30'
-            : 'w-full max-w-4xl max-h-[90vh]'
+            ? 'w-full sm:max-w-xl lg:max-w-2xl xl:max-w-3xl max-h-[96vh] h-full ring-1 ring-amber-500/30'
+            : 'w-full sm:max-w-4xl max-h-[90vh]'
         }`}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-800 bg-slate-950/70 shrink-0">
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3 sm:px-5 py-3.5 border-b border-slate-800 bg-slate-950/70 shrink-0">
           <div>
             <div className="flex items-center gap-2">
               <h3 className="font-black text-base md:text-lg text-white flex items-center gap-2">
@@ -178,7 +194,7 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
             {/* Dock/Center position toggle button */}
             <button
               type="button"
-              onClick={() => setIsSideDocked(!isSideDocked)}
+              onClick={toggleSideDocked}
               className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 border ${
                 isSideDocked
                   ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
@@ -200,7 +216,7 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
         <div className="flex-1 flex flex-col md:flex-row overflow-hidden divide-y md:divide-y-0 md:divide-x divide-slate-800">
           
           {/* Left Column: Team Selection, Player Selection & Descriptors */}
-          <div className={`p-6 flex flex-col gap-5 overflow-y-auto ${hasPitch ? 'md:w-1/2' : 'w-full'}`}>
+          <div className={`p-3 sm:p-6 flex flex-col gap-5 overflow-y-auto ${hasPitch ? 'md:w-1/2' : 'w-full'}`}>
             
             {/* 1. SELECCIÓN DE EQUIPO */}
             {showTeamSelection && (
@@ -451,7 +467,7 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
 
           {/* Right Column: Pitch Canvas */}
           {hasPitch && (
-            <div className={`p-6 bg-slate-950 flex flex-col items-center justify-center ${hasDescriptors || showPlayerSelection ? 'md:w-1/2' : 'w-full'}`}>
+            <div className={`p-3 sm:p-6 bg-slate-950 flex flex-col items-center justify-center ${hasDescriptors || showPlayerSelection ? 'md:w-1/2' : 'w-full'}`}>
               <div className="w-full">
                 <BotoneraPitchCanvas
                   startX={startX}
@@ -470,7 +486,7 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
         </div>
 
         {/* Footer & Validation Status */}
-        <div className="px-6 py-4 border-t border-slate-800 bg-slate-950/80 flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div className="px-3 sm:px-6 py-4 border-t border-slate-800 bg-slate-950/80 flex flex-col sm:flex-row items-center justify-between gap-3">
           {/* Validation Error Alerts */}
           {!isValid ? (
             <div className="text-xs text-amber-400 font-semibold flex items-center gap-1.5">

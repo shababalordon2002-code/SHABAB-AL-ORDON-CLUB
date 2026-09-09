@@ -95,13 +95,21 @@ export default function DashboardsPage() {
     load();
     setLoading(false);
 
-    Promise.all([
-      dbStore.syncDashboardsFromSupabase(),
-      dbStore.syncAnalysesFromSupabase(),
-      dbStore.syncBotoneraTemplatesFromSupabase(),
-    ])
-      .then(load)
-      .catch(() => {});
+    const syncAll = () =>
+      Promise.all([
+        dbStore.syncDashboardsFromSupabase(),
+        dbStore.syncAnalysesFromSupabase(),
+        dbStore.syncBotoneraTemplatesFromSupabase(),
+      ])
+        .then(load)
+        .catch(() => {});
+
+    syncAll();
+
+    // Auto-refresh: re-pull matches/analyses/dashboards every 5 min so viewers
+    // see events registered live by analysts in Botonera without reloading.
+    const interval = setInterval(syncAll, 5 * 60 * 1000);
+    return () => clearInterval(interval);
   }, []);
 
   // Poll Active Live Session Status every 3 seconds for real-time live tagging updates
@@ -157,7 +165,7 @@ export default function DashboardsPage() {
   };
 
   return (
-    <div className="p-5 sm:p-7 space-y-6 max-w-[1500px] mx-auto">
+    <div className="p-3 sm:p-5 md:p-7 space-y-6 max-w-[1500px] mx-auto">
       {/* Top Bar Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-start gap-3">
@@ -166,7 +174,7 @@ export default function DashboardsPage() {
           </div>
           <div>
             <h1 className="text-lg font-extrabold text-white tracking-tight flex items-center gap-2">
-              <span>Dashboards por partido</span>
+              <span>Dashboards por Partido</span>
               {isAdmin && (
                 <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">
                   Modo Admin
@@ -174,8 +182,7 @@ export default function DashboardsPage() {
               )}
             </h1>
             <p className="text-xs text-slate-400 max-w-2xl leading-relaxed mt-0.5">
-              Un dashboard por partido analizado. Cada pizarra se edita a tu gusto: eliges la botonera, sus campos y
-              descriptores, y montas las gráficas, campogramas y tablas que quieras.
+              Dashboard Oficial por Partido. Muestra la alineación táctica de ambos equipos, la comparativa evento a evento de la botonera y la gráfica evolutiva temporal. Haz clic en cualquier partido o evento para abrir su análisis táctico detallado.
             </p>
           </div>
         </div>
@@ -195,16 +202,13 @@ export default function DashboardsPage() {
               className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs shadow-md transition-all flex items-center gap-2 cursor-pointer"
             >
               <Settings className="w-4 h-4 stroke-[2.5]" />
-              <span>⚙️ Personalizar Vista Dashboard (Admin)</span>
+              <span>⚙️ Configuración Global (Admin)</span>
             </button>
           )}
 
           <div className="flex items-center gap-2 text-[11px]">
             <span className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300 font-mono">
               {blocks.length} partidos
-            </span>
-            <span className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-emerald-400 font-mono">
-              {totalDashboards} dashboards
             </span>
           </div>
         </div>
@@ -216,7 +220,7 @@ export default function DashboardsPage() {
           <h2 className="text-sm font-bold text-slate-300">Todavía no hay partidos con datos analizados</h2>
           <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
             Registra eventos con la Botonera Live o importa un XML de LongoMatch. En cuanto un partido tenga eventos,
-            aparecerá aquí para construir su dashboard.
+            aparecerá aquí para visualizar su dashboard.
           </p>
           <div className="flex items-center justify-center gap-2 pt-1">
             <Link
@@ -272,8 +276,8 @@ export default function DashboardsPage() {
           const handleCardClick = () => {
             if (block.dashboards.length > 0) {
               router.push(`/dashboards/${block.dashboards[0].id}`);
-            } else if (isAdmin) {
-              handleQuickCreate(block);
+            } else {
+              router.push(`/dashboards/${block.match.id}`);
             }
           };
 

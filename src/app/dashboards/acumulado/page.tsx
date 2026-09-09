@@ -165,9 +165,9 @@ function CumulativeDashboardContent() {
             <Trophy className="w-3.5 h-3.5" />
             <span>Balance histórico</span>
           </div>
-          <div className="flex items-center gap-6">
+          <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-6">
             <TeamLogo teamName="Shabab Al Ordon Club" size={64} />
-            <div className="flex items-center gap-4 sm:gap-8">
+            <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-8">
               <Stat label="PJ" value={record.played} />
               <Stat label="G" value={record.w} accent="text-emerald-400" />
               <Stat label="E" value={record.d} accent="text-amber-400" />

@@ -70,12 +70,12 @@ export const PitchViewer: React.FC<PitchViewerProps> = ({
           {isVertical ? (
             <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 font-bold text-[10px] uppercase tracking-wider flex items-center gap-1">
               <ArrowUp className="w-3 h-3 text-emerald-400" />
-              <span>Ataque Hacia Arriba</span>
+              <span>ATAQUE</span>
             </span>
           ) : (
             <span className="px-2.5 py-0.5 rounded-full bg-blue-500/10 text-blue-300 border border-blue-500/30 font-bold text-[10px] uppercase tracking-wider flex items-center gap-1">
               <ArrowRight className="w-3 h-3 text-blue-400" />
-              <span>Ataque De Izquierda a Derecha</span>
+              <span>ATAQUE</span>
             </span>
           )}
         </div>
@@ -103,14 +103,15 @@ export const PitchViewer: React.FC<PitchViewerProps> = ({
 
       {/* Main Pitch Container */}
       <div
-        className={`relative w-full mx-auto bg-emerald-950 rounded-2xl border-2 border-emerald-800/80 shadow-2xl select-none group ${
-          isVertical ? 'max-w-md max-h-[580px] aspect-[68/105]' : 'aspect-[105/68]'
+        className={`relative w-full mx-auto bg-emerald-950 rounded-2xl border-2 border-emerald-800/80 shadow-2xl select-none group flex ${
+          isVertical ? 'flex-row max-w-md max-h-[580px]' : 'flex-col'
         }`}
       >
-        {/* Tactical Grass Stripes Overlay (Inner clipped) */}
-        <div className="absolute inset-0 rounded-[14px] overflow-hidden pointer-events-none">
-          <div className="absolute inset-0 bg-[linear-gradient(to_bottom,#022c22_0%,#064e3b_10%,#022c22_20%,#064e3b_30%,#022c22_40%,#064e3b_50%,#022c22_60%,#064e3b_70%,#022c22_80%,#064e3b_90%,#022c22_100%)] opacity-90"></div>
-        </div>
+        <div className={`relative flex-1 ${isVertical ? 'aspect-[68/105]' : 'aspect-[105/68]'}`}>
+          {/* Tactical Grass Stripes Overlay (Inner clipped) */}
+          <div className="absolute inset-0 rounded-[14px] overflow-hidden pointer-events-none">
+            <div className="absolute inset-0 bg-[linear-gradient(to_bottom,#022c22_0%,#064e3b_10%,#022c22_20%,#064e3b_30%,#022c22_40%,#064e3b_50%,#022c22_60%,#064e3b_70%,#022c22_80%,#064e3b_90%,#022c22_100%)] opacity-90"></div>
+          </div>
 
         <svg
           viewBox={`0 0 ${width} ${height}`}
@@ -372,6 +373,24 @@ export const PitchViewer: React.FC<PitchViewerProps> = ({
                 </div>
               );
             })()}
+          </div>
+        )}
+        </div>
+
+        {/* Lateral Attack Indicator Strip */}
+        {isVertical ? (
+          <div className="w-6 sm:w-7 bg-slate-950/90 border-l border-emerald-800/60 flex flex-col items-center justify-center py-4 gap-2 text-emerald-300 select-none pointer-events-none shrink-0 z-20 rounded-r-[14px]">
+            <ArrowUp className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest text-emerald-300 [writing-mode:vertical-rl] rotate-180">
+              ATAQUE
+            </span>
+          </div>
+        ) : (
+          <div className="h-6 bg-slate-950/90 border-t border-emerald-800/60 flex flex-row items-center justify-center px-4 gap-2 text-emerald-300 select-none pointer-events-none shrink-0 z-20 rounded-b-[14px]">
+            <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest text-emerald-300">
+              ATAQUE
+            </span>
+            <ArrowRight className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
           </div>
         )}
       </div>

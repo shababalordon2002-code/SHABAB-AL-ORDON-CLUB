@@ -59,6 +59,8 @@ export interface Match {
   p1_video_start_time?: number | null; // seconds in video when 1st half starts
   p2_video_start_time?: number | null; // seconds in video when 2nd half starts
   botonera_template_id?: string | null;
+  home_lineup?: TeamLineupConfig | null;
+  away_lineup?: TeamLineupConfig | null;
 }
 
 export interface MatchAnalysis {
@@ -73,6 +75,8 @@ export interface MatchAnalysis {
   p1_video_start_time?: number | null;
   p2_video_start_time?: number | null;
   botonera_template_id?: string | null;
+  home_lineup?: TeamLineupConfig | null;
+  away_lineup?: TeamLineupConfig | null;
   events: NormalizedEvent[];
   created_at: string;
   updated_at: string;
@@ -244,6 +248,13 @@ export interface BotoneraButton {
   teamRequiredMode?: 'none' | 'optional' | 'required'; // 'none' (Desactivado), 'optional' (Opcional), 'required' (Obligatorio)
   descriptors?: string[]; // Predefined flat descriptors (legacy)
   descriptorGroups?: DescriptorGroup[]; // Dynamic Descriptor Groups (Tipo -> Posibilidades)
+  dashboardConfig?: BotoneraButtonDashboardConfig;
+}
+
+export interface BotoneraButtonDashboardConfig {
+  pitchViewType?: PitchRequiredType | 'none';
+  chart1Type?: 'descriptors' | 'outcomes' | 'outcome' | 'players' | 'player' | 'periods' | 'time_half' | 'zones';
+  chart2Type?: 'descriptors' | 'outcomes' | 'outcome' | 'players' | 'player' | 'periods' | 'time_half' | 'zones';
 }
 
 export interface BotoneraTemplate {

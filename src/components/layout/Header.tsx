@@ -2,14 +2,18 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { UploadCloud, Calendar, Radio, LogOut, ShieldCheck, Shield, User as UserIcon } from 'lucide-react';
+import { UploadCloud, Calendar, Radio, LogOut, ShieldCheck, Shield, User as UserIcon, Menu } from 'lucide-react';
 import { usePathname } from 'next/navigation';
 import { dbStore } from '@/lib/store/db-store';
 import { ActiveBotoneraSession } from '@/types';
 import { isRecordingLocked, subscribeRecordingLock } from '@/lib/recording-lock';
 import { useAuth } from '@/components/providers/AuthProvider';
 
-export const Header: React.FC = () => {
+interface HeaderProps {
+  onMenuClick?: () => void;
+}
+
+export const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
   const pathname = usePathname();
   const { user, profile, signOut } = useAuth();
   const [activeSession, setActiveSession] = useState<ActiveBotoneraSession | null>(null);
@@ -75,17 +79,26 @@ export const Header: React.FC = () => {
   const initial = displayName[0]?.toUpperCase() || 'U';
 
   return (
-    <header className="h-16 bg-slate-900/80 border-b border-slate-800/80 px-6 flex items-center justify-between sticky top-0 z-20 backdrop-blur-md">
+    <header className="h-16 bg-slate-900/80 border-b border-slate-800/80 px-3 sm:px-6 flex items-center justify-between sticky top-0 z-20 backdrop-blur-md gap-2">
       {/* Left: Season & Context */}
-      <div className="flex items-center gap-4">
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800/80 border border-slate-700/60 text-xs text-slate-300">
+      <div className="flex items-center gap-2 sm:gap-4 min-w-0 overflow-x-auto">
+        <button
+          type="button"
+          onClick={onMenuClick}
+          className="md:hidden shrink-0 p-2 rounded-lg text-slate-300 hover:text-amber-400 hover:bg-slate-800 transition-colors"
+          aria-label="Abrir menú"
+        >
+          <Menu className="w-5 h-5" />
+        </button>
+
+        <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800/80 border border-slate-700/60 text-xs text-slate-300 shrink-0">
           <Calendar className="w-3.5 h-3.5 text-amber-400" />
           <span className="font-semibold text-slate-200">Temporada 2026/2027</span>
           <span className="text-slate-500">•</span>
           <span className="text-slate-400">Jordan Pro League</span>
         </div>
 
-        <div className="hidden md:flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 text-amber-400 text-[11px] font-semibold border border-amber-500/20">
+        <div className="hidden md:flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 text-amber-400 text-[11px] font-semibold border border-amber-500/20 shrink-0">
           <img src="/logo.png" alt="Shabab Al Ordon Logo" className="w-4 h-4 object-contain" />
           <span>Shabab Al Ordon Club</span>
         </div>
@@ -94,13 +107,14 @@ export const Header: React.FC = () => {
         {activeSession && activeSession.isTimerRunning && (
           <Link
             href="/botonera"
-            className="flex items-center gap-2 px-3 py-1 rounded-xl bg-red-500/20 border border-red-500/40 text-red-300 text-xs font-mono font-bold hover:bg-red-500/30 transition shadow animate-pulse"
+            className="flex items-center gap-2 px-3 py-1 rounded-xl bg-red-500/20 border border-red-500/40 text-red-300 text-xs font-mono font-bold hover:bg-red-500/30 transition shadow animate-pulse shrink-0"
           >
             <Radio className="w-3.5 h-3.5 text-red-400" />
-            <span>
+            <span className="hidden sm:inline">
               🔴 REGISTRO EN DIRECTO ({formatTime(currentSeconds)})
             </span>
-            <span className="text-[10px] font-sans underline font-extrabold text-amber-300 ml-1">
+            <span className="sm:hidden">🔴 {formatTime(currentSeconds)}</span>
+            <span className="hidden lg:inline text-[10px] font-sans underline font-extrabold text-amber-300 ml-1">
               Volver a Botonera ⚡
             </span>
           </Link>
@@ -108,19 +122,19 @@ export const Header: React.FC = () => {
       </div>
 
       {/* Right: Actions */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2 sm:gap-3 shrink-0">
         <Link
           href="/importar-xml"
-          className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-xs shadow-md transition-all bg-gradient-to-r from-red-600 to-amber-500 text-slate-950 hover:from-red-500 hover:to-amber-400 shadow-red-950/50 hover:scale-[1.02] active:scale-[0.98]"
+          className="flex items-center gap-2 px-2.5 sm:px-4 py-2 rounded-lg font-bold text-xs shadow-md transition-all bg-gradient-to-r from-red-600 to-amber-500 text-slate-950 hover:from-red-500 hover:to-amber-400 shadow-red-950/50 hover:scale-[1.02] active:scale-[0.98]"
         >
           <UploadCloud className="w-4 h-4 stroke-[2.5]" />
-          <span>+ Importar XML</span>
+          <span className="hidden sm:inline">+ Importar XML</span>
         </Link>
 
-        <div className="h-6 w-px bg-slate-800 mx-1"></div>
+        <div className="hidden sm:block h-6 w-px bg-slate-800 mx-1"></div>
 
         {/* User Pill / Login Link */}
-        <div className="flex items-center gap-3 pl-1">
+        <div className="flex items-center gap-2 sm:gap-3 pl-1">
           {user ? (
             <>
               <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-red-600 to-amber-500 p-0.5">

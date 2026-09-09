@@ -23,9 +23,11 @@ const EVENT_TYPE_PRESETS = [
   'Parada',
   'Asistencia',
   'Tarjeta',
+  'Sustitución',
+  'Cambio',
 ];
 
-const CATEGORY_PRESETS = ['Ataque', 'Defensa', 'Transición', 'Balón Parado (ABP)', 'Portería'];
+const CATEGORY_PRESETS = ['Ataque', 'Defensa', 'Transición', 'Balón Parado (ABP)', 'Portería', 'Cambio'];
 
 const OUTCOME_PRESETS = ['Éxito', 'Fallido', 'Gol', 'A puerta', 'Fuera', 'Interceptado', 'Bloqueado'];
 
@@ -291,14 +293,14 @@ export const FullEventFormModal: React.FC<FullEventFormModalProps> = ({
       <form
         onSubmit={handleSubmit}
         onClick={(e) => e.stopPropagation()}
-        className="relative z-10 w-full max-w-xl md:max-w-2xl lg:max-w-[650px] h-full bg-slate-900 border-l border-amber-500/40 shadow-2xl flex flex-col pointer-events-auto overflow-hidden animate-slide-left"
+        className="relative z-10 w-full max-w-[95vw] sm:max-w-xl md:max-w-2xl lg:max-w-[650px] h-full bg-slate-900 border-l border-amber-500/40 shadow-2xl flex flex-col pointer-events-auto overflow-hidden animate-slide-left"
         style={{ borderColor: buttonColorHex }}
       >
         {/* Modal Header */}
-        <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/95 shrink-0">
-          <div className="flex items-center gap-3">
+        <div className="p-4 border-b border-slate-800 flex items-center justify-between gap-2 bg-slate-900/95 shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
             <div
-              className="p-2 rounded-xl border flex items-center justify-center"
+              className="p-2 rounded-xl border flex items-center justify-center shrink-0"
               style={{
                 backgroundColor: `${buttonColorHex}20`,
                 borderColor: `${buttonColorHex}40`,
@@ -307,8 +309,8 @@ export const FullEventFormModal: React.FC<FullEventFormModalProps> = ({
             >
               <Edit3 className="w-5 h-5" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
                 <h3 className="font-extrabold text-white text-base tracking-tight">{title}</h3>
                 {matchedButton && (
                   <span
@@ -327,7 +329,7 @@ export const FullEventFormModal: React.FC<FullEventFormModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
@@ -483,7 +485,7 @@ export const FullEventFormModal: React.FC<FullEventFormModalProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-4 gap-1.5 text-[10px]">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-[10px]">
                 <div>
                   <label className="block text-slate-500 mb-0.5 font-mono">X (%)</label>
                   <input
@@ -714,7 +716,7 @@ export const FullEventFormModal: React.FC<FullEventFormModalProps> = ({
             <label className="block font-bold text-amber-400 uppercase tracking-wider text-[10px]">
               Tiempos del Vídeo y Período
             </label>
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               <div>
                 <label className="block text-slate-400 text-[10px] mb-1">Período</label>
                 <select
@@ -850,7 +852,7 @@ export const FullEventFormModal: React.FC<FullEventFormModalProps> = ({
           </div>
         </div>
 
-        <div className="p-4 border-t border-slate-800 bg-slate-900 flex items-center justify-between shrink-0">
+        <div className="p-4 border-t border-slate-800 bg-slate-900 flex flex-wrap items-center justify-between gap-2 shrink-0">
           <button
             type="button"
             onClick={handleClearPitch}

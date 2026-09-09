@@ -450,6 +450,8 @@ export const dbStore = {
         p1_video_start_time: match.p1_video_start_time !== undefined ? match.p1_video_start_time : existing.p1_video_start_time,
         p2_video_start_time: match.p2_video_start_time !== undefined ? match.p2_video_start_time : existing.p2_video_start_time,
         botonera_template_id: match.botonera_template_id !== undefined ? match.botonera_template_id : existing.botonera_template_id,
+        home_lineup: match.home_lineup !== undefined ? match.home_lineup : existing.home_lineup,
+        away_lineup: match.away_lineup !== undefined ? match.away_lineup : existing.away_lineup,
       });
       matches[existingIdx] = savedTarget;
     } else {
@@ -471,11 +473,14 @@ export const dbStore = {
     return allEvents.filter(e => e.match_id === matchId);
   },
 
-  saveNormalizedEvents(newEvents: NormalizedEvent[], replaceMatchEvents = true): void {
+  saveNormalizedEvents(newEvents: NormalizedEvent[], replaceMatchEvents = false): void {
     let allEvents = this.getNormalizedEvents();
     if (newEvents.length > 0 && replaceMatchEvents) {
       const targetMatchId = newEvents[0].match_id;
       allEvents = allEvents.filter(e => e.match_id !== targetMatchId);
+    } else if (newEvents.length > 0) {
+      const newIds = new Set(newEvents.map(e => e.event_id));
+      allEvents = allEvents.filter(e => !newIds.has(e.event_id));
     }
     allEvents = [...newEvents, ...allEvents];
     setToStorage(STORAGE_KEYS.EVENTS, allEvents);

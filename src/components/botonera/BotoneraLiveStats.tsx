@@ -18,14 +18,23 @@ import {
   Grid,
   RotateCcw,
   Shield,
+  GripHorizontal,
+  Minimize2,
+  Maximize2,
+  ChevronLeft,
+  ChevronRight,
+  ArrowUp,
+  ArrowRight,
 } from 'lucide-react';
-import { NormalizedEvent, BotoneraButton } from '@/types';
+import { NormalizedEvent, BotoneraButton, Match } from '@/types';
 import { getButtonColorHex } from './BotoneraPanelEditor';
 import { TeamLogo } from '@/components/player/PlayerBadge';
 import { dbStore } from '@/lib/store/db-store';
+import { calculateEventVideoTime } from '@/lib/analytics/video-utils';
 
 interface BotoneraLiveStatsProps {
   events: NormalizedEvent[];
+  match?: Match | null;
   videoUrl?: string | null;
   onSeekVideoToTime?: (time: number) => void;
   onSeekToEvent?: (event: NormalizedEvent) => void;
@@ -68,6 +77,7 @@ export const getEventButtonColorHex = (
 
 export const BotoneraLiveStats: React.FC<BotoneraLiveStatsProps> = ({
   events = [],
+  match = null,
   videoUrl,
   onSeekVideoToTime,
   onSeekToEvent,
@@ -88,6 +98,46 @@ export const BotoneraLiveStats: React.FC<BotoneraLiveStatsProps> = ({
   // Selected Pitch Event(s) for Characteristics & Playback
   const [selectedClipEvents, setSelectedClipEvents] = useState<NormalizedEvent[] | null>(null);
   const [activePlayingEvent, setActivePlayingEvent] = useState<NormalizedEvent | null>(null);
+
+  // Smart Floating Video Popup Window State
+  const [isVideoPopupOpen, setIsVideoPopupOpen] = useState<boolean>(false);
+  const [popupSide, setPopupSide] = useState<'left' | 'right'>('right');
+  const [isPopupMinimized, setIsPopupMinimized] = useState<boolean>(false);
+  const [popupPos, setPopupPos] = useState<{ x: number; y: number } | null>(null);
+
+  // Popup Dragging Logic
+  const [isDraggingPopup, setIsDraggingPopup] = useState<boolean>(false);
+  const dragOffsetRef = React.useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  const handleMouseDownHeader = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const popupEl = (e.currentTarget as HTMLElement).closest('.smart-video-popup');
+    if (!popupEl) return;
+    const rect = popupEl.getBoundingClientRect();
+    dragOffsetRef.current = {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+    };
+    setIsDraggingPopup(true);
+  };
+
+  React.useEffect(() => {
+    if (!isDraggingPopup) return;
+    const handleMouseMove = (e: MouseEvent) => {
+      const newX = Math.max(10, Math.min(window.innerWidth - 320, e.clientX - dragOffsetRef.current.x));
+      const newY = Math.max(10, Math.min(window.innerHeight - 180, e.clientY - dragOffsetRef.current.y));
+      setPopupPos({ x: newX, y: newY });
+    };
+    const handleMouseUp = () => {
+      setIsDraggingPopup(false);
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDraggingPopup]);
 
   // Hover Tooltip State for Hovering over Pitch Arrow, Point, or Zone
   const [hoveredEvent, setHoveredEvent] = useState<NormalizedEvent | null>(null);
@@ -359,6 +409,14 @@ export const BotoneraLiveStats: React.FC<BotoneraLiveStatsProps> = ({
     setHoveredEvent(evt);
   };
 
+  // Helper to extract YouTube video ID
+  const extractYouTubeId = (url: string | null | undefined): string | null => {
+    if (!url) return null;
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+    const match = url.match(regExp);
+    return match && match[2].length === 11 ? match[2] : null;
+  };
+
   // Play Event Video Immediately & Update Active Event Characteristics
   const playEventNow = (evt: NormalizedEvent) => {
     setActivePlayingEvent(evt);
@@ -370,7 +428,7 @@ export const BotoneraLiveStats: React.FC<BotoneraLiveStatsProps> = ({
     }
   };
 
-  // Handle clicking an arrow, point, or zone on the pitch canvas
+  // Handle clicking an arrow, point, or zone on the pitch canvas (LEFT SIDE OF GRID)
   const handlePitchEventClick = (clickedEvt: NormalizedEvent) => {
     const cx = clickedEvt.x ?? 50;
     const cy = clickedEvt.y ?? 50;
@@ -384,8 +442,58 @@ export const BotoneraLiveStats: React.FC<BotoneraLiveStatsProps> = ({
     const cluster = nearbyEvents.length > 0 ? nearbyEvents : [clickedEvt];
     setSelectedClipEvents(cluster);
 
+    // OPEN POPUP ON THE RIGHT SIDE so the LEFT pitch canvas remains 100% visible!
+    setPopupSide('right');
+    setPopupPos(null);
+    setIsVideoPopupOpen(true);
+    setIsPopupMinimized(false);
+
     // AUTOMATICALLY REPRODUCE VIDEO FOR THE CLICKED ACTION
     playEventNow(clickedEvt);
+  };
+
+  // Handle clicking a descriptor item in the right column chart (RIGHT SIDE OF GRID)
+  const handleDescriptorClick = (descName: string) => {
+    const isSelected = selectedDescriptor === descName;
+    const newSelected = isSelected ? null : descName;
+    setSelectedDescriptor(newSelected);
+
+    if (newSelected) {
+      const matchingEvts = buttonEvents.filter((evt) => {
+        const list = getEventDescriptorsList(evt);
+        return list.includes(newSelected);
+      });
+
+      if (matchingEvts.length > 0) {
+        setSelectedClipEvents(matchingEvts);
+        const firstEvt = matchingEvts[0];
+
+        // OPEN POPUP ON THE LEFT SIDE so the RIGHT descriptor chart remains 100% visible!
+        setPopupSide('left');
+        setPopupPos(null);
+        setIsVideoPopupOpen(true);
+        setIsPopupMinimized(false);
+
+        playEventNow(firstEvt);
+      }
+    }
+  };
+
+  // Handle clicking a player in the right column list (RIGHT SIDE OF GRID)
+  const handlePlayerClick = (playerName: string) => {
+    const matchingEvts = buttonEvents.filter((evt) => evt.player_name === playerName);
+    if (matchingEvts.length > 0) {
+      setSelectedClipEvents(matchingEvts);
+      const firstEvt = matchingEvts[0];
+
+      // OPEN POPUP ON THE LEFT SIDE so the RIGHT player list remains 100% visible!
+      setPopupSide('left');
+      setPopupPos(null);
+      setIsVideoPopupOpen(true);
+      setIsPopupMinimized(false);
+
+      playEventNow(firstEvt);
+    }
   };
 
   const formatTimeStr = (evt: NormalizedEvent) => {
@@ -857,15 +965,16 @@ export const BotoneraLiveStats: React.FC<BotoneraLiveStatsProps> = ({
 
               {/* SVG Pitch Canvas */}
               <div
-                className={`relative w-full mx-auto bg-emerald-950 rounded-2xl border-2 border-emerald-800/80 shadow-2xl select-none ${
-                  isVertical ? 'max-w-xs sm:max-w-sm aspect-[5/8]' : 'aspect-[8/5]'
+                className={`relative w-full mx-auto bg-emerald-950 rounded-2xl border-2 border-emerald-800/80 shadow-2xl select-none flex ${
+                  isVertical ? 'flex-row max-w-xs sm:max-w-sm' : 'flex-col'
                 }`}
                 onMouseLeave={() => setHoveredEvent(null)}
               >
-                {/* Grass Stripes Pattern (Clipped in inner wrapper) */}
-                <div className="absolute inset-0 rounded-[14px] overflow-hidden pointer-events-none">
-                  <div className="absolute inset-0 bg-[linear-gradient(to_bottom,#022c22_0%,#064e3b_10%,#022c22_20%,#064e3b_30%,#022c22_40%,#064e3b_50%,#022c22_60%,#064e3b_70%,#022c22_80%,#064e3b_90%,#022c22_100%)] opacity-90" />
-                </div>
+                <div className={`relative flex-1 ${isVertical ? 'aspect-[5/8]' : 'aspect-[8/5]'}`}>
+                  {/* Grass Stripes Pattern (Clipped in inner wrapper) */}
+                  <div className="absolute inset-0 rounded-[14px] overflow-hidden pointer-events-none">
+                    <div className="absolute inset-0 bg-[linear-gradient(to_bottom,#022c22_0%,#064e3b_10%,#022c22_20%,#064e3b_30%,#022c22_40%,#064e3b_50%,#022c22_60%,#064e3b_70%,#022c22_80%,#064e3b_90%,#022c22_100%)] opacity-90" />
+                  </div>
 
                 <svg viewBox={`0 0 ${pitchWidth} ${pitchHeight}`} className="w-full h-full block relative z-10">
                   {/* PITCH MARKINGS */}
@@ -1082,6 +1191,24 @@ export const BotoneraLiveStats: React.FC<BotoneraLiveStatsProps> = ({
                     )}
                   </div>
                 )}
+                </div>
+
+                {/* Lateral Attack Indicator Strip */}
+                {isVertical ? (
+                  <div className="w-6 sm:w-7 bg-slate-950/90 border-l border-emerald-800/60 flex flex-col items-center justify-center py-4 gap-2 text-emerald-300 select-none pointer-events-none shrink-0 z-20 rounded-r-[14px]">
+                    <ArrowUp className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest text-emerald-300 [writing-mode:vertical-rl] rotate-180">
+                      ATAQUE
+                    </span>
+                  </div>
+                ) : (
+                  <div className="h-6 bg-slate-950/90 border-t border-emerald-800/60 flex flex-row items-center justify-center px-4 gap-2 text-emerald-300 select-none pointer-events-none shrink-0 z-20 rounded-b-[14px]">
+                    <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest text-emerald-300">
+                      ATAQUE
+                    </span>
+                    <ArrowRight className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  </div>
+                )}
               </div>
 
               {/* ── CARACTERÍSTICAS AUTOMÁTICAS DE LA ACCIÓN EN REPRODUCCIÓN ── */}
@@ -1225,10 +1352,10 @@ export const BotoneraLiveStats: React.FC<BotoneraLiveStatsProps> = ({
                       return (
                         <button
                           key={desc.name}
-                          onClick={() => setSelectedDescriptor(isSelected ? null : desc.name)}
-                          className={`w-full text-left p-2 rounded-xl transition-all border ${
+                          onClick={() => handleDescriptorClick(desc.name)}
+                          className={`w-full text-left p-2 rounded-xl transition-all border cursor-pointer ${
                             isSelected
-                              ? 'bg-amber-500/15 border-amber-500/40 text-amber-200'
+                              ? 'bg-amber-500/15 border-amber-500/40 text-amber-200 ring-1 ring-amber-500/50'
                               : 'bg-slate-900/90 border-slate-800 hover:border-slate-700 text-slate-300'
                           }`}
                         >
@@ -1269,9 +1396,10 @@ export const BotoneraLiveStats: React.FC<BotoneraLiveStatsProps> = ({
                     .sort((a, b) => b[1] - a[1])
                     .slice(0, 4)
                     .map(([pName, count]) => (
-                      <div
+                      <button
                         key={pName}
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs"
+                        onClick={() => handlePlayerClick(pName)}
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-slate-900 border border-slate-800 hover:border-emerald-500/50 hover:bg-slate-850 text-xs transition cursor-pointer text-left"
                       >
                         <div className="flex items-center gap-1.5 overflow-hidden">
                           <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
@@ -1280,12 +1408,163 @@ export const BotoneraLiveStats: React.FC<BotoneraLiveStatsProps> = ({
                         <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 font-mono text-[10px] font-bold shrink-0">
                           {count}
                         </span>
-                      </div>
+                      </button>
                     ))}
                 </div>
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── SMART FLOATING VIDEO POPUP WINDOW (VENTANA EMERGENTE INTELIGENTE DE VÍDEO) ── */}
+      {isVideoPopupOpen && activePlayingEvent && (
+        <div
+          className={`smart-video-popup fixed z-[180] transition-all duration-150 shadow-2xl rounded-2xl border border-amber-500/60 bg-slate-950/95 backdrop-blur-xl text-slate-100 overflow-hidden ${
+            isPopupMinimized ? 'w-72 sm:w-80' : 'w-80 sm:w-96 md:w-[430px]'
+          }`}
+          style={
+            popupPos
+              ? { left: `${popupPos.x}px`, top: `${popupPos.y}px` }
+              : popupSide === 'right'
+              ? { top: '100px', right: '24px' }
+              : { top: '100px', left: '24px' }
+          }
+        >
+          {/* Draggable Header */}
+          <div
+            onMouseDown={handleMouseDownHeader}
+            className="flex items-center justify-between gap-2 px-3.5 py-2.5 border-b border-slate-800 bg-slate-900/90 rounded-t-2xl cursor-grab active:cursor-grabbing select-none"
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <GripHorizontal className="w-4 h-4 text-amber-400 shrink-0 animate-pulse" />
+              <Film className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span className="font-extrabold text-xs text-white truncate">
+                Vídeo {popupSide === 'right' ? '👉 (Lado Derecho)' : '👈 (Lado Izquierdo)'}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                onClick={() => setIsPopupMinimized(!isPopupMinimized)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+                title={isPopupMinimized ? 'Expandir reproductor' : 'Minimizar reproductor'}
+              >
+                {isPopupMinimized ? <Maximize2 className="w-3.5 h-3.5" /> : <Minimize2 className="w-3.5 h-3.5" />}
+              </button>
+              <button
+                onClick={() => setIsVideoPopupOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-rose-500/20 hover:text-rose-300 transition cursor-pointer"
+                title="Cerrar ventana emergente"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* Body */}
+          {!isPopupMinimized && (
+            <div className="p-3 space-y-2.5">
+              {/* Player Box */}
+              <div className="aspect-video w-full rounded-xl overflow-hidden bg-black border border-slate-800 relative shadow-inner">
+                {videoUrl && extractYouTubeId(videoUrl) ? (
+                  <iframe
+                    src={`https://www.youtube.com/embed/${extractYouTubeId(videoUrl)}?autoplay=1&start=${Math.floor(
+                      calculateEventVideoTime(activePlayingEvent, match)
+                    )}`}
+                    className="w-full h-full border-0"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                  />
+                ) : videoUrl ? (
+                  <video
+                    src={videoUrl}
+                    controls
+                    autoPlay
+                    className="w-full h-full object-contain"
+                    ref={(el) => {
+                      if (el && activePlayingEvent) {
+                        const targetSec = calculateEventVideoTime(activePlayingEvent, match);
+                        const applySeek = () => { try { el.currentTime = targetSec; } catch (e) {} };
+                        applySeek();
+                        el.addEventListener('loadedmetadata', applySeek, { once: true });
+                        el.addEventListener('canplay', applySeek, { once: true });
+                      }
+                    }}
+                  />
+                ) : (
+                  <div className="w-full h-full flex flex-col items-center justify-center p-4 text-center bg-slate-950 text-slate-400 space-y-1.5">
+                    <Film className="w-8 h-8 text-amber-400 opacity-90 animate-pulse" />
+                    <p className="text-xs font-black text-slate-200">Vídeo No Vinculado</p>
+                    <p className="text-[10px] text-slate-400 max-w-xs">
+                      Acción registrada a los <span className="text-emerald-400 font-mono font-bold">{formatTimeStr(activePlayingEvent)}</span>. Vincula una URL o archivo para reproducciones.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Multi-Clip Navigation */}
+              {selectedClipEvents && selectedClipEvents.length > 1 && (
+                <div className="flex items-center justify-between bg-slate-900 px-2.5 py-1 rounded-xl border border-slate-800 text-xs">
+                  <button
+                    onClick={() => {
+                      const currentIdx = selectedClipEvents.findIndex((e) => e.event_id === activePlayingEvent.event_id);
+                      const prevIdx = (currentIdx - 1 + selectedClipEvents.length) % selectedClipEvents.length;
+                      playEventNow(selectedClipEvents[prevIdx]);
+                    }}
+                    className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold flex items-center gap-1 text-[10px] cursor-pointer"
+                  >
+                    <ChevronLeft className="w-3 h-3" />
+                    <span>Anterior</span>
+                  </button>
+
+                  <span className="text-[10px] font-extrabold text-amber-300 font-mono">
+                    Clip {selectedClipEvents.findIndex((e) => e.event_id === activePlayingEvent.event_id) + 1} de {selectedClipEvents.length}
+                  </span>
+
+                  <button
+                    onClick={() => {
+                      const currentIdx = selectedClipEvents.findIndex((e) => e.event_id === activePlayingEvent.event_id);
+                      const nextIdx = (currentIdx + 1) % selectedClipEvents.length;
+                      playEventNow(selectedClipEvents[nextIdx]);
+                    }}
+                    className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold flex items-center gap-1 text-[10px] cursor-pointer"
+                  >
+                    <span>Siguiente</span>
+                    <ChevronRight className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
+
+              {/* Action Info Pill */}
+              <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800/90 space-y-1.5 text-xs">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
+                  <div className="flex items-center gap-1.5 truncate">
+                    <span
+                      className="w-2.5 h-2.5 rounded-full shrink-0"
+                      style={{ backgroundColor: getEventButtonColorHex(activePlayingEvent, buttons) }}
+                    />
+                    <span className="font-extrabold text-white truncate">{getEventButtonName(activePlayingEvent)}</span>
+                  </div>
+                  <span className="font-mono text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/30">
+                    {formatTimeStr(activePlayingEvent)}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] pt-0.5">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <TeamLogo teamName={activePlayingEvent.team_name} size={18} />
+                    <span className="font-bold text-slate-200 truncate">{activePlayingEvent.player_name}</span>
+                  </div>
+                  {activePlayingEvent.outcome && (
+                    <span className="text-[10px] font-extrabold text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30">
+                      {activePlayingEvent.outcome}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

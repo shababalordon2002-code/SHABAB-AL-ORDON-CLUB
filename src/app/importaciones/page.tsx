@@ -42,7 +42,7 @@ export default function ImportacionesPage() {
       </div>
 
       {/* Search */}
-      <div className="relative max-w-sm">
+      <div className="relative w-full sm:max-w-sm">
         <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
         <input
           type="text"
