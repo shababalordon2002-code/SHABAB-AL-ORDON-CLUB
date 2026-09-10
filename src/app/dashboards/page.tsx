@@ -22,6 +22,7 @@ import {
   Activity,
 } from 'lucide-react';
 import { dbStore, DEFAULT_DASHBOARD_CONFIG } from '@/lib/store/db-store';
+import { createClient } from '@/lib/supabase/client';
 import {
   BotoneraTemplate,
   Match,
@@ -98,6 +99,7 @@ export default function DashboardsPage() {
 
     const syncAll = () =>
       Promise.all([
+        dbStore.syncMatchesFromSupabase(),
         dbStore.syncDashboardsFromSupabase(),
         dbStore.syncAnalysesFromSupabase(),
         dbStore.syncBotoneraTemplatesFromSupabase(),
@@ -107,10 +109,29 @@ export default function DashboardsPage() {
 
     syncAll();
 
-    // Auto-refresh: re-pull matches/analyses/dashboards every 5 min so viewers
-    // see events registered live by analysts in Botonera without reloading.
+    // Fallback auto-refresh (in case realtime is momentarily disconnected).
     const interval = setInterval(syncAll, 5 * 60 * 1000);
-    return () => clearInterval(interval);
+
+    // Realtime push: any analyst saving/finishing a match's analysis, or creating
+    // a match/dashboard, triggers an immediate refresh for every viewer on this page.
+    const supabase = createClient();
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    const debouncedSync = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(syncAll, 400);
+    };
+    const channel = supabase
+      .channel('dashboards-page-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'match_analyses' }, debouncedSync)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'match_dashboards' }, debouncedSync)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, debouncedSync)
+      .subscribe();
+
+    return () => {
+      clearInterval(interval);
+      if (debounceTimer) clearTimeout(debounceTimer);
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   // Poll Active Live Session Status every 3 seconds for real-time live tagging updates
