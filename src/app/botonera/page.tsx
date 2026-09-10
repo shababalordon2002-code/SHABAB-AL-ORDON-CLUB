@@ -2052,6 +2052,16 @@ export default function BotoneraPage() {
                   dbStore.saveAnalysis(updatedAn);
                 }
 
+                const currentSession = dbStore.getActiveBotoneraSession();
+                if (currentSession && (currentSession.selectedMatchId === currentM.id || !currentSession.selectedMatchId)) {
+                  const updatedSession = {
+                    ...currentSession,
+                    selectedMatchId: currentM.id,
+                    [key]: config,
+                  };
+                  dbStore.saveActiveBotoneraSession(updatedSession);
+                }
+
                 setMatches(dbStore.getMatches());
               }
               updatedPlayers.forEach((p) => dbStore.savePlayer(p));
