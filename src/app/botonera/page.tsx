@@ -1611,13 +1611,16 @@ export default function BotoneraPage() {
   };
 
   const handleSaveToMatch = () => {
-    if (events.length === 0) return;
+    if (events.length === 0) {
+      alert('⚠️ No hay eventos registrados aún en la sesión. Añade al menos un evento para guardar el registro de análisis.');
+      return;
+    }
 
     const targetId = selectedMatchId === 'free_session' ? 'match_demo_1' : selectedMatchId;
     const normalizedEvts = events.map((e) => ({ ...e, match_id: targetId }));
     dbStore.saveNormalizedEvents(normalizedEvts, true);
 
-    const targetMatch = dbStore.getMatchById(targetId);
+    const targetMatch = dbStore.getMatchById(targetId) || matches.find((m) => m.id === targetId);
     if (targetMatch) {
       dbStore.saveMatch({
         ...targetMatch,
@@ -1630,14 +1633,14 @@ export default function BotoneraPage() {
 
     // Save or update the permanent Match Analysis card
     const existingAnalyses = dbStore.getAnalyses(targetId);
-    const existingObj = existingAnalyses.find((a) => a.id === editingAnalysisId) || existingAnalyses[0];
-    const resolvedAnalysisId = editingAnalysisId || existingObj?.id || `analysis_${targetId}`;
+    const existingObj = editingAnalysisId ? existingAnalyses.find((a) => a.id === editingAnalysisId) : null;
+    const resolvedAnalysisId = editingAnalysisId || `analysis_${targetId}_${Date.now()}`;
 
     const newAnalysis: MatchAnalysis = {
       id: resolvedAnalysisId,
       match_id: targetId,
       title: `Análisis ${targetMatch ? targetMatch.home_team + ' vs ' + targetMatch.away_team : 'Etiquetado en Vivo'}`,
-      analyst_name: 'Analista Principal (SAO)',
+      analyst_name: profile?.full_name || user?.email || 'Analista Principal (SAO)',
       status: 'completed' as const,
       video_type: videoType,
       video_url: videoUrl,
@@ -1651,12 +1654,15 @@ export default function BotoneraPage() {
       created_at: existingObj?.created_at || new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
+
     dbStore.saveAnalysis(newAnalysis);
     dbStore.clearActiveBotoneraSession(targetId);
     clearAnalysisEventsFromSupabase(targetId).catch((err) =>
       console.warn('Could not clear live analysis events in Supabase after save:', err)
     );
     setSavedAnalyses(dbStore.getAnalyses());
+    setEditingAnalysisId(resolvedAnalysisId);
+    alert(`✅ Registro de análisis guardado con éxito (${events.length} eventos).`);
   };
 
   const handleExportXml = () => {

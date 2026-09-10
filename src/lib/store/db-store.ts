@@ -794,19 +794,11 @@ export const dbStore = {
   getAnalyses(matchId?: string): MatchAnalysis[] {
     const list = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
     
-    // Deduplicate list by match_id (falling back to analysis id if no match_id)
+    // Deduplicate list by unique analysis id
     const deduplicatedMap = new Map<string, MatchAnalysis>();
     list.forEach((item) => {
-      const key = item.match_id || item.id;
-      const existing = deduplicatedMap.get(key);
-      if (!existing) {
-        deduplicatedMap.set(key, item);
-      } else {
-        const existingCount = existing.events?.length || 0;
-        const itemCount = item.events?.length || 0;
-        if (itemCount >= existingCount) {
-          deduplicatedMap.set(key, item);
-        }
+      if (item && item.id) {
+        deduplicatedMap.set(item.id, item);
       }
     });
 
@@ -825,10 +817,9 @@ export const dbStore = {
     if (remote && remote.length > 0) {
       const allLocal = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
       const localMap = new Map(allLocal.map((a) => [a.id, a]));
-      const nonMatchLocal = matchId ? allLocal.filter((a) => a.match_id !== matchId) : [];
 
       const mergedRemote = remote.map((ra) => {
-        const local = localMap.get(ra.id) || allLocal.find((la) => la.match_id === ra.match_id);
+        const local = localMap.get(ra.id);
         if (!local) return ra;
         const raHomeOk = ra.home_lineup && typeof ra.home_lineup === 'object' && Object.keys(ra.home_lineup).length > 0;
         const raAwayOk = ra.away_lineup && typeof ra.away_lineup === 'object' && Object.keys(ra.away_lineup).length > 0;
@@ -839,7 +830,10 @@ export const dbStore = {
         };
       });
 
-      const merged = [...mergedRemote, ...nonMatchLocal];
+      const remoteIdSet = new Set(remote.map(r => r.id));
+      const localOnly = allLocal.filter(a => !remoteIdSet.has(a.id));
+
+      const merged = [...mergedRemote, ...localOnly];
       setToStorage(STORAGE_KEYS.MATCH_ANALYSES, merged);
       return this.getAnalyses(matchId);
     }
@@ -848,7 +842,7 @@ export const dbStore = {
 
   saveAnalysis(analysis: MatchAnalysis): void {
     const all = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
-    const idx = all.findIndex(a => a.id === analysis.id || (analysis.match_id && a.match_id === analysis.match_id));
+    const idx = all.findIndex(a => a.id === analysis.id);
     let updated: MatchAnalysis;
     if (idx >= 0) {
       const existing = all[idx];
@@ -869,13 +863,11 @@ export const dbStore = {
       all.unshift(updated);
     }
 
-    // Deduplicate remaining entries in storage by match_id (or item.id)
+    // Deduplicate remaining entries in storage by unique analysis id
     const finalMap = new Map<string, MatchAnalysis>();
     all.forEach((item) => {
-      const key = item.match_id || item.id;
-      const existing = finalMap.get(key);
-      if (!existing || (item.events?.length || 0) >= (existing.events?.length || 0)) {
-        finalMap.set(key, item);
+      if (item && item.id) {
+        finalMap.set(item.id, item);
       }
     });
 
