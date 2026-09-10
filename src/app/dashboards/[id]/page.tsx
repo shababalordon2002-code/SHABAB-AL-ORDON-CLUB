@@ -85,7 +85,14 @@ function DashboardDetailContent({ params }: { params: Promise<{ id: string }> })
               const map = new Map<string, NormalizedEvent>();
               prev.forEach((e) => map.set(e.event_id, e));
               remoteEvs.forEach((e) => map.set(e.event_id, e));
-              return Array.from(map.values());
+              const merged = Array.from(map.values());
+              if (
+                prev.length === merged.length &&
+                prev.every((e, i) => e.event_id === merged[i]?.event_id && e.updated_at === merged[i]?.updated_at)
+              ) {
+                return prev;
+              }
+              return merged;
             });
           }
         } catch (err) {
@@ -106,7 +113,7 @@ function DashboardDetailContent({ params }: { params: Promise<{ id: string }> })
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     const debouncedReload = () => {
       if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(loadDashboardData, 300);
+      debounceTimer = setTimeout(loadDashboardData, 500);
     };
 
     const channel = supabase

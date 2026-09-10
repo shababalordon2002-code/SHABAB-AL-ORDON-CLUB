@@ -2036,11 +2036,22 @@ export default function BotoneraPage() {
                 ...updatedPlayers,
               ]);
               if (currentM) {
+                const key = team === 'home' ? 'home_lineup' : 'away_lineup';
                 const updatedMatch = {
                   ...currentM,
-                  [team === 'home' ? 'home_lineup' : 'away_lineup']: config,
+                  [key]: config,
                 };
                 dbStore.saveMatch(updatedMatch);
+
+                const existingAnalyses = dbStore.getAnalyses(currentM.id);
+                if (existingAnalyses && existingAnalyses.length > 0) {
+                  const updatedAn = {
+                    ...existingAnalyses[0],
+                    [key]: config,
+                  };
+                  dbStore.saveAnalysis(updatedAn);
+                }
+
                 setMatches(dbStore.getMatches());
               }
               updatedPlayers.forEach((p) => dbStore.savePlayer(p));

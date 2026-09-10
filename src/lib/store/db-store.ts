@@ -398,10 +398,12 @@ export const dbStore = {
       const mergedRemote = remote.map((rm) => {
         const local = localMap.get(rm.id);
         if (!local) return rm;
+        const rmHomeOk = rm.home_lineup && typeof rm.home_lineup === 'object' && Object.keys(rm.home_lineup).length > 0;
+        const rmAwayOk = rm.away_lineup && typeof rm.away_lineup === 'object' && Object.keys(rm.away_lineup).length > 0;
         return {
           ...rm,
-          home_lineup: rm.home_lineup || local.home_lineup || null,
-          away_lineup: rm.away_lineup || local.away_lineup || null,
+          home_lineup: rmHomeOk ? rm.home_lineup : (local.home_lineup || null),
+          away_lineup: rmAwayOk ? rm.away_lineup : (local.away_lineup || null),
           video_type: rm.video_type || local.video_type,
           video_url: rm.video_url || local.video_url,
           video_source_name: rm.video_source_name || local.video_source_name,
@@ -484,6 +486,28 @@ export const dbStore = {
     saveMatchesToSupabase([savedTarget]).catch((err) => {
       console.warn('Could not sync match analysis to Supabase:', err);
     });
+
+    // Also update home_lineup and away_lineup in associated match_analyses
+    if (savedTarget.home_lineup || savedTarget.away_lineup) {
+      const analyses = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
+      let changed = false;
+      const updatedAnalyses = analyses.map((a) => {
+        if (a.match_id === savedTarget.id || a.id === savedTarget.id) {
+          changed = true;
+          const updatedA = {
+            ...a,
+            home_lineup: savedTarget.home_lineup || a.home_lineup,
+            away_lineup: savedTarget.away_lineup || a.away_lineup,
+          };
+          saveAnalysisToSupabase(updatedA).catch(() => {});
+          return updatedA;
+        }
+        return a;
+      });
+      if (changed) {
+        setToStorage(STORAGE_KEYS.MATCH_ANALYSES, updatedAnalyses);
+      }
+    }
   },
 
   // Normalized Events
@@ -799,10 +823,12 @@ export const dbStore = {
       const mergedRemote = remote.map((ra) => {
         const local = localMap.get(ra.id) || allLocal.find((la) => la.match_id === ra.match_id);
         if (!local) return ra;
+        const raHomeOk = ra.home_lineup && typeof ra.home_lineup === 'object' && Object.keys(ra.home_lineup).length > 0;
+        const raAwayOk = ra.away_lineup && typeof ra.away_lineup === 'object' && Object.keys(ra.away_lineup).length > 0;
         return {
           ...ra,
-          home_lineup: ra.home_lineup || local.home_lineup || null,
-          away_lineup: ra.away_lineup || local.away_lineup || null,
+          home_lineup: raHomeOk ? ra.home_lineup : (local.home_lineup || null),
+          away_lineup: raAwayOk ? ra.away_lineup : (local.away_lineup || null),
         };
       });
 
@@ -853,6 +879,22 @@ export const dbStore = {
     saveAnalysisToSupabase(updated).catch(err => {
       console.warn("Could not sync analysis to Supabase:", err);
     });
+
+    // Also update home_lineup and away_lineup in associated match
+    if (updated.match_id && (updated.home_lineup || updated.away_lineup)) {
+      const matches = getFromStorage<Match[]>(STORAGE_KEYS.MATCHES, []);
+      const mIdx = matches.findIndex((m) => m.id === updated.match_id);
+      if (mIdx >= 0) {
+        const updatedM = {
+          ...matches[mIdx],
+          home_lineup: updated.home_lineup || matches[mIdx].home_lineup,
+          away_lineup: updated.away_lineup || matches[mIdx].away_lineup,
+        };
+        matches[mIdx] = updatedM;
+        setToStorage(STORAGE_KEYS.MATCHES, matches);
+        saveMatchesToSupabase([updatedM]).catch(() => {});
+      }
+    }
   },
 
   deleteAnalysis(id: string): void {

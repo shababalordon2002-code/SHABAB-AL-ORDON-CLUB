@@ -188,6 +188,56 @@ export const StandardMatchDashboard: React.FC<StandardMatchDashboardProps> = ({
     setAllEvents(events);
   }, [events]);
 
+  const handleAddSubstitution = (isHome: boolean, sub: SubstitutionRecord) => {
+    const targetTeam = isHome ? homeTeamName : awayTeamName;
+    const newEvt: NormalizedEvent = {
+      event_id: `evt_sub_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      source_event_id: null,
+      match_id: match.id,
+      team_name: targetTeam,
+      team_id: isHome ? 'home_team' : 'away_team',
+      player_id: null,
+      player_name: sub.playerOutName,
+      event_type: 'Sustitución',
+      category: 'Cambio',
+      subcategory: null,
+      timestamp: (sub.minute || 60) * 60,
+      minute: sub.minute || 60,
+      second: 0,
+      duration: null,
+      period: sub.period || 2,
+      x: null,
+      y: null,
+      end_x: null,
+      end_y: null,
+      outcome: 'Éxito',
+      metadata: {
+        player_out: sub.playerOutName,
+        player_in: sub.playerInName,
+        player_in_number: sub.playerInNumber,
+      },
+      source: 'manual',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    dbStore.saveNormalizedEvents([newEvt], false);
+    import('@/lib/services/botonera-service').then(({ insertAnalysisEventToSupabase }) => {
+      insertAnalysisEventToSupabase(match.id, newEvt).catch(() => {});
+    });
+
+    const analyses = dbStore.getAnalyses(match.id);
+    if (analyses.length > 0) {
+      const updatedAn = {
+        ...analyses[0],
+        events: [newEvt, ...(analyses[0].events || [])],
+      };
+      dbStore.saveAnalysis(updatedAn);
+    }
+
+    setAllEvents((prev) => [newEvt, ...prev]);
+  };
+
   // Resolve effective match properties (merging video start offsets & video url from dbStore analyses if present)
   const effectiveMatch = useMemo(() => {
     const analyses = dbStore.getAnalyses(match.id);
@@ -422,44 +472,6 @@ export const StandardMatchDashboard: React.FC<StandardMatchDashboardProps> = ({
     });
     return subs;
   }, [allEvents, awayTeamName]);
-
-  // Add a new substitution event dynamically
-  const handleAddSubstitution = (targetTeamName: string, isHome: boolean, sub: SubstitutionRecord) => {
-    const newEvt: NormalizedEvent = {
-      event_id: `evt_sub_${Date.now()}`,
-      source_event_id: null,
-      match_id: match.id,
-      team_name: targetTeamName,
-      team_id: isHome ? 'home_team' : 'away_team',
-      player_id: null,
-      player_name: sub.playerOutName,
-      event_type: 'Sustitución',
-      category: 'Cambio',
-      subcategory: null,
-      timestamp: sub.minute * 60,
-      minute: sub.minute,
-      second: 0,
-      duration: null,
-      period: sub.minute <= 45 ? 1 : 2,
-      x: null,
-      y: null,
-      end_x: null,
-      end_y: null,
-      outcome: 'Éxito',
-      metadata: {
-        player_out: sub.playerOutName,
-        player_in: sub.playerInName,
-        player_in_number: sub.playerInNumber,
-        dorsal: sub.playerInNumber,
-      },
-      source: 'manual',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    dbStore.saveNormalizedEvents([newEvt], false);
-    setAllEvents((prev) => [...prev, newEvt]);
-  };
 
 // Helper to match an event to a Botonera category button accurately and unambiguously
 function findMatchingButton(buttons: BotoneraButton[], evt: NormalizedEvent): BotoneraButton | undefined {
@@ -1207,6 +1219,7 @@ function generateDominanceDifferentialPaths(
               substitutions={homeSubstitutions}
               isHome={true}
               orientation="vertical"
+              onAddSubstitution={(sub) => handleAddSubstitution(true, sub)}
               onPlayerClick={(player) => setSelectedPlayer(player)}
             />
           </div>
@@ -1378,6 +1391,7 @@ function generateDominanceDifferentialPaths(
               substitutions={awaySubstitutions}
               isHome={false}
               orientation="vertical"
+              onAddSubstitution={(sub) => handleAddSubstitution(false, sub)}
               onPlayerClick={(player) => setSelectedPlayer(player)}
             />
           </div>

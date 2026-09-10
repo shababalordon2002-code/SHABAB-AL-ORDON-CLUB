@@ -47,10 +47,13 @@ function CumulativeDashboardContent() {
 
   const loadData = () => {
     const allMatches = dbStore.getMatches();
-    setMatches(allMatches);
-    setEvents(dbStore.getNormalizedEvents());
+    const allEvents = dbStore.getNormalizedEvents();
     const templates = dbStore.getBotoneraTemplates();
-    setTemplate(templates.find((t) => t.isDefault) || templates[0] || null);
+    const defaultTmpl = templates.find((t) => t.isDefault) || templates[0] || null;
+
+    setMatches((prev) => (prev.length === allMatches.length && prev.every((m, i) => m.id === allMatches[i]?.id) ? prev : allMatches));
+    setEvents((prev) => (prev.length === allEvents.length && prev.every((e, i) => e.event_id === allEvents[i]?.event_id) ? prev : allEvents));
+    setTemplate((prev) => (prev?.id === defaultTmpl?.id ? prev : defaultTmpl));
   };
 
   useEffect(() => {
@@ -75,7 +78,7 @@ function CumulativeDashboardContent() {
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     const debouncedSync = () => {
       if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(syncAll, 300);
+      debounceTimer = setTimeout(syncAll, 500);
     };
 
     const channel = supabase

@@ -70,6 +70,8 @@ export default function DashboardsPage() {
   const [showAdminModal, setShowAdminModal] = useState(false);
   const [activeSessionsMap, setActiveSessionsMap] = useState<Record<string, ActiveBotoneraSession>>({});
 
+  const activeSessionsMapRef = React.useRef<Record<string, ActiveBotoneraSession>>({});
+
   const load = () => {
     const matches = dbStore.getMatches();
     const dashboards = dbStore.getDashboards();
@@ -96,8 +98,27 @@ export default function DashboardsPage() {
       .filter((b) => b.analyses.length > 0 || b.events.length > 0)
       .sort((a, b) => (a.match.date < b.match.date ? 1 : -1));
 
-    setBlocks(next);
-    setTemplates(dbStore.getBotoneraTemplates());
+    setBlocks((prev) => {
+      if (prev.length === next.length) {
+        const isSame = prev.every((pb, i) => {
+          const nb = next[i];
+          return (
+            pb.match.id === nb.match.id &&
+            pb.match.home_score === nb.match.home_score &&
+            pb.match.away_score === nb.match.away_score &&
+            pb.events.length === nb.events.length &&
+            pb.analyses.length === nb.analyses.length &&
+            pb.dashboards.length === nb.dashboards.length &&
+            pb.events[pb.events.length - 1]?.event_id === nb.events[nb.events.length - 1]?.event_id
+          );
+        });
+        if (isSame) return prev;
+      }
+      return next;
+    });
+
+    const tmpls = dbStore.getBotoneraTemplates();
+    setTemplates((prev) => (prev.length === tmpls.length && prev.every((t, i) => t.id === tmpls[i]?.id) ? prev : tmpls));
   };
 
   useEffect(() => {
@@ -126,12 +147,12 @@ export default function DashboardsPage() {
     const interval = setInterval(syncAll, 5 * 60 * 1000);
 
     // Realtime push: any analyst saving an event, finishing an analysis, or creating
-    // a match/dashboard, triggers an immediate refresh for every viewer on this page.
+    // a match/dashboard, triggers a smooth debounced refresh for every viewer on this page.
     const supabase = createClient();
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     const debouncedSync = () => {
       if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(syncAll, 300);
+      debounceTimer = setTimeout(syncAll, 500);
     };
     const channel = supabase
       .channel('dashboards-page-live')
@@ -149,11 +170,17 @@ export default function DashboardsPage() {
     };
   }, []);
 
-  // Poll Active Live Session Status every 3 seconds for real-time live tagging updates
+  // Poll Active Live Session Status every 3 seconds - only updates state if session info changed
   useEffect(() => {
     const syncSessions = () => {
       dbStore.getAllActiveSessions().then((sessions) => {
-        if (sessions) setActiveSessionsMap(sessions);
+        if (!sessions) return;
+        const currentStr = JSON.stringify(activeSessionsMapRef.current);
+        const newStr = JSON.stringify(sessions);
+        if (currentStr !== newStr) {
+          activeSessionsMapRef.current = sessions;
+          setActiveSessionsMap(sessions);
+        }
       });
     };
     syncSessions();
