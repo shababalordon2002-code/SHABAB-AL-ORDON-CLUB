@@ -4,6 +4,7 @@ import { scrapeTransfermarktPlayers } from '@/lib/scraper/transfermarkt-scraper'
 import { saveMatchesToSupabase } from '@/lib/services/matches-service';
 import { savePlayersToSupabase } from '@/lib/services/players-service';
 
+export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // Max 60 seconds for Vercel Serverless Function
 
 export async function GET(request: Request) {

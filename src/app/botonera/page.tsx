@@ -367,16 +367,16 @@ export default function BotoneraPage() {
       if (urlAnalysisId) {
         const targetAnalysis = dbStore.getAnalysisById(urlAnalysisId);
         if (targetAnalysis) {
-          if (urlMode === 'tag') {
-            handleEditAnalysisInBotonera(targetAnalysis);
-          } else {
+          if (urlMode === 'visor') {
             setActiveVisorAnalysis(targetAnalysis);
+          } else {
+            handleEditAnalysisInBotonera(targetAnalysis);
           }
           return;
         }
       }
 
-      if (urlMatchId && urlMode !== 'tag') {
+      if (urlMatchId && urlMode === 'visor') {
         const existingAns = dbStore.getAnalyses(urlMatchId);
         const matchObj = dbStore.getMatchById(urlMatchId);
         const matchEvs = dbStore.getNormalizedEvents(urlMatchId);
@@ -455,7 +455,9 @@ export default function BotoneraPage() {
             const savedTemplate = templates.find((t) => t.id === activeSession.botoneraTemplateId);
             if (savedTemplate) setTemplate(savedTemplate);
           }
-          setPageMode('analysis');
+          if (urlMatchId || urlAnalysisId || urlMode) {
+            setPageMode('analysis');
+          }
         }
       } else if (urlMatchId) {
         // If no existing session found for urlMatchId, select it in the wizard
@@ -493,14 +495,22 @@ export default function BotoneraPage() {
           ownWritesRef.current.delete(evt.event_id);
           return;
         }
-        setEvents((prev) => (prev.some((e) => e.event_id === evt.event_id) ? prev : [evt, ...prev]));
+        setEvents((prev) => {
+          const next = prev.some((e) => e.event_id === evt.event_id) ? prev : [evt, ...prev];
+          dbStore.saveNormalizedEvents([evt], false);
+          return next;
+        });
       },
       onUpdate: (evt) => {
         if (ownWritesRef.current.has(evt.event_id)) {
           ownWritesRef.current.delete(evt.event_id);
           return;
         }
-        setEvents((prev) => prev.map((e) => (e.event_id === evt.event_id ? evt : e)));
+        setEvents((prev) => {
+          const next = prev.map((e) => (e.event_id === evt.event_id ? evt : e));
+          dbStore.saveNormalizedEvents([evt], false);
+          return next;
+        });
       },
       onDelete: (eventId) => {
         if (!eventId) return;
@@ -508,7 +518,11 @@ export default function BotoneraPage() {
           ownWritesRef.current.delete(eventId);
           return;
         }
-        setEvents((prev) => prev.filter((e) => e.event_id !== eventId));
+        setEvents((prev) => {
+          const next = prev.filter((e) => e.event_id !== eventId);
+          dbStore.saveNormalizedEvents(next, true, selectedMatchId);
+          return next;
+        });
       },
     });
 
@@ -1557,12 +1571,31 @@ export default function BotoneraPage() {
         dbStore.backupDeletedEvents([target]);
       }
       const next = prev.filter((e) => e.event_id !== eventId);
-      dbStore.saveNormalizedEvents(next, true);
+      dbStore.saveNormalizedEvents(next, true, selectedMatchId);
+
       if (selectedMatchId && selectedMatchId !== 'free_session') {
         ownWritesRef.current.add(eventId);
         deleteAnalysisEventFromSupabase(eventId).catch((err) =>
           console.warn('Could not sync event deletion to Supabase:', err)
         );
+
+        // Also update existing MatchAnalysis card if present
+        const targetId = selectedMatchId;
+        const analyses = dbStore.getAnalyses(targetId);
+        if (analyses.length > 0) {
+          const existing = editingAnalysisId
+            ? analyses.find((a) => a.id === editingAnalysisId) || analyses[0]
+            : analyses[0];
+          if (existing) {
+            const updatedAnalysis: MatchAnalysis = {
+              ...existing,
+              events: next,
+              updated_at: new Date().toISOString(),
+            };
+            dbStore.saveAnalysis(updatedAnalysis);
+            setSavedAnalyses(dbStore.getAnalyses());
+          }
+        }
       }
       return next;
     });
@@ -1571,12 +1604,31 @@ export default function BotoneraPage() {
   const handleUpdateEvent = (updatedEvt: NormalizedEvent) => {
     setEvents((prev) => {
       const nextEvents = prev.map((e) => (e.event_id === updatedEvt.event_id ? updatedEvt : e));
-      dbStore.saveNormalizedEvents(nextEvents, true);
+      dbStore.saveNormalizedEvents(nextEvents, true, selectedMatchId);
+
       if (selectedMatchId && selectedMatchId !== 'free_session') {
         ownWritesRef.current.add(updatedEvt.event_id);
         updateAnalysisEventInSupabase(selectedMatchId, updatedEvt).catch((err) =>
           console.warn('Could not sync event update to Supabase:', err)
         );
+
+        // Also update existing MatchAnalysis card if present
+        const targetId = selectedMatchId;
+        const analyses = dbStore.getAnalyses(targetId);
+        if (analyses.length > 0) {
+          const existing = editingAnalysisId
+            ? analyses.find((a) => a.id === editingAnalysisId) || analyses[0]
+            : analyses[0];
+          if (existing) {
+            const updatedAnalysis: MatchAnalysis = {
+              ...existing,
+              events: nextEvents,
+              updated_at: new Date().toISOString(),
+            };
+            dbStore.saveAnalysis(updatedAnalysis);
+            setSavedAnalyses(dbStore.getAnalyses());
+          }
+        }
       }
       return nextEvents;
     });
@@ -1631,26 +1683,36 @@ export default function BotoneraPage() {
       setMatches(dbStore.getMatches());
     }
 
-    // Save or update the permanent Match Analysis card
+    // Save or update the single shared Match Analysis card per match
+    const masterAnalysisId = `analysis_${targetId}`;
     const existingAnalyses = dbStore.getAnalyses(targetId);
-    const existingObj = editingAnalysisId ? existingAnalyses.find((a) => a.id === editingAnalysisId) : null;
-    const resolvedAnalysisId = editingAnalysisId || `analysis_${targetId}_${Date.now()}`;
+    const existingObj = existingAnalyses.find((a) => a.match_id === targetId || a.id === masterAnalysisId);
+    const resolvedAnalysisId = masterAnalysisId;
+
+    const currentAnalyst = profile?.full_name || user?.email || 'Analista Principal (SAO)';
+    const combinedAnalystNames = dbStore.sanitizeAnalystNames([
+      ...(existingObj?.analyst_name ? [existingObj.analyst_name] : []),
+      currentAnalyst,
+    ]);
+
+    const combinedEventsRaw = [...(existingObj?.events || []), ...normalizedEvts];
+    const cleanCombinedEvents = dbStore.deduplicateEventsByTime(combinedEventsRaw);
 
     const newAnalysis: MatchAnalysis = {
       id: resolvedAnalysisId,
       match_id: targetId,
       title: `Análisis ${targetMatch ? targetMatch.home_team + ' vs ' + targetMatch.away_team : 'Etiquetado en Vivo'}`,
-      analyst_name: profile?.full_name || user?.email || 'Analista Principal (SAO)',
+      analyst_name: combinedAnalystNames,
       status: 'completed' as const,
-      video_type: videoType,
-      video_url: videoUrl,
-      video_source_name: videoSourceName,
-      p1_video_start_time: periodVideoOffsets[1] || null,
-      p2_video_start_time: periodVideoOffsets[2] || null,
-      botonera_template_id: template?.id || null,
-      home_lineup: targetMatch?.home_lineup || selectedMatch?.home_lineup || null,
-      away_lineup: targetMatch?.away_lineup || selectedMatch?.away_lineup || null,
-      events: normalizedEvts,
+      video_type: videoType || existingObj?.video_type || null,
+      video_url: videoUrl || existingObj?.video_url || null,
+      video_source_name: videoSourceName || existingObj?.video_source_name || null,
+      p1_video_start_time: periodVideoOffsets[1] ?? existingObj?.p1_video_start_time ?? null,
+      p2_video_start_time: periodVideoOffsets[2] ?? existingObj?.p2_video_start_time ?? null,
+      botonera_template_id: template?.id || existingObj?.botonera_template_id || null,
+      home_lineup: targetMatch?.home_lineup || selectedMatch?.home_lineup || existingObj?.home_lineup || null,
+      away_lineup: targetMatch?.away_lineup || selectedMatch?.away_lineup || existingObj?.away_lineup || null,
+      events: cleanCombinedEvents,
       created_at: existingObj?.created_at || new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -1662,7 +1724,7 @@ export default function BotoneraPage() {
     );
     setSavedAnalyses(dbStore.getAnalyses());
     setEditingAnalysisId(resolvedAnalysisId);
-    alert(`✅ Registro de análisis guardado con éxito (${events.length} eventos).`);
+    alert(`✅ Registro de análisis guardado con éxito (${cleanCombinedEvents.length} eventos).`);
   };
 
   const handleExportXml = () => {
@@ -1832,6 +1894,37 @@ export default function BotoneraPage() {
       {/* ----------------- LANDING: ELEGIR ENTRE REGISTRO O EDITAR + LISTADO DE REGISTROS ----------------- */}
       {pageMode === null && (
         <div className="space-y-8 max-w-5xl mx-auto py-8 animate-fade-in">
+          {/* Active Session Banner (if an in-progress session exists) */}
+          {isSessionConfigured && (
+            <div className="p-5 rounded-2xl bg-gradient-to-r from-emerald-950/80 via-slate-900 to-slate-900 border border-emerald-500/40 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xl">
+              <div className="flex items-center gap-3.5">
+                <div className="p-3 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shrink-0">
+                  <Radio className="w-5 h-5 animate-pulse text-emerald-400" />
+                </div>
+                <div>
+                  <p className="font-extrabold text-white text-sm">Tienes un registro en directo en marcha</p>
+                  <p className="text-slate-400 text-xs mt-0.5">
+                    Partido: <span className="text-amber-400 font-bold">{selectedMatchId && selectedMatchId !== 'free_session' ? (dbStore.getMatchById(selectedMatchId)?.home_team + ' vs ' + dbStore.getMatchById(selectedMatchId)?.away_team) : 'Sesión Libre'}</span> • {events.length} eventos etiquetados
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => setPageMode('analysis')}
+                  className="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs shadow-md shadow-emerald-950/40 transition-all flex items-center gap-2 cursor-pointer"
+                >
+                  <PlayCircle className="w-4 h-4 fill-slate-950 stroke-[2.5]" />
+                  <span>Reanudar Análisis</span>
+                </button>
+                <button
+                  onClick={handleEndSession}
+                  className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-rose-400 border border-slate-700 text-xs font-bold transition-all cursor-pointer"
+                >
+                  Finalizar
+                </button>
+              </div>
+            </div>
+          )}
           {/* Main Action Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 max-w-3xl mx-auto">
             <button
@@ -1975,9 +2068,9 @@ export default function BotoneraPage() {
                               )}
                             </div>
                           )}
-                          <p className="text-xs text-slate-400 mt-1 flex items-center gap-1.5">
-                            <User className="w-3.5 h-3.5 text-slate-500" />
-                            <span>{an.analyst_name || 'Analista Principal'}</span>
+                          <p className="text-xs text-slate-400 mt-1 flex items-center gap-1.5 line-clamp-1">
+                            <User className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                            <span className="truncate">{an.analyst_name || 'Analista Principal'}</span>
                           </p>
 
                           <div className="flex items-center gap-2 mt-3 text-[11px] text-slate-300 font-mono">

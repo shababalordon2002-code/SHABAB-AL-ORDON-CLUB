@@ -510,34 +510,101 @@ export const dbStore = {
     }
   },
 
+  // Helper for deduplicating events by timestamp (minuto, segundo, periodo, tipo, equipo, jugador)
+  deduplicateEventsByTime(events: NormalizedEvent[]): NormalizedEvent[] {
+    if (!events || events.length === 0) return [];
+    const trash = this.getTrashEvents();
+    const trashSet = new Set(trash.map((t) => t.event_id));
+
+    // 1. Filter out trash & invalid events
+    const valid = events.filter((e) => e && e.event_id && !trashSet.has(e.event_id));
+
+    // 2. Map by event_id first
+    const byIdMap = new Map<string, NormalizedEvent>();
+    valid.forEach((e) => byIdMap.set(e.event_id, e));
+    const uniqueById = Array.from(byIdMap.values());
+
+    // 3. Map by minute, second, period, event_type, team, player
+    const byTimeMap = new Map<string, NormalizedEvent>();
+    uniqueById.forEach((e) => {
+      const period = e.period ?? 1;
+      let minute = e.minute;
+      let second = e.second;
+      if (minute == null || second == null) {
+        if (e.timestamp != null) {
+          minute = Math.floor(e.timestamp / 60);
+          second = Math.floor(e.timestamp % 60);
+        } else {
+          minute = 0;
+          second = 0;
+        }
+      }
+      const type = (e.event_type || e.category || '').toLowerCase().trim();
+      const team = (e.team_id || e.team_name || '').toLowerCase().trim();
+      const player = (e.player_name || e.player_id || '').toLowerCase().trim();
+
+      const timeKey = `p${period}_m${minute}_s${second}_t${type}_tm${team}_pl${player}`;
+
+      if (!byTimeMap.has(timeKey)) {
+        byTimeMap.set(timeKey, e);
+      } else {
+        const existing = byTimeMap.get(timeKey)!;
+        const existingScore = (existing.x != null ? 1 : 0) + (existing.y != null ? 1 : 0) + (existing.player_name ? 1 : 0) + (existing.source === 'longomatch' ? 2 : 0);
+        const currentScore = (e.x != null ? 1 : 0) + (e.y != null ? 1 : 0) + (e.player_name ? 1 : 0) + (e.source === 'longomatch' ? 2 : 0);
+        if (currentScore > existingScore) {
+          byTimeMap.set(timeKey, e);
+        }
+      }
+    });
+
+    return Array.from(byTimeMap.values());
+  },
+
   // Normalized Events
   getNormalizedEvents(matchId?: string): NormalizedEvent[] {
-    const allEvents: NormalizedEvent[] = getFromStorage(STORAGE_KEYS.EVENTS, []);
-    if (!matchId) return allEvents;
-    return allEvents.filter(e => e.match_id === matchId);
+    const storageEvents: NormalizedEvent[] = getFromStorage(STORAGE_KEYS.EVENTS, []);
+    const trash = this.getTrashEvents();
+    const trashSet = new Set(trash.map((t) => t.event_id));
+
+    const analyses = this.getAnalyses(matchId);
+    const analysisEvs = analyses.flatMap((a) => a.events || []);
+
+    const allEvents = [...analysisEvs, ...storageEvents].filter((e) => e && e.event_id && !trashSet.has(e.event_id));
+    if (matchId) {
+      const matchOnly = allEvents.filter((e) => e.match_id === matchId);
+      return this.deduplicateEventsByTime(matchOnly);
+    }
+    return this.deduplicateEventsByTime(allEvents);
   },
 
   async syncAnalysisEventsFromSupabase(matchId?: string): Promise<NormalizedEvent[]> {
     if (!matchId) return this.getNormalizedEvents();
     try {
       const remoteEvs = await getAnalysisEventsFromSupabase(matchId);
-      if (remoteEvs && remoteEvs.length > 0) {
-        this.saveNormalizedEvents(remoteEvs, false);
-      }
+      const analyses = this.getAnalyses(matchId);
+      const analysisEvs = analyses.flatMap((a) => a.events || []);
+
+      const combined = [...(remoteEvs || []), ...analysisEvs];
+      const validCombined = this.deduplicateEventsByTime(combined);
+      this.saveNormalizedEvents(validCombined, true, matchId);
     } catch (err) {
       console.warn('Could not sync analysis_events from Supabase:', err);
     }
     return this.getNormalizedEvents(matchId);
   },
 
-  saveNormalizedEvents(newEvents: NormalizedEvent[], replaceMatchEvents = false): void {
-    let allEvents = this.getNormalizedEvents();
-    if (newEvents.length > 0 && replaceMatchEvents) {
-      const targetMatchId = newEvents[0].match_id;
-      allEvents = allEvents.filter(e => e.match_id !== targetMatchId);
+  saveNormalizedEvents(newEvents: NormalizedEvent[], replaceMatchEvents = false, overrideMatchId?: string): void {
+    let allEvents = getFromStorage<NormalizedEvent[]>(STORAGE_KEYS.EVENTS, []);
+    const trash = this.getTrashEvents();
+    const trashSet = new Set(trash.map((t) => t.event_id));
+    allEvents = allEvents.filter((e) => !trashSet.has(e.event_id));
+
+    const targetMatchId = overrideMatchId || newEvents[0]?.match_id;
+    if (replaceMatchEvents && targetMatchId) {
+      allEvents = allEvents.filter((e) => e.match_id !== targetMatchId);
     } else if (newEvents.length > 0) {
-      const newIds = new Set(newEvents.map(e => e.event_id));
-      allEvents = allEvents.filter(e => !newIds.has(e.event_id));
+      const newIds = new Set(newEvents.map((e) => e.event_id));
+      allEvents = allEvents.filter((e) => !newIds.has(e.event_id));
     }
     allEvents = [...newEvents, ...allEvents];
     setToStorage(STORAGE_KEYS.EVENTS, allEvents);
@@ -790,54 +857,213 @@ export const dbStore = {
     }
   },
 
-  // Match Analyses Management
-  getAnalyses(matchId?: string): MatchAnalysis[] {
-    const list = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
-    
-    // Deduplicate list by unique analysis id
-    const deduplicatedMap = new Map<string, MatchAnalysis>();
-    list.forEach((item) => {
-      if (item && item.id) {
-        deduplicatedMap.set(item.id, item);
+  // Helper to parse and deduplicate analyst names neatly
+  sanitizeAnalystNames(rawNames: (string | null | undefined)[]): string {
+    const allNames: string[] = [];
+    rawNames.forEach((raw) => {
+      if (raw) {
+        raw.split(',').forEach((name) => {
+          const trimmed = name.trim();
+          if (trimmed && trimmed.length > 0) {
+            allNames.push(trimmed);
+          }
+        });
       }
     });
 
-    const deduplicatedList = Array.from(deduplicatedMap.values());
-    if (!matchId) return deduplicatedList;
-    return deduplicatedList.filter(a => a.match_id === matchId);
+    const unique = Array.from(new Set(allNames));
+    if (unique.length === 0) return 'Analista Principal (SAO)';
+    if (unique.length > 3) {
+      return `${unique.slice(0, 2).join(', ')} +${unique.length - 2} analistas`;
+    }
+    return unique.join(', ');
+  },
+
+  // Consolidate multiple fragmented analyses into ONE single master analysis per match
+  consolidateAnalyses(analyses: MatchAnalysis[]): MatchAnalysis[] {
+    if (!analyses || analyses.length === 0) return [];
+    const matches = this.getMatches();
+    const matchMap = new Map(matches.map((m) => [m.id, m]));
+
+    const groupMap = new Map<string, MatchAnalysis[]>();
+    analyses.forEach((an) => {
+      if (an && an.match_id) {
+        const group = groupMap.get(an.match_id) || [];
+        group.push(an);
+        groupMap.set(an.match_id, group);
+      }
+    });
+
+    const consolidated: MatchAnalysis[] = [];
+
+    groupMap.forEach((group, mId) => {
+      const matchObj = matchMap.get(mId);
+      const allEventsRaw = group.flatMap((a) => a.events || []);
+      const cleanEvents = this.deduplicateEventsByTime(allEventsRaw);
+
+      if (group.length === 1) {
+        consolidated.push({
+          ...group[0],
+          analyst_name: this.sanitizeAnalystNames([group[0].analyst_name]),
+          events: cleanEvents,
+        });
+      } else {
+        // Multiple analyses for the same match -> Merge into 1 Master Analysis
+        const analystNames = this.sanitizeAnalystNames(group.map((a) => a.analyst_name));
+
+        const withVideo = group.find((a) => a.video_url) || group[0];
+        const withHomeLineup = group.find((a) => a.home_lineup && Object.keys(a.home_lineup).length > 0);
+        const withAwayLineup = group.find((a) => a.away_lineup && Object.keys(a.away_lineup).length > 0);
+
+        const title = withVideo.title || (matchObj ? `Análisis ${matchObj.home_team} vs ${matchObj.away_team}` : group[0].title);
+
+        const masterAnalysis: MatchAnalysis = {
+          id: `analysis_${mId}`,
+          match_id: mId,
+          title: title,
+          analyst_name: analystNames,
+          status: group.some((a) => a.status === 'completed') ? 'completed' : 'in_progress',
+          video_type: withVideo.video_type,
+          video_url: withVideo.video_url,
+          video_source_name: withVideo.video_source_name,
+          p1_video_start_time: group.find((a) => a.p1_video_start_time != null)?.p1_video_start_time ?? null,
+          p2_video_start_time: group.find((a) => a.p2_video_start_time != null)?.p2_video_start_time ?? null,
+          home_lineup: withHomeLineup?.home_lineup || group[0].home_lineup || null,
+          away_lineup: withAwayLineup?.away_lineup || group[0].away_lineup || null,
+          events: cleanEvents,
+          created_at: group.map((a) => a.created_at).sort()[0] || new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+
+        consolidated.push(masterAnalysis);
+      }
+    });
+
+    return consolidated;
+  },
+
+  mergeMatchAnalyses(sourceMatchId: string, targetMatchId: string): MatchAnalysis | null {
+    const list = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
+    const eventsList = getFromStorage<NormalizedEvent[]>(STORAGE_KEYS.EVENTS, []);
+
+    const targetMatch = this.getMatchById(targetMatchId);
+    if (!targetMatch) return null;
+
+    const sourceAnalyses = list.filter((a) => a.match_id === sourceMatchId || a.id.includes(sourceMatchId));
+    const targetAnalyses = list.filter((a) => a.match_id === targetMatchId || a.id.includes(targetMatchId));
+
+    if (sourceAnalyses.length === 0 && targetAnalyses.length === 0) return null;
+
+    const sourceEvents = [
+      ...sourceAnalyses.flatMap((a) => a.events || []),
+      ...eventsList.filter((e) => e.match_id === sourceMatchId),
+    ];
+    const targetEvents = [
+      ...targetAnalyses.flatMap((a) => a.events || []),
+      ...eventsList.filter((e) => e.match_id === targetMatchId),
+    ];
+
+    const remappedSourceEvents = sourceEvents.map((e) => ({
+      ...e,
+      match_id: targetMatchId,
+    }));
+
+    const allCombined = [...remappedSourceEvents, ...targetEvents];
+    const deduplicatedEvents = this.deduplicateEventsByTime(allCombined);
+
+    const allAnalyses = [...targetAnalyses, ...sourceAnalyses];
+    const analystNames = this.sanitizeAnalystNames(allAnalyses.map((a) => a.analyst_name));
+
+    const withVideo = targetAnalyses.find((a) => a.video_url) || sourceAnalyses.find((a) => a.video_url) || allAnalyses[0];
+    const withHomeLineup = allAnalyses.find((a) => a.home_lineup && Object.keys(a.home_lineup).length > 0);
+    const withAwayLineup = allAnalyses.find((a) => a.away_lineup && Object.keys(a.away_lineup).length > 0);
+
+    const masterAnalysis: MatchAnalysis = {
+      id: `analysis_${targetMatchId}`,
+      match_id: targetMatchId,
+      title: `Análisis ${targetMatch.home_team} vs ${targetMatch.away_team}`,
+      analyst_name: analystNames,
+      status: allAnalyses.some((a) => a.status === 'completed') ? 'completed' : 'in_progress',
+      video_type: withVideo?.video_type || targetMatch.video_type || undefined,
+      video_url: withVideo?.video_url || targetMatch.video_url || undefined,
+      video_source_name: withVideo?.video_source_name || targetMatch.video_source_name || undefined,
+      p1_video_start_time: allAnalyses.find((a) => a.p1_video_start_time != null)?.p1_video_start_time ?? targetMatch.p1_video_start_time ?? null,
+      p2_video_start_time: allAnalyses.find((a) => a.p2_video_start_time != null)?.p2_video_start_time ?? targetMatch.p2_video_start_time ?? null,
+      home_lineup: withHomeLineup?.home_lineup || targetMatch.home_lineup || null,
+      away_lineup: withAwayLineup?.away_lineup || targetMatch.away_lineup || null,
+      events: deduplicatedEvents,
+      created_at: allAnalyses.map((a) => a.created_at).sort()[0] || new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    const remainingAnalyses = list.filter(
+      (a) => a.match_id !== sourceMatchId && a.match_id !== targetMatchId && !sourceAnalyses.some((sa) => sa.id === a.id)
+    );
+    const finalAnalyses = [masterAnalysis, ...remainingAnalyses];
+    setToStorage(STORAGE_KEYS.MATCH_ANALYSES, finalAnalyses);
+
+    this.saveNormalizedEvents(deduplicatedEvents, true, targetMatchId);
+    this.deleteMatchEvents(sourceMatchId);
+
+    saveAnalysisToSupabase(masterAnalysis).catch(() => {});
+    sourceAnalyses.forEach((sa) => {
+      deleteAnalysisFromSupabase(sa.id).catch(() => {});
+    });
+
+    return masterAnalysis;
+  },
+
+  // Match Analyses Management
+  getAnalyses(matchId?: string): MatchAnalysis[] {
+    let list = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
+
+    // Auto-merge legacy demo analysis ('match_demo_1') into Jornada 2 ('match_fs_ITiecmAk') if present
+    if (list.some((a) => a.match_id === 'match_demo_1' || a.id === 'analysis_demo_1')) {
+      this.mergeMatchAnalyses('match_demo_1', 'match_fs_ITiecmAk');
+      list = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, []);
+    }
+
+    const consolidatedList = this.consolidateAnalyses(list);
+
+    if (list.length !== consolidatedList.length) {
+      setToStorage(STORAGE_KEYS.MATCH_ANALYSES, consolidatedList);
+    }
+
+    if (!matchId) return consolidatedList;
+    return consolidatedList.filter((a) => a.match_id === matchId);
   },
 
   getAnalysisById(id: string): MatchAnalysis | undefined {
     const list = this.getAnalyses();
-    return list.find(a => a.id === id || a.match_id === id);
+    return list.find((a) => a.id === id || a.match_id === id);
   },
 
   async syncAnalysesFromSupabase(matchId?: string): Promise<MatchAnalysis[]> {
     const remote = await getAnalysesFromSupabase(matchId);
-    if (remote && remote.length > 0) {
-      const allLocal = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
-      const localMap = new Map(allLocal.map((a) => [a.id, a]));
+    const allLocal = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
 
-      const mergedRemote = remote.map((ra) => {
-        const local = localMap.get(ra.id);
-        if (!local) return ra;
-        const raHomeOk = ra.home_lineup && typeof ra.home_lineup === 'object' && Object.keys(ra.home_lineup).length > 0;
-        const raAwayOk = ra.away_lineup && typeof ra.away_lineup === 'object' && Object.keys(ra.away_lineup).length > 0;
-        return {
-          ...ra,
-          home_lineup: raHomeOk ? ra.home_lineup : (local.home_lineup || null),
-          away_lineup: raAwayOk ? ra.away_lineup : (local.away_lineup || null),
-        };
-      });
+    const mergedRaw = [...remote, ...allLocal];
+    const consolidated = this.consolidateAnalyses(mergedRaw);
 
-      const remoteIdSet = new Set(remote.map(r => r.id));
-      const localOnly = allLocal.filter(a => !remoteIdSet.has(a.id));
+    setToStorage(STORAGE_KEYS.MATCH_ANALYSES, consolidated);
 
-      const merged = [...mergedRemote, ...localOnly];
-      setToStorage(STORAGE_KEYS.MATCH_ANALYSES, merged);
-      return this.getAnalyses(matchId);
+    if (remote && remote.length > 1 && matchId) {
+      const matchRemote = remote.filter((r) => r.match_id === matchId);
+      if (matchRemote.length > 1) {
+        const master = consolidated.find((c) => c.match_id === matchId);
+        if (master) {
+          saveAnalysisToSupabase(master).catch(() => {});
+          matchRemote.forEach((oldRemote) => {
+            if (oldRemote.id !== master.id) {
+              deleteAnalysisFromSupabase(oldRemote.id).catch(() => {});
+            }
+          });
+        }
+      }
     }
-    return this.getAnalyses(matchId);
+
+    if (!matchId) return consolidated;
+    return consolidated.filter((a) => a.match_id === matchId);
   },
 
   saveAnalysis(analysis: MatchAnalysis): void {

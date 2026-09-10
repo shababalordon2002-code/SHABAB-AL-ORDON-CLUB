@@ -33,16 +33,6 @@ function DashboardDetailContent({ params }: { params: Promise<{ id: string }> })
           setMatch(m);
           tmplId = d.botonera_template_id || m.botonera_template_id;
         }
-
-        // Combine events from analysis (if present) and normalized match events
-        const analysisEvs = d.analysis_id ? dbStore.getAnalysisById(d.analysis_id)?.events || [] : [];
-        const matchEvs = dbStore.getNormalizedEvents(d.match_id);
-
-        const eventMap = new Map<string, NormalizedEvent>();
-        analysisEvs.forEach((e) => eventMap.set(e.event_id, e));
-        matchEvs.forEach((e) => eventMap.set(e.event_id, e));
-
-        setEvents(Array.from(eventMap.values()));
       } else {
         // Fallback: search directly by matchId if id is a match id
         targetMatchId = dashboardId;
@@ -50,8 +40,6 @@ function DashboardDetailContent({ params }: { params: Promise<{ id: string }> })
         if (m) {
           setMatch(m);
           tmplId = m.botonera_template_id;
-          const evs = dbStore.getNormalizedEvents(m.id);
-          setEvents(evs);
         }
       }
 
@@ -60,8 +48,12 @@ function DashboardDetailContent({ params }: { params: Promise<{ id: string }> })
         if (tmpl) setTemplate(tmpl);
       }
 
-      // Sync latest events & analyses from Supabase if connected
       if (targetMatchId) {
+        // Set initial combined events from local store immediately (combines all analyses & events)
+        const initialEvents = dbStore.getNormalizedEvents(targetMatchId);
+        setEvents(initialEvents);
+
+        // Sync latest events & analyses from Supabase if connected
         try {
           await dbStore.syncAnalysesFromSupabase(targetMatchId);
           const freshAnalyses = dbStore.getAnalyses(targetMatchId);
@@ -78,25 +70,12 @@ function DashboardDetailContent({ params }: { params: Promise<{ id: string }> })
             });
           }
 
-          const { getAnalysisEventsFromSupabase } = await import('@/lib/services/botonera-service');
-          const remoteEvs = await getAnalysisEventsFromSupabase(targetMatchId);
-          if (remoteEvs && remoteEvs.length > 0) {
-            setEvents((prev) => {
-              const map = new Map<string, NormalizedEvent>();
-              prev.forEach((e) => map.set(e.event_id, e));
-              remoteEvs.forEach((e) => map.set(e.event_id, e));
-              const merged = Array.from(map.values());
-              if (
-                prev.length === merged.length &&
-                prev.every((e, i) => e.event_id === merged[i]?.event_id && e.updated_at === merged[i]?.updated_at)
-              ) {
-                return prev;
-              }
-              return merged;
-            });
-          }
+          const syncedEvents = await dbStore.syncAnalysisEventsFromSupabase(targetMatchId);
+          setEvents(syncedEvents);
         } catch (err) {
           console.warn('Could not sync Supabase events for dashboard:', err);
+          const freshEvents = dbStore.getNormalizedEvents(targetMatchId);
+          setEvents(freshEvents);
         }
       }
 

@@ -84,8 +84,8 @@ export default function DashboardsPage() {
         const analysisEvs = analyses.flatMap((a) => a.events || []);
 
         const eventMap = new Map<string, NormalizedEvent>();
-        matchNormalizedEvs.forEach((e) => eventMap.set(e.event_id, e));
         analysisEvs.forEach((e) => eventMap.set(e.event_id, e));
+        matchNormalizedEvs.forEach((e) => eventMap.set(e.event_id, e));
 
         const events = Array.from(eventMap.values());
         return {
@@ -102,14 +102,15 @@ export default function DashboardsPage() {
       if (prev.length === next.length) {
         const isSame = prev.every((pb, i) => {
           const nb = next[i];
+          const pbEvIds = pb.events.map((e) => e.event_id).join(',');
+          const nbEvIds = nb.events.map((e) => e.event_id).join(',');
           return (
             pb.match.id === nb.match.id &&
             pb.match.home_score === nb.match.home_score &&
             pb.match.away_score === nb.match.away_score &&
-            pb.events.length === nb.events.length &&
             pb.analyses.length === nb.analyses.length &&
             pb.dashboards.length === nb.dashboards.length &&
-            pb.events[pb.events.length - 1]?.event_id === nb.events[nb.events.length - 1]?.event_id
+            pbEvIds === nbEvIds
           );
         });
         if (isSame) return prev;
@@ -308,7 +309,7 @@ export default function DashboardsPage() {
         {blocks.map((block) => {
           const liveSession = activeSessionsMap[block.match.id];
           const isLiveTagging = dashboardConfig.showLiveBadge && liveSession && liveSession.isTimerRunning;
-          const currentEventsCount = isLiveTagging ? (liveSession.events?.length || 0) : (block.events.length || block.analyses.reduce((acc, a) => acc + (a.events?.length || 0), 0));
+          const currentEventsCount = block.events.length || (liveSession?.events?.length || 0);
           const primaryAnalysis = block.analyses[0];
           const resolvedVideoUrl = primaryAnalysis?.video_url || block.match.video_url;
           const youtubeThumb = getYouTubeThumbnail(resolvedVideoUrl);

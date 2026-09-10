@@ -211,7 +211,7 @@ export default function PartidoDetailPage({ params }: { params: Promise<{ id: st
             </button>
 
             <Link
-              href={`/botonera?match_id=${match.id}`}
+              href={`/botonera?match_id=${match.id}&mode=tag`}
               className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs shadow-md transition-all"
             >
               <PlayCircle className="w-4 h-4 stroke-[2.5]" />
@@ -241,7 +241,7 @@ export default function PartidoDetailPage({ params }: { params: Promise<{ id: st
             </div>
 
             <Link
-              href={`/botonera?match_id=${match.id}`}
+              href={`/botonera?match_id=${match.id}&mode=tag`}
               className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-rose-600 via-amber-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-slate-950 font-black text-xs shadow-md shadow-rose-950/40 flex items-center gap-2 whitespace-nowrap transition-all shrink-0"
             >
               <PlayCircle className="w-4 h-4 stroke-[2.5]" />
@@ -292,7 +292,7 @@ export default function PartidoDetailPage({ params }: { params: Promise<{ id: st
           </div>
 
           <Link
-            href={`/botonera?match_id=${match.id}`}
+            href={`/botonera?match_id=${match.id}&mode=tag`}
             className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-extrabold text-xs shadow-md transition-all flex items-center gap-2 shrink-0"
           >
             <Plus className="w-4 h-4 stroke-[3]" />
@@ -323,9 +323,9 @@ export default function PartidoDetailPage({ params }: { params: Promise<{ id: st
                   </div>
 
                   <h4 className="font-extrabold text-sm text-white mt-2.5 line-clamp-1">{an.title}</h4>
-                  <p className="text-xs text-slate-400 mt-1 flex items-center gap-1.5">
-                    <User className="w-3.5 h-3.5 text-slate-500" />
-                    <span>{an.analyst_name || 'Analista Principal'}</span>
+                  <p className="text-xs text-slate-400 mt-1 flex items-center gap-1.5 line-clamp-1">
+                    <User className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                    <span className="truncate">{an.analyst_name || 'Analista Principal'}</span>
                   </p>
 
                   <div className="flex items-center gap-2 mt-3 text-[11px] text-slate-300 font-mono">
@@ -351,7 +351,7 @@ export default function PartidoDetailPage({ params }: { params: Promise<{ id: st
                   </button>
 
                   <Link
-                    href={`/botonera?match_id=${match.id}&analysis_id=${an.id}`}
+                    href={`/botonera?match_id=${match.id}&analysis_id=${an.id}&mode=tag`}
                     className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 transition-colors"
                     title="Editar en Botonera"
                   >
