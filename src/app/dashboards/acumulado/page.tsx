@@ -13,6 +13,7 @@ import { buildButtonByButtonWidgets } from '@/components/dashboards/dashboard-pr
 import { CategoryChart } from '@/components/dashboards/viz/CategoryChart';
 import { TeamLogo } from '@/components/player/PlayerBadge';
 import { useAuth } from '@/components/providers/AuthProvider';
+import { createClient } from '@/lib/supabase/client';
 
 const STORAGE_KEY = 'sao_cumulative_dashboard_widgets_v1';
 
@@ -54,13 +55,41 @@ function CumulativeDashboardContent() {
 
   useEffect(() => {
     loadData();
-    (async () => {
-      await Promise.all([
-        dbStore.syncAnalysesFromSupabase?.(),
-        dbStore.syncBotoneraTemplatesFromSupabase?.(),
-      ]);
-      loadData();
-    })();
+    const syncAll = async () => {
+      try {
+        await Promise.all([
+          dbStore.syncMatchesFromSupabase?.(),
+          dbStore.syncAnalysesFromSupabase?.(),
+          dbStore.syncBotoneraTemplatesFromSupabase?.(),
+        ]);
+        const allMatches = dbStore.getMatches();
+        await Promise.all(allMatches.map((m) => dbStore.syncAnalysisEventsFromSupabase(m.id)));
+        loadData();
+      } catch {
+        loadData();
+      }
+    };
+    syncAll();
+
+    const supabase = createClient();
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    const debouncedSync = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(syncAll, 300);
+    };
+
+    const channel = supabase
+      .channel('dashboards-acumulado-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'match_analyses' }, debouncedSync)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, debouncedSync)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'analysis_events' }, debouncedSync)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'analysis_sessions' }, debouncedSync)
+      .subscribe();
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   useEffect(() => {

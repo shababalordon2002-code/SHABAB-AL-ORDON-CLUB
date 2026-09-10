@@ -7,6 +7,8 @@ import { dbStore } from '@/lib/store/db-store';
 import { BotoneraTemplate, Match, MatchDashboard, NormalizedEvent } from '@/types';
 import { StandardMatchDashboard } from '@/components/dashboards/StandardMatchDashboard';
 
+import { createClient } from '@/lib/supabase/client';
+
 function DashboardDetailContent({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
   const dashboardId = resolvedParams.id;
@@ -96,10 +98,31 @@ function DashboardDetailContent({ params }: { params: Promise<{ id: string }> })
 
     loadDashboardData();
 
-    // Auto-refresh: re-pull latest events from Supabase every 5 min so viewers
-    // watching the dashboard see updates made live by analysts in Botonera.
+    // Auto-refresh fallback
     const interval = setInterval(loadDashboardData, 5 * 60 * 1000);
-    return () => clearInterval(interval);
+
+    // Realtime push: when any analyst registers/saves an event or analysis, reload live
+    const supabase = createClient();
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    const debouncedReload = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(loadDashboardData, 300);
+    };
+
+    const channel = supabase
+      .channel(`dashboard-detail-live-${dashboardId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'match_analyses' }, debouncedReload)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'match_dashboards' }, debouncedReload)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, debouncedReload)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'analysis_events' }, debouncedReload)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'analysis_sessions' }, debouncedReload)
+      .subscribe();
+
+    return () => {
+      clearInterval(interval);
+      if (debounceTimer) clearTimeout(debounceTimer);
+      supabase.removeChannel(channel);
+    };
   }, [dashboardId]);
 
   if (loading) {

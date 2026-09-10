@@ -77,8 +77,15 @@ export default function DashboardsPage() {
 
     const next: MatchBlock[] = matches
       .map((match) => {
-        const events = dbStore.getNormalizedEvents(match.id);
+        const matchNormalizedEvs = dbStore.getNormalizedEvents(match.id);
         const analyses = dbStore.getAnalyses(match.id);
+        const analysisEvs = analyses.flatMap((a) => a.events || []);
+
+        const eventMap = new Map<string, NormalizedEvent>();
+        matchNormalizedEvs.forEach((e) => eventMap.set(e.event_id, e));
+        analysisEvs.forEach((e) => eventMap.set(e.event_id, e));
+
+        const events = Array.from(eventMap.values());
         return {
           match,
           events,
@@ -86,7 +93,7 @@ export default function DashboardsPage() {
           dashboards: dashboards.filter((d) => d.match_id === match.id),
         };
       })
-      .filter((b) => b.analyses.length > 0)
+      .filter((b) => b.analyses.length > 0 || b.events.length > 0)
       .sort((a, b) => (a.match.date < b.match.date ? 1 : -1));
 
     setBlocks(next);
@@ -97,34 +104,42 @@ export default function DashboardsPage() {
     load();
     setLoading(false);
 
-    const syncAll = () =>
-      Promise.all([
-        dbStore.syncMatchesFromSupabase(),
-        dbStore.syncDashboardsFromSupabase(),
-        dbStore.syncAnalysesFromSupabase(),
-        dbStore.syncBotoneraTemplatesFromSupabase(),
-      ])
-        .then(load)
-        .catch(() => {});
+    const syncAll = async () => {
+      try {
+        await Promise.all([
+          dbStore.syncMatchesFromSupabase(),
+          dbStore.syncDashboardsFromSupabase(),
+          dbStore.syncAnalysesFromSupabase(),
+          dbStore.syncBotoneraTemplatesFromSupabase(),
+        ]);
+        const matches = dbStore.getMatches();
+        await Promise.all(matches.map((m) => dbStore.syncAnalysisEventsFromSupabase(m.id)));
+        load();
+      } catch {
+        load();
+      }
+    };
 
     syncAll();
 
     // Fallback auto-refresh (in case realtime is momentarily disconnected).
     const interval = setInterval(syncAll, 5 * 60 * 1000);
 
-    // Realtime push: any analyst saving/finishing a match's analysis, or creating
+    // Realtime push: any analyst saving an event, finishing an analysis, or creating
     // a match/dashboard, triggers an immediate refresh for every viewer on this page.
     const supabase = createClient();
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     const debouncedSync = () => {
       if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(syncAll, 400);
+      debounceTimer = setTimeout(syncAll, 300);
     };
     const channel = supabase
       .channel('dashboards-page-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'match_analyses' }, debouncedSync)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'match_dashboards' }, debouncedSync)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, debouncedSync)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'analysis_events' }, debouncedSync)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'analysis_sessions' }, debouncedSync)
       .subscribe();
 
     return () => {

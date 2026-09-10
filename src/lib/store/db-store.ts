@@ -7,7 +7,8 @@ import {
   getAnalysisSessionFromSupabase,
   getAllActiveSessionsFromSupabase,
   deleteAnalysisSessionFromSupabase,
-  clearAnalysisEventsFromSupabase
+  clearAnalysisEventsFromSupabase,
+  getAnalysisEventsFromSupabase
 } from '@/lib/services/botonera-service';
 import { saveMatchesToSupabase, getMatchesFromSupabase } from '@/lib/services/matches-service';
 import { getPlayersFromSupabase } from '@/lib/services/players-service';
@@ -490,6 +491,19 @@ export const dbStore = {
     const allEvents: NormalizedEvent[] = getFromStorage(STORAGE_KEYS.EVENTS, []);
     if (!matchId) return allEvents;
     return allEvents.filter(e => e.match_id === matchId);
+  },
+
+  async syncAnalysisEventsFromSupabase(matchId?: string): Promise<NormalizedEvent[]> {
+    if (!matchId) return this.getNormalizedEvents();
+    try {
+      const remoteEvs = await getAnalysisEventsFromSupabase(matchId);
+      if (remoteEvs && remoteEvs.length > 0) {
+        this.saveNormalizedEvents(remoteEvs, false);
+      }
+    } catch (err) {
+      console.warn('Could not sync analysis_events from Supabase:', err);
+    }
+    return this.getNormalizedEvents(matchId);
   },
 
   saveNormalizedEvents(newEvents: NormalizedEvent[], replaceMatchEvents = false): void {
