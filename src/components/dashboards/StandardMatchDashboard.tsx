@@ -793,8 +793,9 @@ function generateDominanceDifferentialPaths(
     return allEvents.filter((e) => isEventOfAwayTeam(e) && isGoalEvent(e)).length;
   }, [allEvents, isEventOfAwayTeam]);
 
-  const displayHomeScore = allEvents.length > 0 ? calculatedHomeGoals : (match.home_score ?? 0);
-  const displayAwayScore = allEvents.length > 0 ? calculatedAwayGoals : (match.away_score ?? 0);
+  const hasTaggedGoals = calculatedHomeGoals > 0 || calculatedAwayGoals > 0;
+  const displayHomeScore = hasTaggedGoals ? calculatedHomeGoals : (match.home_score ?? 0);
+  const displayAwayScore = hasTaggedGoals ? calculatedAwayGoals : (match.away_score ?? 0);
 
   // Extract all category buttons from template (or default categories if template unavailable)
   const categoryButtons: BotoneraButton[] = useMemo(() => {

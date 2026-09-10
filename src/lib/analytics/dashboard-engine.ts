@@ -418,7 +418,7 @@ export function isGoalEvent(evt: NormalizedEvent): boolean {
   const typeStr = (evt.event_type || '').toLowerCase().trim();
   const catStr = (evt.category || '').toLowerCase().trim();
   const subcatStr = (evt.subcategory || '').toLowerCase().trim();
-  const metaDescriptors: string[] = evt.metadata?.descriptors || [];
+  const metaDescriptors: string[] = evt.metadata?.descriptors || evt.metadata?.tags || [];
 
   // 1. Direct outcome = Gol / Goal
   if (
@@ -467,7 +467,8 @@ export function isGoalEvent(evt: NormalizedEvent): boolean {
       );
     }) ||
     subcatStr === 'gol' ||
-    subcatStr.includes('gol');
+    subcatStr.includes(': gol') ||
+    subcatStr.includes('resultado: gol');
 
   return hasGolDesc;
 }
@@ -478,11 +479,14 @@ export function isEventOfHomeTeam(evt: NormalizedEvent, homeTeamName?: string): 
   const cleanEvt = (evt.team_name || '').toLowerCase().trim();
   if (cleanEvt) {
     if (cleanHome && cleanEvt === cleanHome) return true;
-    if (/shabab|ordon|sao/i.test(cleanHome) && /shabab|ordon|sao/i.test(cleanEvt)) return true;
+    if (cleanHome && /shabab|ordon|sao/i.test(cleanHome) && /shabab|ordon|sao/i.test(cleanEvt)) return true;
+    if (cleanHome && (cleanHome.includes(cleanEvt) || cleanEvt.includes(cleanHome))) return true;
     return false;
   }
   if (evt.team_id) {
-    return evt.team_id === 'home_team' || evt.team_id === 'team_home' || evt.team_id === 'team_shabab_al_ordon';
+    if (evt.team_id === 'home_team' || evt.team_id === 'team_home') return true;
+    if (cleanHome && /shabab|ordon|sao/i.test(cleanHome) && evt.team_id === 'team_shabab_al_ordon') return true;
+    if (cleanHome && !/shabab|ordon|sao/i.test(cleanHome) && evt.team_id === 'team_rival') return true;
   }
   return true;
 }
@@ -493,18 +497,22 @@ export function isEventOfAwayTeam(evt: NormalizedEvent, awayTeamName?: string): 
   const cleanEvt = (evt.team_name || '').toLowerCase().trim();
   if (cleanEvt) {
     if (cleanAway && cleanEvt === cleanAway) return true;
-    if (/rival/i.test(cleanAway) && /rival/i.test(cleanEvt)) return true;
+    if (cleanAway && /shabab|ordon|sao/i.test(cleanAway) && /shabab|ordon|sao/i.test(cleanEvt)) return true;
+    if (cleanAway && (cleanAway.includes(cleanEvt) || cleanEvt.includes(cleanAway))) return true;
     return false;
   }
   if (evt.team_id) {
-    return evt.team_id === 'away_team' || evt.team_id === 'team_away' || evt.team_id === 'team_rival';
+    if (evt.team_id === 'away_team' || evt.team_id === 'team_away') return true;
+    if (cleanAway && /shabab|ordon|sao/i.test(cleanAway) && evt.team_id === 'team_shabab_al_ordon') return true;
+    if (cleanAway && !/shabab|ordon|sao/i.test(cleanAway) && evt.team_id === 'team_rival') return true;
   }
   return false;
 }
 
 /**
  * Calcula dinámicamente el marcador (homeScore, awayScore) a partir de los eventos etiquetados.
- * Si no hay eventos, toma los marcadores por defecto del partido.
+ * Si se etiquetan Remates con resultado GOL, suma los goles calculados.
+ * Si en el análisis aún no hay eventos de gol registrados, conserva el marcador oficial del partido.
  */
 export function calculateMatchScoresFromEvents(
   events: NormalizedEvent[],
@@ -512,16 +520,27 @@ export function calculateMatchScoresFromEvents(
   awayTeamName?: string,
   defaultHomeScore = 0,
   defaultAwayScore = 0
-): { homeScore: number; awayScore: number; totalGoals: number } {
+): { homeScore: number; awayScore: number; totalGoals: number; hasTaggedGoals: boolean } {
   if (!events || events.length === 0) {
     return {
       homeScore: defaultHomeScore,
       awayScore: defaultAwayScore,
       totalGoals: defaultHomeScore + defaultAwayScore,
+      hasTaggedGoals: false,
     };
   }
 
   const goalEvents = events.filter(isGoalEvent);
+
+  if (goalEvents.length === 0) {
+    return {
+      homeScore: defaultHomeScore,
+      awayScore: defaultAwayScore,
+      totalGoals: defaultHomeScore + defaultAwayScore,
+      hasTaggedGoals: false,
+    };
+  }
+
   let homeGoals = 0;
   let awayGoals = 0;
 
@@ -537,6 +556,8 @@ export function calculateMatchScoresFromEvents(
     homeScore: homeGoals,
     awayScore: awayGoals,
     totalGoals: homeGoals + awayGoals,
+    hasTaggedGoals: true,
   };
 }
+
 
