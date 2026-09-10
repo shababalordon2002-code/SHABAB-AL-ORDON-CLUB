@@ -49,7 +49,7 @@ export const BotoneraSetupWizard: React.FC<BotoneraSetupWizardProps> = ({
 }) => {
   const [step, setStep] = useState<number>(1);
 
-  const [videoType, setVideoType] = useState<BotoneraProjectVideoType | null>(null);
+  const [videoType, setVideoType] = useState<BotoneraProjectVideoType | null>('none');
   const [videoSourceName, setVideoSourceName] = useState<string>('');
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoUrl, setVideoUrl] = useState<string>('');
@@ -60,7 +60,7 @@ export const BotoneraSetupWizard: React.FC<BotoneraSetupWizardProps> = ({
 
   const canGoStep2 = videoType !== null && (videoType !== 'local' || videoSourceName.trim() !== '') && (videoType !== 'link' || videoUrl.trim() !== '');
   const canGoStep3 = matchId !== '';
-  const canFinish = templateId !== '';
+  const canFinish = true;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -71,14 +71,15 @@ export const BotoneraSetupWizard: React.FC<BotoneraSetupWizardProps> = ({
   };
 
   const handleFinish = () => {
-    if (!videoType || !canFinish) return;
+    const finalVideoType = videoType || 'none';
+    const finalTemplateId = templateId || templates[0]?.id || 'default_template';
     onComplete({
-      videoType,
-      videoSourceName: videoType === 'local' ? videoSourceName : null,
-      videoUrl: videoType === 'link' ? videoUrl : null,
-      videoFile: videoType === 'local' ? videoFile : null,
-      matchId,
-      templateId,
+      videoType: finalVideoType,
+      videoSourceName: finalVideoType === 'local' ? videoSourceName : null,
+      videoUrl: finalVideoType === 'link' ? videoUrl : null,
+      videoFile: finalVideoType === 'local' ? videoFile : null,
+      matchId: matchId || 'free_session',
+      templateId: finalTemplateId,
     });
   };
 
@@ -110,7 +111,7 @@ export const BotoneraSetupWizard: React.FC<BotoneraSetupWizardProps> = ({
         </div>
 
           {/* Step Indicator */}
-          <div className="flex items-center gap-2 mt-4">
+          <div className="flex items-center gap-2 px-5 py-3 border-b border-slate-800 bg-slate-900/60">
             {STEPS.map((s, idx) => (
               <React.Fragment key={s.id}>
                 <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-[11px] font-bold border ${
@@ -127,7 +128,6 @@ export const BotoneraSetupWizard: React.FC<BotoneraSetupWizardProps> = ({
               </React.Fragment>
             ))}
           </div>
-        </div>
 
         {/* Body */}
         <div className="p-6 space-y-4 min-h-[280px]">
@@ -407,6 +407,7 @@ export const BotoneraSetupWizard: React.FC<BotoneraSetupWizardProps> = ({
           )}
         </div>
       </div>
+    </div>
 
       {/* Confirmation Modal for Deleting Template */}
       {deleteConfirmTemplate && (

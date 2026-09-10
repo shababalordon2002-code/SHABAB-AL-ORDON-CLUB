@@ -694,7 +694,7 @@ export default function BotoneraPage() {
     isTimerRunning,
     period,
     selectedMatchId,
-    events.length,
+    events,
     isSessionConfigured,
     videoType,
     videoSourceName,
@@ -755,6 +755,27 @@ export default function BotoneraPage() {
 
     const chosenTemplate = dbStore.getBotoneraTemplates().find((t) => t.id === config.templateId);
     if (chosenTemplate) setTemplate(chosenTemplate);
+
+    const targetMatch = config.matchId !== 'free_session' ? (dbStore.getMatchById(config.matchId) || matches.find(m => m.id === config.matchId)) : null;
+
+    dbStore.saveActiveBotoneraSession({
+      selectedMatchId: config.matchId,
+      period: 1,
+      timerSeconds: 0,
+      isTimerRunning: false,
+      startTimestamp: null,
+      lastUpdatedTimestamp: Date.now(),
+      events: [],
+      isConfigured: true,
+      videoType: config.videoType,
+      videoSourceName: config.videoSourceName,
+      videoUrl: config.videoUrl,
+      p1VideoStartSeconds: null,
+      p2VideoStartSeconds: null,
+      botoneraTemplateId: config.templateId,
+      home_lineup: targetMatch?.home_lineup || null,
+      away_lineup: targetMatch?.away_lineup || null,
+    });
 
     setIsSessionConfigured(true);
   };
@@ -1514,7 +1535,11 @@ export default function BotoneraPage() {
       updated_at: new Date().toISOString(),
     };
 
-    setEvents((prev) => [newEvt, ...prev]);
+    setEvents((prev) => {
+      const nextEvents = [newEvt, ...prev];
+      dbStore.saveNormalizedEvents([newEvt], false);
+      return nextEvents;
+    });
     setEventModalData(null);
 
     if (selectedMatchId && selectedMatchId !== 'free_session') {
@@ -1532,8 +1557,8 @@ export default function BotoneraPage() {
         dbStore.backupDeletedEvents([target]);
       }
       const next = prev.filter((e) => e.event_id !== eventId);
+      dbStore.saveNormalizedEvents(next, true);
       if (selectedMatchId && selectedMatchId !== 'free_session') {
-        dbStore.saveNormalizedEvents(next, true);
         ownWritesRef.current.add(eventId);
         deleteAnalysisEventFromSupabase(eventId).catch((err) =>
           console.warn('Could not sync event deletion to Supabase:', err)
@@ -1546,8 +1571,8 @@ export default function BotoneraPage() {
   const handleUpdateEvent = (updatedEvt: NormalizedEvent) => {
     setEvents((prev) => {
       const nextEvents = prev.map((e) => (e.event_id === updatedEvt.event_id ? updatedEvt : e));
+      dbStore.saveNormalizedEvents(nextEvents, true);
       if (selectedMatchId && selectedMatchId !== 'free_session') {
-        dbStore.saveNormalizedEvents(nextEvents, true);
         ownWritesRef.current.add(updatedEvt.event_id);
         updateAnalysisEventInSupabase(selectedMatchId, updatedEvt).catch((err) =>
           console.warn('Could not sync event update to Supabase:', err)
@@ -2025,6 +2050,13 @@ export default function BotoneraPage() {
             period={period}
             onAddEvent={(newEvt) => {
               setEvents((prev) => [...prev, newEvt]);
+              dbStore.saveNormalizedEvents([newEvt], false);
+              if (selectedMatchId && selectedMatchId !== 'free_session') {
+                ownWritesRef.current.add(newEvt.event_id);
+                insertAnalysisEventToSupabase(selectedMatchId, newEvt).catch((err) =>
+                  console.warn('Could not sync new scoreboard event to Supabase:', err)
+                );
+              }
             }}
             onUpdateLineup={(team, config, updatedPlayers) => {
               const currentM = matches.find((m) => m.id === selectedMatchId) || selectedMatch || matches[0];

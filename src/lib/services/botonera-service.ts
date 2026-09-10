@@ -337,7 +337,12 @@ export async function getAnalysisEventsFromSupabase(matchId: string): Promise<No
 // Insert a single new event (does NOT overwrite other analysts' events)
 export async function insertAnalysisEventToSupabase(matchId: string, event: NormalizedEvent): Promise<boolean> {
   try {
-    const supabase = createClient();
+    let supabase: any;
+    try {
+      supabase = createAdminClient();
+    } catch {
+      supabase = createClient();
+    }
     const row = { ...normalizedEventToRow(matchId, event), created_at: event.created_at || new Date().toISOString() };
 
     const { error } = await supabase.from('analysis_events').insert([row]);
@@ -355,7 +360,12 @@ export async function insertAnalysisEventToSupabase(matchId: string, event: Norm
 // Update a single event in place (does NOT touch other analysts' events)
 export async function updateAnalysisEventInSupabase(matchId: string, event: NormalizedEvent): Promise<boolean> {
   try {
-    const supabase = createClient();
+    let supabase: any;
+    try {
+      supabase = createAdminClient();
+    } catch {
+      supabase = createClient();
+    }
     const row = normalizedEventToRow(matchId, event);
 
     const { error } = await supabase
@@ -377,7 +387,12 @@ export async function updateAnalysisEventInSupabase(matchId: string, event: Norm
 // Delete a single event
 export async function deleteAnalysisEventFromSupabase(eventId: string): Promise<boolean> {
   try {
-    const supabase = createClient();
+    let supabase: any;
+    try {
+      supabase = createAdminClient();
+    } catch {
+      supabase = createClient();
+    }
     const { error } = await supabase.from('analysis_events').delete().eq('event_id', eventId);
     if (error) {
       console.error('Error deleting analysis_event from Supabase:', error.message);
@@ -393,7 +408,12 @@ export async function deleteAnalysisEventFromSupabase(eventId: string): Promise<
 // Clear all live events for a match (e.g. once saved into match_analyses, or on full reset)
 export async function clearAnalysisEventsFromSupabase(matchId: string): Promise<boolean> {
   try {
-    const supabase = createClient();
+    let supabase: any;
+    try {
+      supabase = createAdminClient();
+    } catch {
+      supabase = createClient();
+    }
     const { error } = await supabase.from('analysis_events').delete().eq('match_id', matchId);
     if (error) {
       console.error('Error clearing analysis_events from Supabase:', error.message);
