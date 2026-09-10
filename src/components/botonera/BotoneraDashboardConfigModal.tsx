@@ -12,8 +12,9 @@ interface BotoneraDashboardConfigModalProps {
 }
 
 const PITCH_VIEW_OPTIONS = [
+  { id: 'heatmap', label: 'Mapa de Calor (Heatmap)', icon: '🔥', desc: 'Densidad térmica de acciones y recuperaciones' },
   { id: 'vector_arrow', label: 'Vector (Origen -> Destino)', icon: '🏹', desc: 'Flechas con trayectoria de pase o tiro' },
-  { id: 'point', label: 'Puntos Espaciales', icon: '📍', desc: 'Mapa de calor / ubicaciones exactas' },
+  { id: 'point', label: 'Puntos Espaciales', icon: '📍', desc: 'Ubicaciones puntuales exactas' },
   { id: 'zone_remate', label: 'Zonas de Remate', desc: 'Área pequeña, área grande y borde de área', icon: '🎯' },
   { id: 'zone_bandas_centro', label: 'Bandas y Centro', desc: 'Carril Izquierdo, Central y Derecho', icon: '↔️' },
   { id: 'zone_3_hitos', label: '3 Pasillos Longitudinales', desc: 'Iniciación, Creación y Finalización', icon: '📶' },

@@ -406,3 +406,137 @@ export function withPitchVectors(events: NormalizedEvent[]): NormalizedEvent[] {
     (e) => e.end_x !== null && e.end_x !== undefined && e.end_y !== null && e.end_y !== undefined
   );
 }
+
+/**
+ * Detecta si un evento representa un Gol marcado (por tipo, resultado o descriptor).
+ * Ej: Remate/Tiro con descriptor "Resultado: Gol" o outcome "Gol".
+ */
+export function isGoalEvent(evt: NormalizedEvent): boolean {
+  if (!evt) return false;
+
+  const outcomeStr = (evt.outcome || '').toLowerCase().trim();
+  const typeStr = (evt.event_type || '').toLowerCase().trim();
+  const catStr = (evt.category || '').toLowerCase().trim();
+  const subcatStr = (evt.subcategory || '').toLowerCase().trim();
+  const metaDescriptors: string[] = evt.metadata?.descriptors || [];
+
+  // 1. Direct outcome = Gol / Goal
+  if (
+    outcomeStr === 'gol' ||
+    outcomeStr === 'goal' ||
+    outcomeStr.includes('gol marcado') ||
+    outcomeStr.startsWith('gol')
+  ) {
+    return true;
+  }
+
+  // 2. Direct event type or category = Gol
+  if (
+    (typeStr === 'gol' || typeStr === 'goal' || typeStr.startsWith('gol ') || typeStr.endsWith(' gol')) &&
+    !typeStr.includes('no gol') &&
+    !typeStr.includes('fallido') &&
+    !typeStr.includes('anulado') &&
+    !typeStr.includes('parada')
+  ) {
+    return true;
+  }
+
+  if (
+    (catStr === 'gol' || catStr === 'goal') &&
+    !catStr.includes('no gol') &&
+    !catStr.includes('fallido')
+  ) {
+    return true;
+  }
+
+  // 3. Descriptors indicate Gol (e.g. Remates/Tiros with "Resultado: Gol" or "Gol" or "GOL")
+  const hasGolDesc =
+    metaDescriptors.some((d: string) => {
+      const clean = d.toLowerCase().trim();
+      return (
+        clean === 'gol' ||
+        clean === 'goal' ||
+        clean.endsWith(': gol') ||
+        clean.endsWith(':gol') ||
+        clean.includes('resultado: gol') ||
+        clean.includes('resultado:gol') ||
+        clean.includes('finalización: gol') ||
+        clean.includes('finalizacion: gol') ||
+        clean.includes('consecuencia: gol') ||
+        clean.includes('tipo: gol')
+      );
+    }) ||
+    subcatStr === 'gol' ||
+    subcatStr.includes('gol');
+
+  return hasGolDesc;
+}
+
+export function isEventOfHomeTeam(evt: NormalizedEvent, homeTeamName?: string): boolean {
+  if (!evt) return false;
+  const cleanHome = (homeTeamName || '').toLowerCase().trim();
+  const cleanEvt = (evt.team_name || '').toLowerCase().trim();
+  if (cleanEvt) {
+    if (cleanHome && cleanEvt === cleanHome) return true;
+    if (/shabab|ordon|sao/i.test(cleanHome) && /shabab|ordon|sao/i.test(cleanEvt)) return true;
+    return false;
+  }
+  if (evt.team_id) {
+    return evt.team_id === 'home_team' || evt.team_id === 'team_home' || evt.team_id === 'team_shabab_al_ordon';
+  }
+  return true;
+}
+
+export function isEventOfAwayTeam(evt: NormalizedEvent, awayTeamName?: string): boolean {
+  if (!evt) return false;
+  const cleanAway = (awayTeamName || '').toLowerCase().trim();
+  const cleanEvt = (evt.team_name || '').toLowerCase().trim();
+  if (cleanEvt) {
+    if (cleanAway && cleanEvt === cleanAway) return true;
+    if (/rival/i.test(cleanAway) && /rival/i.test(cleanEvt)) return true;
+    return false;
+  }
+  if (evt.team_id) {
+    return evt.team_id === 'away_team' || evt.team_id === 'team_away' || evt.team_id === 'team_rival';
+  }
+  return false;
+}
+
+/**
+ * Calcula dinámicamente el marcador (homeScore, awayScore) a partir de los eventos etiquetados.
+ * Si no hay eventos, toma los marcadores por defecto del partido.
+ */
+export function calculateMatchScoresFromEvents(
+  events: NormalizedEvent[],
+  homeTeamName?: string,
+  awayTeamName?: string,
+  defaultHomeScore = 0,
+  defaultAwayScore = 0
+): { homeScore: number; awayScore: number; totalGoals: number } {
+  if (!events || events.length === 0) {
+    return {
+      homeScore: defaultHomeScore,
+      awayScore: defaultAwayScore,
+      totalGoals: defaultHomeScore + defaultAwayScore,
+    };
+  }
+
+  const goalEvents = events.filter(isGoalEvent);
+  let homeGoals = 0;
+  let awayGoals = 0;
+
+  goalEvents.forEach((g) => {
+    if (isEventOfAwayTeam(g, awayTeamName)) {
+      awayGoals += 1;
+    } else {
+      homeGoals += 1;
+    }
+  });
+
+  return {
+    homeScore: homeGoals,
+    awayScore: awayGoals,
+    totalGoals: homeGoals + awayGoals,
+  };
+}
+

@@ -31,6 +31,7 @@ interface BotoneraPitchCanvasProps {
   onCloseModal?: () => void;
   onConfirmLocation?: () => void;
   hideHeader?: boolean;
+  hideFooter?: boolean;
 }
 
 export const BotoneraPitchCanvas: React.FC<BotoneraPitchCanvasProps> = ({
@@ -51,6 +52,7 @@ export const BotoneraPitchCanvas: React.FC<BotoneraPitchCanvasProps> = ({
   onCloseModal,
   onConfirmLocation,
   hideHeader = false,
+  hideFooter = false,
 }) => {
   const [activeMode, setActiveMode] = useState<PitchRequiredType>(initialMode);
   const [internalZoneCounts, setInternalZoneCounts] = useState<Record<string, number>>(zoneCounts);
@@ -96,6 +98,7 @@ export const BotoneraPitchCanvas: React.FC<BotoneraPitchCanvasProps> = ({
 
   const isVectorMode = activeMode === 'vector' || activeMode === 'vector_arrow';
   const isPointMode = activeMode === 'point' || activeMode === 'point_full' || activeMode === 'point_half';
+  const isHeatmap = activeMode === 'heatmap';
 
   // Handle click on pitch SVG
   const handlePitchClick = (e: React.MouseEvent<SVGSVGElement>) => {
@@ -233,7 +236,9 @@ export const BotoneraPitchCanvas: React.FC<BotoneraPitchCanvasProps> = ({
               </div>
               <div>
                 <h3 className="font-bold text-slate-100 text-sm uppercase tracking-wide">
-                  {activeMode === 'zone_remate'
+                  {activeMode === 'heatmap'
+                    ? '🔥 Mapa de Calor'
+                    : activeMode === 'zone_remate'
                     ? '🎯 Zonas de Remate'
                     : activeMode === 'zone_bandas_centro'
                     ? '↔️ Bandas - Centro'
@@ -269,7 +274,9 @@ export const BotoneraPitchCanvas: React.FC<BotoneraPitchCanvasProps> = ({
               <div className="flex items-center gap-2 bg-slate-950 px-3 py-1.5 rounded-xl border border-emerald-500/40 text-[11px] font-black text-emerald-300 shadow-sm shrink-0">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
                 <span>
-                  {isVectorMode
+                  {activeMode === 'heatmap'
+                    ? '🔥 MODALIDAD: MAPA DE CALOR (DENSIDAD TÉRMICA) • MODO FIJO'
+                    : isVectorMode
                     ? '🏹 MODALIDAD: VECTOR / FLECHA (ORIGEN ➔ DESTINO) • MODO FIJO'
                     : isPointMode
                     ? '📍 MODALIDAD: PUNTO (X, Y) • MODO FIJO'
@@ -355,13 +362,21 @@ export const BotoneraPitchCanvas: React.FC<BotoneraPitchCanvasProps> = ({
       {/* Pitch SVG Container with Lateral Attack Strip */}
       <div className="relative w-full flex flex-row items-stretch bg-emerald-950 rounded-xl border-2 border-emerald-800/80 overflow-hidden shadow-inner select-none">
         {/* Field Coordinate Canvas Area */}
-        <div className={`relative flex-1 ${isHalfPitch ? 'aspect-[68/62]' : 'aspect-[68/105]'} cursor-pointer group`}>
+        {/* Sized via a padding-top spacer instead of the CSS `aspect-ratio` property:
+            html2canvas doesn't reliably support `aspect-ratio`, which was letting this
+            box fall back to its flex-basis content size during PDF export and clip or
+            overlap the neighboring grid column. The spacer establishes a real pixel
+            height in-flow (universally supported), and the grass/svg layers are
+            absolutely positioned against it so they never depend on percentage-height
+            resolution (which is what made the markers vanish in an earlier attempt). */}
+        <div className="relative flex-1 min-w-0 cursor-pointer group">
+          <div style={{ paddingTop: `${((isHalfPitch ? 620 : 1050) / 680) * 100}%` }} />
           {/* Grass Stripes */}
           <div className="absolute inset-0 bg-[linear-gradient(to_bottom,#022c22_0%,#064e3b_10%,#022c22_20%,#064e3b_30%,#022c22_40%,#064e3b_50%,#022c22_60%,#064e3b_70%,#022c22_80%,#064e3b_90%,#022c22_100%)] opacity-90 pointer-events-none" />
 
           <svg
           viewBox={`0 0 ${width} ${height}`}
-          className="w-full h-full block relative z-10 cursor-pointer"
+          className="absolute inset-0 w-full h-full block z-10 cursor-pointer"
           onClick={handlePitchClick}
         >
           <defs>
@@ -387,6 +402,17 @@ export const BotoneraPitchCanvas: React.FC<BotoneraPitchCanvasProps> = ({
               <path d="M 0 0 L 10 5 L 0 10 z" fill="#34d399" />
             </marker>
             <marker
+              id="vector-arrow-amber"
+              viewBox="0 0 10 10"
+              refX="6"
+              refY="5"
+              markerWidth="10"
+              markerHeight="10"
+              orient="auto-start-reverse"
+            >
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#fbbf24" stroke="#000000" strokeWidth="1" />
+            </marker>
+            <marker
               id="vector-arrow-selected"
               viewBox="0 0 10 10"
               refX="6"
@@ -397,6 +423,31 @@ export const BotoneraPitchCanvas: React.FC<BotoneraPitchCanvasProps> = ({
             >
               <path d="M 0 0 L 10 5 L 0 10 z" fill="#ff0055" stroke="#ffffff" strokeWidth="1.5" />
             </marker>
+
+            {/* Heatmap Continuous Gradients & Blur Filters */}
+            <radialGradient id="heat-blob-base" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#ef4444" stopOpacity="0.85" />
+              <stop offset="35%" stopColor="#f59e0b" stopOpacity="0.65" />
+              <stop offset="65%" stopColor="#10b981" stopOpacity="0.35" />
+              <stop offset="85%" stopColor="#06b6d4" stopOpacity="0.15" />
+              <stop offset="100%" stopColor="#06b6d4" stopOpacity="0" />
+            </radialGradient>
+            <radialGradient id="heat-blob-hot" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#ffffff" stopOpacity="0.95" />
+              <stop offset="25%" stopColor="#ef4444" stopOpacity="0.85" />
+              <stop offset="60%" stopColor="#f59e0b" stopOpacity="0.55" />
+              <stop offset="85%" stopColor="#10b981" stopOpacity="0.2" />
+              <stop offset="100%" stopColor="#022c22" stopOpacity="0" />
+            </radialGradient>
+            <radialGradient id="heat-blob-selected" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#ffffff" stopOpacity="1" />
+              <stop offset="30%" stopColor="#ff0055" stopOpacity="0.9" />
+              <stop offset="70%" stopColor="#ff0055" stopOpacity="0.4" />
+              <stop offset="100%" stopColor="#ff0055" stopOpacity="0" />
+            </radialGradient>
+            <filter id="heat-blur-strong" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur in="SourceGraphic" stdDeviation="18" />
+            </filter>
           </defs>
 
           {/* PITCH MARKINGS */}
@@ -548,8 +599,108 @@ export const BotoneraPitchCanvas: React.FC<BotoneraPitchCanvasProps> = ({
             );
           })()}
 
-          {/* MULTIPLE EVENT MARKERS OVERLAY (Hidden in Zone Mode so only colored zones are shown) */}
-          {pointsList && pointsList.length > 0 && !isZoneMode && (
+          {/* HEATMAP LAYER (Continuous thermal density visualization) */}
+          {isHeatmap && pointsList && pointsList.length > 0 && (
+            <g className="heatmap-layer">
+              {/* Diffuse base layer with blur */}
+              <g filter="url(#heat-blur-strong)">
+                {pointsList.map((pt, idx) => {
+                  if (pt.startX === null || pt.startY === null) return null;
+                  return (
+                    <circle
+                      key={`heat-base-${pt.id || idx}`}
+                      cx={toSvgX(pt.startY)}
+                      cy={toSvgY(pt.startX)}
+                      r={pt.isSelected ? "110" : "85"}
+                      fill={pt.isSelected ? "url(#heat-blob-selected)" : "url(#heat-blob-base)"}
+                      opacity={pt.isSelected ? 1 : 0.85}
+                    />
+                  );
+                })}
+              </g>
+
+              {/* Core intense thermal layer */}
+              <g filter="url(#heat-blur-strong)">
+                {pointsList.map((pt, idx) => {
+                  if (pt.startX === null || pt.startY === null) return null;
+                  return (
+                    <circle
+                      key={`heat-core-${pt.id || idx}`}
+                      cx={toSvgX(pt.startY)}
+                      cy={toSvgY(pt.startX)}
+                      r={pt.isSelected ? "65" : "48"}
+                      fill={pt.isSelected ? "url(#heat-blob-selected)" : "url(#heat-blob-hot)"}
+                      opacity={pt.isSelected ? 1 : 0.9}
+                    />
+                  );
+                })}
+              </g>
+
+              {/* Interactive marker hotspots and selection rings */}
+              {pointsList.map((pt, idx) => {
+                if (pt.startX === null || pt.startY === null) return null;
+                const isSelected = pt.isSelected;
+                return (
+                  <g
+                    key={`heat-interactive-${pt.id || idx}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (onSelectMarker && pt.id) {
+                        onSelectMarker(pt.id);
+                      }
+                    }}
+                    className="cursor-pointer group/heat-point"
+                  >
+                    {isSelected ? (
+                      <>
+                        <circle
+                          cx={toSvgX(pt.startY)}
+                          cy={toSvgY(pt.startX)}
+                          r="26"
+                          fill="rgba(255, 0, 85, 0.45)"
+                          stroke="#ff0055"
+                          strokeWidth="3.5"
+                          className="animate-pulse"
+                          filter="url(#vector-glow)"
+                        />
+                        <circle
+                          cx={toSvgX(pt.startY)}
+                          cy={toSvgY(pt.startX)}
+                          r="14"
+                          fill="#ff0055"
+                          stroke="#ffffff"
+                          strokeWidth="3.5"
+                        />
+                        <circle
+                          cx={toSvgX(pt.startY)}
+                          cy={toSvgY(pt.startX)}
+                          r="5"
+                          fill="#ffffff"
+                        />
+                      </>
+                    ) : (
+                      <>
+                        {/* Subtle interactive center dot on heatmap so individual actions can still be clicked */}
+                        <circle
+                          cx={toSvgX(pt.startY)}
+                          cy={toSvgY(pt.startX)}
+                          r="6"
+                          fill="#ffffff"
+                          fillOpacity="0.75"
+                          stroke="#000000"
+                          strokeWidth="1.5"
+                          className="transition-all duration-150 group-hover/heat-point:r-10 group-hover/heat-point:fill-amber-400 group-hover/heat-point:fill-opacity-1"
+                        />
+                      </>
+                    )}
+                  </g>
+                );
+              })}
+            </g>
+          )}
+
+          {/* MULTIPLE EVENT MARKERS OVERLAY (Hidden in Zone Mode & Heatmap Mode) */}
+          {pointsList && pointsList.length > 0 && !isZoneMode && !isHeatmap && (
             <g>
               {pointsList.map((pt, idx) => {
                 if (pt.startX === null || pt.startY === null) return null;
@@ -566,47 +717,64 @@ export const BotoneraPitchCanvas: React.FC<BotoneraPitchCanvasProps> = ({
                     }}
                     className="cursor-pointer group/marker"
                   >
-                    {/* Glowing outer halo if selected */}
-                    {isSelected && (
+                    {/* Glowing outer halo if selected or hovering */}
+                    {isSelected ? (
                       <circle
                         cx={toSvgX(pt.startY)}
                         cy={toSvgY(pt.startX)}
-                        r="18"
-                        fill="rgba(255, 0, 85, 0.4)"
+                        r="28"
+                        fill="rgba(255, 0, 85, 0.5)"
                         stroke="#ff0055"
-                        strokeWidth="2.5"
+                        strokeWidth="3.5"
                         className="animate-pulse"
                         filter="url(#vector-glow)"
                       />
+                    ) : (
+                      <circle
+                        cx={toSvgX(pt.startY)}
+                        cy={toSvgY(pt.startX)}
+                        r="22"
+                        fill="rgba(245, 158, 11, 0.35)"
+                        stroke="#f59e0b"
+                        strokeWidth="2"
+                        className="animate-pulse"
+                      />
                     )}
 
-                    {/* Origin Circle */}
+                    {/* Origin Circle (Enlarged, vibrant Amber/Gold with pure white contrast border) */}
                     <circle
                       cx={toSvgX(pt.startY)}
                       cy={toSvgY(pt.startX)}
-                      r={isSelected ? "10" : "6.5"}
-                      fill={isSelected ? "#ff0055" : "rgba(52, 211, 153, 0.85)"}
-                      stroke={isSelected ? "#ffffff" : "#022c22"}
-                      strokeWidth={isSelected ? "3" : "1.5"}
-                      filter={isSelected ? "url(#vector-glow)" : undefined}
-                      className="transition-all duration-150 group-hover/marker:fill-rose-400 group-hover/marker:stroke-white group-hover/marker:r-9"
+                      r={isSelected ? "16" : "14"}
+                      fill={isSelected ? "#ff0055" : "#f59e0b"}
+                      stroke="#ffffff"
+                      strokeWidth={isSelected ? "4" : "3"}
+                      filter="url(#vector-glow)"
+                      className="transition-all duration-150 group-hover/marker:fill-amber-300 group-hover/marker:r-16"
+                    />
+
+                    {/* Inner Target Bullseye Center Dot */}
+                    <circle
+                      cx={toSvgX(pt.startY)}
+                      cy={toSvgY(pt.startX)}
+                      r={isSelected ? "5" : "4.5"}
+                      fill={isSelected ? "#ffffff" : "#090d16"}
                     />
 
                     {/* Vector Arrow Line */}
                     {isVectorMode && pt.endX != null && pt.endY != null && (
-                      <g filter={isSelected ? "url(#vector-glow)" : undefined}>
-                        {/* High contrast white outline line underneath selected vector */}
-                        {isSelected && (
-                          <line
-                            x1={toSvgX(pt.startY)}
-                            y1={toSvgY(pt.startX)}
-                            x2={toSvgX(pt.endY)}
-                            y2={toSvgY(pt.endX)}
-                            stroke="#ffffff"
-                            strokeWidth="9"
-                            strokeLinecap="round"
-                          />
-                        )}
+                      <g filter="url(#vector-glow)">
+                        {/* High contrast dark outline line underneath vector */}
+                        <line
+                          x1={toSvgX(pt.startY)}
+                          y1={toSvgY(pt.startX)}
+                          x2={toSvgX(pt.endY)}
+                          y2={toSvgY(pt.endX)}
+                          stroke="#000000"
+                          strokeWidth={isSelected ? "11" : "7"}
+                          strokeOpacity="0.75"
+                          strokeLinecap="round"
+                        />
 
                         {/* Foreground vector line */}
                         <line
@@ -614,11 +782,11 @@ export const BotoneraPitchCanvas: React.FC<BotoneraPitchCanvasProps> = ({
                           y1={toSvgY(pt.startX)}
                           x2={toSvgX(pt.endY)}
                           y2={toSvgY(pt.endX)}
-                          stroke={isSelected ? "#ff0055" : "#34d399"}
-                          strokeWidth={isSelected ? "6" : "2.5"}
-                          strokeOpacity={isSelected ? "1" : "0.85"}
-                          markerEnd={isSelected ? "url(#vector-arrow-selected)" : "url(#vector-arrow)"}
-                          className="transition-all duration-150 group-hover/marker:stroke-rose-400 group-hover/marker:stroke-[6px]"
+                          stroke={isSelected ? "#ff0055" : "#fbbf24"}
+                          strokeWidth={isSelected ? "6" : "4"}
+                          strokeOpacity="1"
+                          markerEnd={isSelected ? "url(#vector-arrow-selected)" : "url(#vector-arrow-amber)"}
+                          className="transition-all duration-150 group-hover/marker:stroke-amber-300 group-hover/marker:stroke-[5.5px]"
                         />
 
                         {/* Destination Pulsing Halo */}
@@ -626,8 +794,8 @@ export const BotoneraPitchCanvas: React.FC<BotoneraPitchCanvasProps> = ({
                           <circle
                             cx={toSvgX(pt.endY)}
                             cy={toSvgY(pt.endX)}
-                            r="16"
-                            fill="rgba(255, 0, 85, 0.4)"
+                            r="22"
+                            fill="rgba(255, 0, 85, 0.45)"
                             stroke="#ff0055"
                             strokeWidth="2.5"
                             className="animate-pulse"
@@ -638,11 +806,11 @@ export const BotoneraPitchCanvas: React.FC<BotoneraPitchCanvasProps> = ({
                         <circle
                           cx={toSvgX(pt.endY)}
                           cy={toSvgY(pt.endX)}
-                          r={isSelected ? "9" : "5.5"}
-                          fill={isSelected ? "#ff0055" : "#6ee7b7"}
-                          stroke={isSelected ? "#ffffff" : "#022c22"}
-                          strokeWidth={isSelected ? "3" : "1.5"}
-                          className="transition-all duration-150 group-hover/marker:fill-rose-300 group-hover/marker:stroke-white group-hover/marker:r-8"
+                          r={isSelected ? "13" : "9"}
+                          fill={isSelected ? "#ff0055" : "#38bdf8"}
+                          stroke="#ffffff"
+                          strokeWidth="2.5"
+                          className="transition-all duration-150 group-hover/marker:fill-sky-300 group-hover/marker:r-11"
                         />
                       </g>
                     )}
@@ -658,58 +826,63 @@ export const BotoneraPitchCanvas: React.FC<BotoneraPitchCanvasProps> = ({
               <circle
                 cx={toSvgX(startY)}
                 cy={toSvgY(startX)}
-                r="10"
-                fill="rgba(52, 211, 153, 0.4)"
-                className="animate-ping"
+                r="22"
+                fill="rgba(245, 158, 11, 0.35)"
+                stroke="#f59e0b"
+                strokeWidth="2"
+                className="animate-pulse"
               />
               <circle
                 cx={toSvgX(startY)}
                 cy={toSvgY(startX)}
-                r="6.5"
-                fill="#34d399"
-                stroke="#022c22"
-                strokeWidth="2"
+                r="14"
+                fill="#f59e0b"
+                stroke="#ffffff"
+                strokeWidth="3"
+              />
+              <circle
+                cx={toSvgX(startY)}
+                cy={toSvgY(startX)}
+                r="4.5"
+                fill="#090d16"
               />
 
               {/* Vector Arrow */}
               {isVectorMode && endX !== null && endY !== null && (
                 <g>
+                  {/* High contrast outline */}
                   <line
                     x1={toSvgX(startY)}
                     y1={toSvgY(startX)}
                     x2={toSvgX(endY)}
                     y2={toSvgY(endX)}
-                    stroke="#34d399"
-                    strokeWidth="3.5"
-                    markerEnd="url(#vector-arrow)"
+                    stroke="#000000"
+                    strokeWidth="7"
+                    strokeOpacity="0.75"
+                    strokeLinecap="round"
+                  />
+                  <line
+                    x1={toSvgX(startY)}
+                    y1={toSvgY(startX)}
+                    x2={toSvgX(endY)}
+                    y2={toSvgY(endX)}
+                    stroke="#fbbf24"
+                    strokeWidth="4"
+                    markerEnd="url(#vector-arrow-amber)"
                   />
                   <circle
                     cx={toSvgX(endY)}
                     cy={toSvgY(endX)}
-                    r="6.5"
-                    fill="#6ee7b7"
-                    stroke="#022c22"
-                    strokeWidth="2"
+                    r="9"
+                    fill="#38bdf8"
+                    stroke="#ffffff"
+                    strokeWidth="2.5"
                   />
                 </g>
               )}
             </g>
           )}
         </svg>
-
-        {/* Empty state hint */}
-        {startX === null && !selectedZone && (
-          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-slate-950/90 border border-emerald-500/40 px-3 py-1.5 rounded-full text-[11px] font-semibold text-emerald-300 pointer-events-none backdrop-blur-md shadow-lg flex items-center gap-1.5 text-center">
-            <Target className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-            <span>
-              {isVectorMode
-                ? 'Haz clic para Origen y Destino (Flecha)'
-                : isZoneMode
-                ? 'Haz clic en una zona para seleccionarla'
-                : 'Haz clic en el campo para fijar el punto (X, Y)'}
-            </span>
-          </div>
-        )}
       </div>
 
       {/* Lateral Attack Strip - Does NOT take up pitch coordinate space */}
@@ -722,51 +895,53 @@ export const BotoneraPitchCanvas: React.FC<BotoneraPitchCanvasProps> = ({
     </div>
 
       {/* Selected Location Summary */}
-      <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs flex items-center justify-between">
-        <div>
-          <span className="text-[10px] text-slate-500 uppercase font-semibold block">Ubicación Registrada:</span>
-          {startX !== null ? (
-            <p className="font-bold text-emerald-400 font-mono">
-              📍 Origen ({startX}%, {startY}%)
-              {endX !== null && ` ➔ Destino (${endX}%, ${endY}%)`}
-            </p>
-          ) : selectedZone ? (
-            <p className="font-bold text-blue-400 font-mono flex items-center gap-1">
-              🔷 Zona: {selectedZone}
-              {activeMode === 'zone_counter' && (
-                <span className="ml-1 px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">
-                  Cantidad: {internalZoneCounts[selectedZone] || 1}
-                </span>
-              )}
-            </p>
-          ) : (
-            <p className="text-slate-500 italic">Sin ubicación seleccionada</p>
-          )}
-        </div>
+      {!hideFooter && !hideHeader && (
+        <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs flex items-center justify-between">
+          <div>
+            <span className="text-[10px] text-slate-500 uppercase font-semibold block">Ubicación Registrada:</span>
+            {startX !== null ? (
+              <p className="font-bold text-emerald-400 font-mono">
+                📍 Origen ({startX}%, {startY}%)
+                {endX !== null && ` ➔ Destino (${endX}%, ${endY}%)`}
+              </p>
+            ) : selectedZone ? (
+              <p className="font-bold text-blue-400 font-mono flex items-center gap-1">
+                🔷 Zona: {selectedZone}
+                {activeMode === 'zone_counter' && (
+                  <span className="ml-1 px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">
+                    Cantidad: {internalZoneCounts[selectedZone] || 1}
+                  </span>
+                )}
+              </p>
+            ) : (
+              <p className="text-slate-500 italic">Sin ubicación seleccionada</p>
+            )}
+          </div>
 
-        <div className="flex items-center gap-2">
-          {onCloseModal && (
-            <button
-              type="button"
-              onClick={onCloseModal}
-              className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold"
-            >
-              Omitir
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {onCloseModal && (
+              <button
+                type="button"
+                onClick={onCloseModal}
+                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold"
+              >
+                Omitir
+              </button>
+            )}
 
-          {onConfirmLocation && (
-            <button
-              type="button"
-              onClick={onConfirmLocation}
-              className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs flex items-center gap-1 shadow-md"
-            >
-              <CheckCircle2 className="w-4 h-4" />
-              <span>Confirmar</span>
-            </button>
-          )}
+            {onConfirmLocation && (
+              <button
+                type="button"
+                onClick={onConfirmLocation}
+                className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs flex items-center gap-1 shadow-md"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>Confirmar</span>
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };

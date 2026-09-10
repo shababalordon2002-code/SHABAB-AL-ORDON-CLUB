@@ -4,7 +4,7 @@ import React, { useMemo } from 'react';
 import { Trophy } from 'lucide-react';
 import { Match, NormalizedEvent, DashboardWidget } from '@/types';
 import { TeamLogo } from '@/components/player/PlayerBadge';
-import { aggregate, EngineContext } from '@/lib/analytics/dashboard-engine';
+import { aggregate, EngineContext, calculateMatchScoresFromEvents } from '@/lib/analytics/dashboard-engine';
 import { CategoryChart } from '@/components/dashboards/viz/CategoryChart';
 
 interface MatchResultHeaderProps {
@@ -34,8 +34,19 @@ const COMPARISON_WIDGET: DashboardWidget = {
 export const MatchResultHeader: React.FC<MatchResultHeaderProps> = ({ match, events, ctx }) => {
   const result = useMemo(() => aggregate(events, COMPARISON_WIDGET, ctx), [events, ctx]);
 
-  const isWin = match.home_score !== match.away_score;
-  const homeWon = match.home_score > match.away_score;
+  // Dynamically calculate score from events (Remates/Tiros con Gol, etc.)
+  const { homeScore, awayScore } = useMemo(() => {
+    return calculateMatchScoresFromEvents(
+      events,
+      match.home_team,
+      match.away_team,
+      match.home_score ?? 0,
+      match.away_score ?? 0
+    );
+  }, [events, match.home_team, match.away_team, match.home_score, match.away_score]);
+
+  const isWin = homeScore !== awayScore;
+  const homeWon = homeScore > awayScore;
 
   return (
     <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden">
@@ -58,11 +69,11 @@ export const MatchResultHeader: React.FC<MatchResultHeaderProps> = ({ match, eve
 
           <div className="flex items-center gap-3 sm:gap-5 shrink-0">
             <span className={`text-4xl sm:text-6xl font-black tabular-nums ${!isWin || homeWon ? 'text-emerald-400' : 'text-slate-300'}`}>
-              {match.home_score}
+              {homeScore}
             </span>
             <span className="text-2xl sm:text-3xl font-black text-slate-600">-</span>
             <span className={`text-4xl sm:text-6xl font-black tabular-nums ${!isWin || !homeWon ? 'text-emerald-400' : 'text-slate-300'}`}>
-              {match.away_score}
+              {awayScore}
             </span>
           </div>
 

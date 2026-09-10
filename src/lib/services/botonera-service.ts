@@ -137,6 +137,8 @@ export async function getAnalysisSessionFromSupabase(matchId?: string): Promise<
       p1VideoStartSeconds: row.p1_video_start_seconds ?? null,
       p2VideoStartSeconds: row.p2_video_start_seconds ?? null,
       botoneraTemplateId: row.botonera_template_id || null,
+      home_lineup: typeof row.home_lineup === 'string' ? JSON.parse(row.home_lineup) : (row.home_lineup || null),
+      away_lineup: typeof row.away_lineup === 'string' ? JSON.parse(row.away_lineup) : (row.away_lineup || null),
     };
   } catch (err: any) {
     console.warn('Could not fetch analysis session from Supabase:', err.message);
@@ -172,6 +174,8 @@ export async function getAllActiveSessionsFromSupabase(): Promise<Record<string,
         p1VideoStartSeconds: row.p1_video_start_seconds ?? null,
         p2VideoStartSeconds: row.p2_video_start_seconds ?? null,
         botoneraTemplateId: row.botonera_template_id || null,
+        home_lineup: typeof row.home_lineup === 'string' ? JSON.parse(row.home_lineup) : (row.home_lineup || null),
+        away_lineup: typeof row.away_lineup === 'string' ? JSON.parse(row.away_lineup) : (row.away_lineup || null),
       };
     }
     return result;
@@ -192,7 +196,7 @@ export async function saveAnalysisSessionToSupabase(session: ActiveBotoneraSessi
       supabase = createClient();
     }
 
-    const row = {
+    const row: Record<string, any> = {
       match_id: session.selectedMatchId,
       period: session.period,
       timer_seconds: session.timerSeconds,
@@ -207,12 +211,25 @@ export async function saveAnalysisSessionToSupabase(session: ActiveBotoneraSessi
       p1_video_start_seconds: session.p1VideoStartSeconds ?? null,
       p2_video_start_seconds: session.p2VideoStartSeconds ?? null,
       botonera_template_id: session.botoneraTemplateId || null,
+      home_lineup: session.home_lineup || null,
+      away_lineup: session.away_lineup || null,
       updated_at: new Date().toISOString(),
     };
 
-    const { error } = await supabase
+    let { error } = await supabase
       .from('analysis_sessions')
       .upsert([row], { onConflict: 'match_id' });
+
+    if (error && /Could not find the '.+' column/.test(error.message)) {
+      console.warn(
+        `La tabla 'analysis_sessions' de Supabase no tiene las columnas de alineación (${error.message}). ` +
+        'Ejecuta supabase/migrations/0009_add_lineups_to_matches_and_analyses.sql en el SQL Editor.'
+      );
+      const fallbackRow = { ...row };
+      delete fallbackRow.home_lineup;
+      delete fallbackRow.away_lineup;
+      ({ error } = await supabase.from('analysis_sessions').upsert([fallbackRow], { onConflict: 'match_id' }));
+    }
 
     if (error) {
       if (!error.message.includes('relation "public.analysis_sessions" does not exist')) {

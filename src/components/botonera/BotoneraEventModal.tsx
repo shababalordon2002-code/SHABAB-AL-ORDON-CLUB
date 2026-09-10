@@ -3,8 +3,10 @@
 import React, { useState } from 'react';
 import { BotoneraButton, Player, Match } from '@/types';
 import { BotoneraPitchCanvas } from './BotoneraPitchCanvas';
-import { Check, X, Tag, User, AlertCircle, Shield, PanelRight, Eye, Maximize2, Clock } from 'lucide-react';
+import { Check, X, Tag, User, Users, AlertCircle, Shield, PanelRight, Eye, Maximize2, Clock } from 'lucide-react';
 import { PlayerAvatar, NumberBadge } from '@/components/player/PlayerBadge';
+
+import { dbStore } from '@/lib/store/db-store';
 
 interface BotoneraEventModalProps {
   button: BotoneraButton;
@@ -48,14 +50,187 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
     });
   };
 
+  const homeTeamName = currentMatch?.home_team || 'Shabab Al Ordon';
+  const awayTeamName = currentMatch?.away_team || 'Al Ramtha';
+  const homeTeamLogo = currentMatch?.home_team_logo;
+  const awayTeamLogo = currentMatch?.away_team_logo;
+
+  // Helper: check if a team name is Shabab Al Ordon (always Red)
+  const isShabab = (tName?: string | null): boolean => {
+    if (!tName) return false;
+    const lower = tName.toLowerCase().trim();
+    return lower.includes('shabab') || lower.includes('ordon') || lower.includes('sao');
+  };
+
+  const isHomeShabab = isShabab(homeTeamName);
+  const isAwayShabab = isShabab(awayTeamName);
+
+  // Build full match squad & starters directly from match lineup configs + database players
+  const matchSquads = React.useMemo(() => {
+    const homeLineup =
+      currentMatch?.home_lineup ||
+      (currentMatch?.id ? dbStore.getMatchById(currentMatch.id)?.home_lineup : null);
+
+    const awayLineup =
+      currentMatch?.away_lineup ||
+      (currentMatch?.id ? dbStore.getMatchById(currentMatch.id)?.away_lineup : null);
+
+    // 1. HOME PLAYERS (Starters & Substitutes from Lineup)
+    const homeStarters: Player[] = [];
+    const homeAll: Player[] = [];
+
+    if (homeLineup?.starters && homeLineup.starters.length > 0) {
+      homeLineup.starters.forEach((s, idx) => {
+        const pObj: Player = {
+          id: s.id || `h_st_${s.number || idx + 1}`,
+          number: typeof s.number === 'number' ? s.number : parseInt(String(s.number)) || idx + 1,
+          name: s.name && s.name.trim() ? s.name.trim() : `Jugador #${s.number || idx + 1}`,
+          position: s.position || (idx === 0 ? 'POR' : 'JUG'),
+          team_id: 'team_home',
+          team_name: homeTeamName,
+          isStarter: true,
+        };
+        homeStarters.push(pObj);
+        homeAll.push(pObj);
+      });
+    } else {
+      // Default 11 starters for Home
+      for (let i = 1; i <= 11; i++) {
+        const pObj: Player = {
+          id: `h_st_${i}`,
+          number: i,
+          name: `Jugador #${i}`,
+          position: i === 1 ? 'POR' : 'JUG',
+          team_id: 'team_home',
+          team_name: homeTeamName,
+          isStarter: true,
+        };
+        homeStarters.push(pObj);
+        homeAll.push(pObj);
+      }
+    }
+
+    if (homeLineup?.substitutes && homeLineup.substitutes.length > 0) {
+      homeLineup.substitutes.forEach((s, idx) => {
+        const pObj: Player = {
+          id: s.id || `h_sub_${s.number || idx + 12}`,
+          number: typeof s.number === 'number' ? s.number : parseInt(String(s.number)) || idx + 12,
+          name: s.name && s.name.trim() ? s.name.trim() : `Jugador #${s.number || idx + 12}`,
+          position: s.position || 'JUG',
+          team_id: 'team_home',
+          team_name: homeTeamName,
+          isStarter: false,
+        };
+        homeAll.push(pObj);
+      });
+    }
+
+    // Append other squad members from db players not in lineup
+    const existingHomeIds = new Set(homeAll.map((p) => p.id));
+    const existingHomeNames = new Set(homeAll.map((p) => p.name.toLowerCase().trim()));
+    (players || []).forEach((p) => {
+      const t = (p.team_name || '').toLowerCase().trim();
+      const isHomeMatch = t === homeTeamName.toLowerCase().trim() || (isHomeShabab && isShabab(t));
+      if (isHomeMatch && !existingHomeIds.has(p.id) && !existingHomeNames.has(p.name.toLowerCase().trim())) {
+        homeAll.push({ ...p, team_name: homeTeamName, isStarter: false });
+      }
+    });
+
+    // 2. AWAY PLAYERS (Starters & Substitutes from Lineup)
+    const awayStarters: Player[] = [];
+    const awayAll: Player[] = [];
+
+    if (awayLineup?.starters && awayLineup.starters.length > 0) {
+      awayLineup.starters.forEach((s, idx) => {
+        const pObj: Player = {
+          id: s.id || `a_st_${s.number || idx + 1}`,
+          number: typeof s.number === 'number' ? s.number : parseInt(String(s.number)) || idx + 1,
+          name: s.name && s.name.trim() ? s.name.trim() : `Jugador #${s.number || idx + 1}`,
+          position: s.position || (idx === 0 ? 'POR' : 'JUG'),
+          team_id: 'team_away',
+          team_name: awayTeamName,
+          isStarter: true,
+        };
+        awayStarters.push(pObj);
+        awayAll.push(pObj);
+      });
+    } else {
+      // Default 11 starters for Away (e.g. Al Ramtha)
+      for (let i = 1; i <= 11; i++) {
+        const pObj: Player = {
+          id: `a_st_${i}`,
+          number: i,
+          name: `Jugador #${i}`,
+          position: i === 1 ? 'POR' : 'JUG',
+          team_id: 'team_away',
+          team_name: awayTeamName,
+          isStarter: true,
+        };
+        awayStarters.push(pObj);
+        awayAll.push(pObj);
+      }
+    }
+
+    if (awayLineup?.substitutes && awayLineup.substitutes.length > 0) {
+      awayLineup.substitutes.forEach((s, idx) => {
+        const pObj: Player = {
+          id: s.id || `a_sub_${s.number || idx + 12}`,
+          number: typeof s.number === 'number' ? s.number : parseInt(String(s.number)) || idx + 12,
+          name: s.name && s.name.trim() ? s.name.trim() : `Jugador #${s.number || idx + 12}`,
+          position: s.position || 'JUG',
+          team_id: 'team_away',
+          team_name: awayTeamName,
+          isStarter: false,
+        };
+        awayAll.push(pObj);
+      });
+    }
+
+    // Append other squad members from db players not in lineup for away team
+    const existingAwayIds = new Set(awayAll.map((p) => p.id));
+    const existingAwayNames = new Set(awayAll.map((p) => p.name.toLowerCase().trim()));
+    (players || []).forEach((p) => {
+      const t = (p.team_name || '').toLowerCase().trim();
+      const isAwayMatch = t === awayTeamName.toLowerCase().trim() || (!isHomeShabab && isShabab(t));
+      if (isAwayMatch && !existingAwayIds.has(p.id) && !existingAwayNames.has(p.name.toLowerCase().trim())) {
+        awayAll.push({ ...p, team_name: awayTeamName, isStarter: false });
+      }
+    });
+
+    return {
+      homeStarters,
+      homeAll,
+      awayStarters,
+      awayAll,
+      allStarters: [...homeStarters, ...awayStarters],
+      allSquad: [...homeAll, ...awayAll],
+    };
+  }, [currentMatch, players, homeTeamName, awayTeamName, isHomeShabab]);
+
+  // Team selection state
+  const [modalTeamName, setModalTeamName] = useState<string | null>(() => {
+    if (initialPlayerId) {
+      const initialP =
+        matchSquads.allSquad.find((p) => p.id === initialPlayerId) ||
+        players.find((p) => p.id === initialPlayerId);
+      if (initialP) {
+        const pTeam = (initialP.team_name || '').toLowerCase().trim();
+        if (pTeam === homeTeamName.toLowerCase().trim() || isShabab(pTeam)) {
+          return homeTeamName;
+        } else {
+          return awayTeamName;
+        }
+      }
+    }
+    return null;
+  });
+
   // Descriptors state
   const [selectedDescriptors, setSelectedDescriptors] = useState<string[]>([...initialGlobalDescriptors]);
 
-  // Player selection state
+  // Player selection state & filtering tab ('starters' | 'all')
   const [modalPlayerId, setModalPlayerId] = useState<string | null>(initialPlayerId);
-
-  // Team selection state
-  const [modalTeamName, setModalTeamName] = useState<string | null>(null);
+  const [playerTab, setPlayerTab] = useState<'starters' | 'all'>('starters');
 
   // Pitch state
   const [startX, setStartX] = useState<number | null>(null);
@@ -74,10 +249,58 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
   const showTeamSelection = button.teamRequiredMode && button.teamRequiredMode !== 'none';
   const isTeamMandatory = button.teamRequiredMode === 'required';
 
-  const homeTeamName = currentMatch?.home_team || 'Equipo Local';
-  const awayTeamName = currentMatch?.away_team || 'Equipo Visitante';
-  const homeTeamLogo = currentMatch?.home_team_logo;
-  const awayTeamLogo = currentMatch?.away_team_logo;
+  // Filter displayed players based on active team tab and starters/all tab
+  const displayedPlayers = React.useMemo(() => {
+    const isHome = modalTeamName?.toLowerCase().trim() === homeTeamName.toLowerCase().trim();
+    const isAway = modalTeamName?.toLowerCase().trim() === awayTeamName.toLowerCase().trim();
+
+    if (playerTab === 'starters') {
+      if (isHome) return matchSquads.homeStarters;
+      if (isAway) return matchSquads.awayStarters;
+      return matchSquads.allStarters;
+    } else {
+      if (isHome) return matchSquads.homeAll;
+      if (isAway) return matchSquads.awayAll;
+      return matchSquads.allSquad;
+    }
+  }, [modalTeamName, playerTab, homeTeamName, awayTeamName, matchSquads]);
+
+  const startersCount = React.useMemo(() => {
+    const isHome = modalTeamName?.toLowerCase().trim() === homeTeamName.toLowerCase().trim();
+    const isAway = modalTeamName?.toLowerCase().trim() === awayTeamName.toLowerCase().trim();
+    if (isHome) return matchSquads.homeStarters.length;
+    if (isAway) return matchSquads.awayStarters.length;
+    return matchSquads.allStarters.length;
+  }, [modalTeamName, homeTeamName, awayTeamName, matchSquads]);
+
+  const allCount = React.useMemo(() => {
+    const isHome = modalTeamName?.toLowerCase().trim() === homeTeamName.toLowerCase().trim();
+    const isAway = modalTeamName?.toLowerCase().trim() === awayTeamName.toLowerCase().trim();
+    if (isHome) return matchSquads.homeAll.length;
+    if (isAway) return matchSquads.awayAll.length;
+    return matchSquads.allSquad.length;
+  }, [modalTeamName, homeTeamName, awayTeamName, matchSquads]);
+
+  const handleSelectPlayer = (p: Player) => {
+    const isSelected = modalPlayerId === p.id;
+    if (isSelected) {
+      if (!isPlayerMandatory) {
+        setModalPlayerId(null);
+      }
+      return;
+    }
+
+    setModalPlayerId(p.id);
+
+    // If clicking a player, automatically select the corresponding team above
+    const isHomeP =
+      matchSquads.homeAll.some((hp) => hp.id === p.id) ||
+      (p.team_name || '').toLowerCase().trim() === homeTeamName.toLowerCase().trim();
+    const targetTeam = isHomeP ? homeTeamName : awayTeamName;
+    if (!modalTeamName || modalTeamName !== targetTeam) {
+      setModalTeamName(targetTeam);
+    }
+  };
 
   const toggleDescriptor = (desc: string) => {
     if (selectedDescriptors.includes(desc)) {
@@ -135,6 +358,10 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
 
   const isValid = isPitchValid() && isPlayerValid() && isTeamValid() && isDescriptorsValid;
 
+  const selectedPlayer =
+    matchSquads.allSquad.find((p) => p.id === modalPlayerId) ||
+    players.find((p) => p.id === modalPlayerId);
+
   const handleSave = () => {
     if (!isValid) return;
 
@@ -148,10 +375,16 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
         }
       : undefined;
 
-    onSave(selectedDescriptors, pitchData, modalPlayerId, modalTeamName);
-  };
+    const isHomeP = selectedPlayer
+      ? matchSquads.homeAll.some((hp) => hp.id === selectedPlayer.id)
+      : false;
 
-  const selectedPlayer = players.find((p) => p.id === modalPlayerId);
+    const finalTeam =
+      modalTeamName ||
+      (selectedPlayer ? (isHomeP ? homeTeamName : awayTeamName) : null);
+
+    onSave(selectedDescriptors, pitchData, modalPlayerId, finalTeam);
+  };
 
   return (
     <div
@@ -195,7 +428,7 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
             <button
               type="button"
               onClick={toggleSideDocked}
-              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 border ${
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 border cursor-pointer ${
                 isSideDocked
                   ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
                   : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700 hover:text-white'
@@ -206,7 +439,7 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
               <span className="hidden sm:inline">{isSideDocked ? 'Modo Lateral (Vídeo Visible)' : 'Centrar Ventana'}</span>
             </button>
 
-            <button onClick={onCancel} className="p-2 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-xl transition" title="Cerrar modal">
+            <button onClick={onCancel} className="p-2 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-xl transition cursor-pointer" title="Cerrar modal">
               <X className="w-5 h-5" />
             </button>
           </div>
@@ -240,49 +473,81 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
                   {/* Local Team Button */}
                   <button
                     type="button"
-                    onClick={() => setModalTeamName(modalTeamName === homeTeamName && !isTeamMandatory ? null : homeTeamName)}
+                    onClick={() => {
+                      if (modalTeamName === homeTeamName) {
+                        setModalTeamName(isTeamMandatory ? homeTeamName : null);
+                      } else {
+                        setModalTeamName(homeTeamName);
+                      }
+                    }}
                     className={`p-2.5 rounded-xl border flex items-center gap-2.5 transition cursor-pointer ${
                       modalTeamName === homeTeamName
-                        ? 'bg-cyan-500/20 border-cyan-400 text-slate-100 ring-2 ring-cyan-500/40 font-bold shadow-lg shadow-cyan-950/40'
-                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                        ? isHomeShabab
+                          ? 'bg-red-500/20 border-red-400 text-slate-100 ring-2 ring-red-500/50 font-bold shadow-lg shadow-red-950/40'
+                          : 'bg-blue-500/20 border-blue-400 text-slate-100 ring-2 ring-blue-500/50 font-bold shadow-lg shadow-blue-950/40'
+                        : isHomeShabab
+                        ? 'bg-slate-900 border-slate-800 text-slate-400 hover:border-red-500/40 hover:text-slate-200'
+                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-blue-500/40 hover:text-slate-200'
                     }`}
                   >
                     {homeTeamLogo ? (
                       <img src={homeTeamLogo} alt={homeTeamName} className="w-7 h-7 object-contain rounded bg-slate-950 p-0.5 shrink-0" />
                     ) : (
-                      <div className="w-7 h-7 rounded-lg bg-emerald-600/30 border border-emerald-500/50 flex items-center justify-center text-xs shrink-0 font-bold text-emerald-300">
-                        🏠
+                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs shrink-0 font-bold ${
+                        isHomeShabab ? 'bg-red-600/30 border border-red-500/50 text-red-300' : 'bg-blue-600/30 border border-blue-500/50 text-blue-300'
+                      }`}>
+                        🛡️
                       </div>
                     )}
                     <div className="text-left min-w-0 flex-1">
-                      <span className="text-[9px] uppercase tracking-wider text-slate-500 block font-bold">Local</span>
+                      <span className={`text-[9px] uppercase tracking-wider block font-bold ${isHomeShabab ? 'text-red-400' : 'text-blue-400'}`}>
+                        Local
+                      </span>
                       <span className="text-xs font-extrabold text-slate-100 truncate block">{homeTeamName}</span>
                     </div>
-                    {modalTeamName === homeTeamName && <Check className="w-4 h-4 text-cyan-400 shrink-0" />}
+                    {modalTeamName === homeTeamName && (
+                      <Check className={`w-4 h-4 shrink-0 ${isHomeShabab ? 'text-red-400' : 'text-blue-400'}`} />
+                    )}
                   </button>
 
                   {/* Away Team Button */}
                   <button
                     type="button"
-                    onClick={() => setModalTeamName(modalTeamName === awayTeamName && !isTeamMandatory ? null : awayTeamName)}
+                    onClick={() => {
+                      if (modalTeamName === awayTeamName) {
+                        setModalTeamName(isTeamMandatory ? awayTeamName : null);
+                      } else {
+                        setModalTeamName(awayTeamName);
+                      }
+                    }}
                     className={`p-2.5 rounded-xl border flex items-center gap-2.5 transition cursor-pointer ${
                       modalTeamName === awayTeamName
-                        ? 'bg-amber-500/20 border-amber-400 text-slate-100 ring-2 ring-amber-500/40 font-bold shadow-lg shadow-amber-950/40'
-                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                        ? isAwayShabab
+                          ? 'bg-red-500/20 border-red-400 text-slate-100 ring-2 ring-red-500/50 font-bold shadow-lg shadow-red-950/40'
+                          : 'bg-blue-500/20 border-blue-400 text-slate-100 ring-2 ring-blue-500/50 font-bold shadow-lg shadow-blue-950/40'
+                        : isAwayShabab
+                        ? 'bg-slate-900 border-slate-800 text-slate-400 hover:border-red-500/40 hover:text-slate-200'
+                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-blue-500/40 hover:text-slate-200'
                     }`}
                   >
                     {awayTeamLogo ? (
                       <img src={awayTeamLogo} alt={awayTeamName} className="w-7 h-7 object-contain rounded bg-slate-950 p-0.5 shrink-0" />
                     ) : (
-                      <div className="w-7 h-7 rounded-lg bg-amber-600/30 border border-amber-500/50 flex items-center justify-center text-xs shrink-0 font-bold text-amber-300">
-                        ✈️
+                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs shrink-0 font-bold ${
+                        isAwayShabab ? 'bg-red-600/30 border border-red-500/50 text-red-300' : 'bg-blue-600/30 border border-blue-500/50 text-blue-300'
+                      }`}>
+                        🛡️
                       </div>
                     )}
                     <div className="text-left min-w-0 flex-1">
-                      <span className="text-[9px] uppercase tracking-wider text-slate-500 block font-bold">Visitante</span>
+                      <span className={`text-[9px] uppercase tracking-wider block font-bold ${isAwayShabab ? 'text-red-400' : 'text-blue-400'}`}>
+                        Visitante
+                      </span>
                       <span className="text-xs font-extrabold text-slate-100 truncate block">{awayTeamName}</span>
                     </div>
-                    {modalTeamName === awayTeamName && <Check className="w-4 h-4 text-amber-400 shrink-0" />}
+                    {modalTeamName === awayTeamName && (
+                      <Check className={`w-4 h-4 shrink-0 ${isAwayShabab ? 'text-red-400' : 'text-blue-400'}`} />
+                    )}
                   </button>
                 </div>
               </div>
@@ -291,36 +556,98 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
             {/* 2. SELECCIÓN DE JUGADOR */}
             {showPlayerSelection && (
               <div className="p-3.5 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-3 shadow-lg">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-extrabold text-slate-200 flex items-center gap-2">
-                    <User className="w-4 h-4 text-emerald-400" /> Jugador del Evento:
-                  </label>
-                  {isPlayerMandatory ? (
-                    <span className="px-2 py-0.5 rounded-md text-[10px] font-black bg-red-500/20 text-red-300 border border-red-500/40 animate-pulse">
-                      ⚠️ OBLIGATORIO
-                    </span>
-                  ) : (
-                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold text-slate-400 bg-slate-900 border border-slate-800">
-                      ⚪ Opcional
-                    </span>
-                  )}
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/80 pb-2.5">
+                  <div className="flex items-center gap-2">
+                    <User className="w-4 h-4 text-emerald-400" />
+                    <label className="text-xs font-extrabold text-slate-200">
+                      Jugador del Evento:
+                    </label>
+                    {isPlayerMandatory ? (
+                      <span className="px-2 py-0.5 rounded-md text-[10px] font-black bg-red-500/20 text-red-300 border border-red-500/40 animate-pulse">
+                        ⚠️ OBLIGATORIO
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-md text-[10px] font-bold text-slate-400 bg-slate-900 border border-slate-800">
+                        ⚪ Opcional
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Tabs: En campo vs Todos */}
+                  <div className="flex items-center bg-slate-900 p-1 rounded-xl border border-slate-800 text-[11px] gap-1 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setPlayerTab('starters')}
+                      className={`px-2.5 py-1 rounded-lg font-extrabold transition cursor-pointer flex items-center gap-1.5 ${
+                        playerTab === 'starters'
+                          ? 'bg-emerald-600 text-slate-950 shadow-md'
+                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                      }`}
+                      title="Mostrar solo los titulares que están jugando en la alineación"
+                    >
+                      <User className="w-3 h-3" />
+                      <span>En Campo</span>
+                      <span className="px-1.5 py-0.2 text-[9px] rounded-full bg-slate-950/40 text-white font-mono font-bold">
+                        {startersCount}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setPlayerTab('all')}
+                      className={`px-2.5 py-1 rounded-lg font-extrabold transition cursor-pointer flex items-center gap-1.5 ${
+                        playerTab === 'all'
+                          ? 'bg-emerald-600 text-slate-950 shadow-md'
+                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                      }`}
+                      title="Mostrar todos los jugadores de la plantilla"
+                    >
+                      <Users className="w-3 h-3" />
+                      <span>Todos</span>
+                      <span className="px-1.5 py-0.2 text-[9px] rounded-full bg-slate-950/40 text-white font-mono font-bold">
+                        {allCount}
+                      </span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* Selected Player Banner */}
                 {selectedPlayer ? (
-                  <div className="flex items-center justify-between p-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/40 shadow-inner">
-                    <div className="flex items-center gap-3">
-                      <NumberBadge number={selectedPlayer.number} size={32} selected={true} />
-                      <PlayerAvatar photoUrl={selectedPlayer.photo_url} name={selectedPlayer.name} size={32} />
-                      <div>
-                        <span className="text-xs font-black text-slate-100 block leading-tight">{selectedPlayer.name}</span>
-                        <span className="text-[10px] text-emerald-400 font-bold">{selectedPlayer.position}</span>
+                  <div
+                    className={`flex items-center justify-between p-2.5 rounded-xl border shadow-inner ${
+                      isShabab(selectedPlayer.team_name)
+                        ? 'bg-red-500/15 border-red-500/40 text-red-100'
+                        : 'bg-blue-500/15 border-blue-500/40 text-blue-100'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                      <div
+                        className={`w-8 h-8 rounded-lg flex items-center justify-center font-black text-xs shrink-0 ${
+                          isShabab(selectedPlayer.team_name)
+                            ? 'bg-red-600 text-white shadow'
+                            : 'bg-blue-600 text-white shadow'
+                        }`}
+                      >
+                        {selectedPlayer.number ?? '-'}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <span className="text-xs font-black text-slate-100 block truncate leading-tight whitespace-nowrap">
+                          {selectedPlayer.name}
+                        </span>
+                        <span
+                          className={`text-[10px] font-bold ${
+                            isShabab(selectedPlayer.team_name) ? 'text-red-400' : 'text-blue-400'
+                          }`}
+                        >
+                          {selectedPlayer.team_name || (matchSquads.homeAll.some((p) => p.id === selectedPlayer.id) ? homeTeamName : awayTeamName)}
+                        </span>
                       </div>
                     </div>
                     {!isPlayerMandatory && (
                       <button
+                        type="button"
                         onClick={() => setModalPlayerId(null)}
-                        className="text-[10px] text-slate-400 hover:text-red-400 px-2 py-1 rounded-lg bg-slate-900 border border-slate-800 font-bold transition"
+                        className="text-[10px] text-slate-400 hover:text-red-400 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 font-bold transition shrink-0 ml-2 cursor-pointer"
                       >
                         Quitar
                       </button>
@@ -328,39 +655,70 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
                   </div>
                 ) : (
                   <p className="text-[11px] text-slate-400 italic">
-                    {isPlayerMandatory ? 'Selecciona obligatoriamente un jugador de la plantilla:' : 'Sin jugador seleccionado.'}
+                    {isPlayerMandatory
+                      ? 'Selecciona obligatoriamente un jugador:'
+                      : modalTeamName
+                      ? `Mostrando jugadores de ${modalTeamName} (${playerTab === 'starters' ? 'titulares en campo' : 'plantilla completa'}).`
+                      : `Sin jugador seleccionado (${playerTab === 'starters' ? 'mostrando titulares en campo de ambos equipos' : 'mostrando todos los jugadores'}).`}
                   </p>
                 )}
 
-                {/* Player Quick Grid with Modern Dorsals & Player Photos */}
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1">
-                  {players.map((p) => {
-                    const isSelected = modalPlayerId === p.id;
-                    return (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onClick={() => setModalPlayerId(isSelected && !isPlayerMandatory ? null : p.id)}
-                        className={`flex items-center gap-2 p-2 rounded-xl border text-left transition-all cursor-pointer ${
-                          isSelected
-                            ? 'bg-emerald-600/25 border-emerald-400 text-emerald-300 font-bold shadow-md ring-2 ring-emerald-500/40'
-                            : 'bg-slate-900/90 border-slate-800 text-slate-300 hover:bg-slate-800 hover:border-slate-700'
-                        }`}
-                      >
-                        <NumberBadge number={p.number} size={28} selected={isSelected} />
-                        <PlayerAvatar photoUrl={p.photo_url} name={p.name} size={28} />
-                        <div className="min-w-0 flex-1">
-                          <span className="text-[11px] font-extrabold truncate leading-tight block text-slate-100">{p.name}</span>
-                          <span className="text-[9px] text-slate-400 truncate block">{p.position}</span>
-                        </div>
-                      </button>
-                    );
-                  })}
+                {/* Player Quick Grid with Full Names on a Single Line & Dorsal Only */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto pr-1">
+                  {displayedPlayers.length === 0 ? (
+                    <p className="text-xs text-slate-500 italic py-3 text-center col-span-full">
+                      No se encontraron jugadores registrados en la alineación.
+                    </p>
+                  ) : (
+                    displayedPlayers.map((p) => {
+                      const isSelected = modalPlayerId === p.id;
+                      const isPlayerHome = matchSquads.homeAll.some((hp) => hp.id === p.id);
+                      const isPlayerShabab = isShabab(p.team_name) || (isPlayerHome ? isHomeShabab : isAwayShabab);
+
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => handleSelectPlayer(p)}
+                          title={p.name}
+                          className={`group flex items-center gap-2.5 px-3 py-2 rounded-xl border text-left transition-all cursor-pointer w-full min-w-0 ${
+                            isSelected
+                              ? isPlayerShabab
+                                ? 'bg-red-600/25 border-red-400 text-white font-black ring-2 ring-red-500/60 shadow-lg shadow-red-950/60'
+                                : 'bg-blue-600/25 border-blue-400 text-white font-black ring-2 ring-blue-500/60 shadow-lg shadow-blue-950/60'
+                              : isPlayerShabab
+                              ? 'bg-slate-900/90 border-red-500/30 text-slate-100 hover:bg-red-950/25 hover:border-red-400/70'
+                              : 'bg-slate-900/90 border-blue-500/30 text-slate-100 hover:bg-blue-950/25 hover:border-blue-400/70'
+                          }`}
+                        >
+                          {/* Dorsal Badge */}
+                          <div
+                            className={`w-7 h-7 rounded-lg flex items-center justify-center font-black text-xs shrink-0 select-none transition-transform group-hover:scale-105 ${
+                              isSelected
+                                ? isPlayerShabab
+                                  ? 'bg-red-600 text-white shadow-sm'
+                                  : 'bg-blue-600 text-white shadow-sm'
+                                : isPlayerShabab
+                                ? 'bg-red-500/20 border border-red-500/50 text-red-300'
+                                : 'bg-blue-500/20 border border-blue-500/50 text-blue-300'
+                            }`}
+                          >
+                            {p.number ?? '-'}
+                          </div>
+
+                          {/* Full Player Name - Always entire name in single line */}
+                          <span className="text-xs font-bold flex-1 min-w-0 tracking-tight whitespace-nowrap overflow-hidden text-ellipsis">
+                            {p.name}
+                          </span>
+                        </button>
+                      );
+                    })
+                  )}
                 </div>
               </div>
             )}
 
-            {/* 2. DESCRIPTORES DEL EVENTO */}
+            {/* 3. DESCRIPTORES DEL EVENTO */}
             {hasDescriptors && (
               <div>
                 <h4 className="text-sm font-bold text-slate-200 flex items-center gap-2 mb-3">

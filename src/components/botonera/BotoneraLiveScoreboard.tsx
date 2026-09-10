@@ -75,21 +75,59 @@ interface BotoneraLiveScoreboardProps {
 }
 
 export function isGoalEvent(evt: NormalizedEvent): boolean {
-  const outcomeStr = (evt.outcome || '').toLowerCase();
-  const catStr = (evt.category || '').toLowerCase();
-  const typeStr = (evt.event_type || '').toLowerCase();
-  const subcatStr = (evt.subcategory || '').toLowerCase();
-  const metaDescriptors = evt.metadata?.descriptors || [];
+  if (!evt) return false;
 
-  const isOutcomeGol = outcomeStr === 'gol';
-  const isTypeGol = typeStr.includes('gol') && !typeStr.includes('fallido') && !typeStr.includes('no gol');
-  const isCatGol = catStr.includes('gol') && !catStr.includes('fallido') && !catStr.includes('no gol');
+  const outcomeStr = (evt.outcome || '').toLowerCase().trim();
+  const typeStr = (evt.event_type || '').toLowerCase().trim();
+  const catStr = (evt.category || '').toLowerCase().trim();
+  const subcatStr = (evt.subcategory || '').toLowerCase().trim();
+  const metaDescriptors: string[] = evt.metadata?.descriptors || [];
+
+  // 1. Direct outcome = Gol / Goal
+  if (outcomeStr === 'gol' || outcomeStr === 'goal' || outcomeStr.includes('gol marcado')) {
+    return true;
+  }
+
+  // 2. Direct event type or category = Gol
+  if (
+    (typeStr === 'gol' || typeStr === 'goal' || typeStr.startsWith('gol ') || typeStr.endsWith(' gol')) &&
+    !typeStr.includes('no gol') &&
+    !typeStr.includes('fallido') &&
+    !typeStr.includes('anulado') &&
+    !typeStr.includes('parada')
+  ) {
+    return true;
+  }
+
+  if (
+    (catStr === 'gol' || catStr === 'goal') &&
+    !catStr.includes('no gol') &&
+    !catStr.includes('fallido')
+  ) {
+    return true;
+  }
+
+  // 3. Descriptors indicate Gol (e.g. Remates/Tiros with "Resultado: Gol" or "Gol" or "GOL")
   const hasGolDesc =
-    metaDescriptors.some(
-      (d: string) => d.toLowerCase() === 'gol' || d.toLowerCase().includes('resultado: gol')
-    ) || subcatStr.includes('gol');
+    metaDescriptors.some((d: string) => {
+      const clean = d.toLowerCase().trim();
+      return (
+        clean === 'gol' ||
+        clean === 'goal' ||
+        clean.endsWith(': gol') ||
+        clean.endsWith(':gol') ||
+        clean.includes('resultado: gol') ||
+        clean.includes('resultado:gol') ||
+        clean.includes('finalización: gol') ||
+        clean.includes('finalizacion: gol') ||
+        clean.includes('consecuencia: gol') ||
+        clean.includes('tipo: gol')
+      );
+    }) ||
+    subcatStr === 'gol' ||
+    subcatStr.includes('gol');
 
-  return isOutcomeGol || isTypeGol || isCatGol || hasGolDesc;
+  return hasGolDesc;
 }
 
 export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({

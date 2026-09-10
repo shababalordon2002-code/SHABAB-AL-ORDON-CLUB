@@ -16,16 +16,20 @@ export async function getMatchesFromSupabase(): Promise<Match[]> {
       return [];
     }
 
-    return (data || []) as Match[];
+    return (data || []).map((row: any) => ({
+      ...row,
+      home_lineup: typeof row.home_lineup === 'string' ? JSON.parse(row.home_lineup) : (row.home_lineup || null),
+      away_lineup: typeof row.away_lineup === 'string' ? JSON.parse(row.away_lineup) : (row.away_lineup || null),
+    })) as Match[];
   } catch (err: any) {
     console.warn('Could not load matches from Supabase:', err.message);
     return [];
   }
 }
 
-// Columnas de vídeo / botonera del partido. Viven en la migración
-// supabase/migrations/0001_matches_video_sync_columns.sql; mientras no esté
-// aplicada, PostgREST responde "Could not find the 'X' column" y guardamos el
+// Columnas opcionales/recientes del partido (vídeo, sincronización y alineaciones)
+// Viven en las migraciones 0001 y 0009; mientras no estén aplicadas,
+// PostgREST responde "Could not find the 'X' column" y guardamos el
 // resto del partido sin ellas en lugar de perder el upsert entero.
 const OPTIONAL_MATCH_COLUMNS = [
   'video_type',
@@ -34,6 +38,8 @@ const OPTIONAL_MATCH_COLUMNS = [
   'p1_video_start_time',
   'p2_video_start_time',
   'botonera_template_id',
+  'home_lineup',
+  'away_lineup',
 ] as const;
 
 // Upsert matches into Supabase 'matches' table
@@ -72,6 +78,8 @@ export async function saveMatchesToSupabase(matches: Match[]): Promise<boolean> 
       p1_video_start_time: m.p1_video_start_time ?? null,
       p2_video_start_time: m.p2_video_start_time ?? null,
       botonera_template_id: m.botonera_template_id || null,
+      home_lineup: m.home_lineup || null,
+      away_lineup: m.away_lineup || null,
       updated_at: new Date().toISOString()
     }));
 
@@ -79,12 +87,12 @@ export async function saveMatchesToSupabase(matches: Match[]): Promise<boolean> 
       .from('matches')
       .upsert(rows, { onConflict: 'id' });
 
-    // Esquema antiguo sin las columnas de vídeo/botonera → reintento sin ellas
+    // Esquema antiguo sin las columnas de vídeo/botonera/alineaciones → reintento sin ellas
     if (error && /Could not find the '.+' column/.test(error.message)) {
       console.warn(
-        `La tabla 'matches' de Supabase no tiene las columnas de vídeo/botonera (${error.message}). ` +
-        'Ejecuta supabase/migrations/0001_matches_video_sync_columns.sql en el SQL Editor. ' +
-        'Mientras tanto se guarda el partido sin la sincronización de vídeo.'
+        `La tabla 'matches' de Supabase no tiene las columnas requeridas (${error.message}). ` +
+        'Ejecuta supabase/migrations/0009_add_lineups_to_matches_and_analyses.sql en el SQL Editor. ' +
+        'Mientras tanto se guarda el partido omitiendo las columnas no encontradas.'
       );
 
       const strippedRows = rows.map((row) => {

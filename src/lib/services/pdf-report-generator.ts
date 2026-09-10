@@ -1,5 +1,6 @@
 import { Match, NormalizedEvent } from '@/types';
 import { PdfReportLanguage } from '@/components/dashboards/PdfLanguageModal';
+import { calculateMatchScoresFromEvents } from '@/lib/analytics/dashboard-engine';
 
 export interface ReportTranslations {
   title: string;
@@ -247,8 +248,13 @@ export async function downloadPdfTechnicalReport(
 
   const homeTeam = match.home_team || 'Equipo Local';
   const awayTeam = match.away_team || 'Equipo Visitante';
-  const homeScore = match.home_score ?? 0;
-  const awayScore = match.away_score ?? 0;
+  const { homeScore, awayScore } = calculateMatchScoresFromEvents(
+    events,
+    match.home_team,
+    match.away_team,
+    match.home_score ?? 0,
+    match.away_score ?? 0
+  );
 
   // Hidden Offscreen DOM Container used only to render & capture the cover page.
   const container = document.createElement('div');
@@ -378,27 +384,48 @@ export async function downloadPdfTechnicalReport(
   pdf.addImage(coverCanvas.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, 1920, 1080);
 
   // ─────────────────────────────────────────────────────────
-  // Composes a full 1920x1080 PDF page from a real captured screenshot canvas,
-  // fitting it (contain) below a thin translated caption bar. Uses the browser's
-  // own Canvas2D text rendering (not jsPDF's built-in fonts) so accented and
-  // Arabic captions render correctly regardless of chosen language.
+  // Composes a PDF page from a real captured screenshot canvas, below a thin
+  // translated caption bar. The screenshot is scaled to fill the FULL page
+  // width (never letterboxed with black bars), and the page height grows to
+  // match the content's own aspect ratio so nothing is ever cropped either.
+  // Uses the browser's own Canvas2D text rendering (not jsPDF's built-in
+  // fonts) so accented and Arabic captions render correctly in any language.
   // ─────────────────────────────────────────────────────────
-  function composeScreenshotPage(canvas: HTMLCanvasElement, caption: string, pageNum: number): string | null {
+  const PAGE_W = 1920;
+  const AREA_X = 24;
+  const AREA_Y = 94;
+  const FOOTER_H = 46;
+  const AREA_W = PAGE_W - AREA_X * 2;
+
+  function composeScreenshotPage(
+    canvas: HTMLCanvasElement,
+    caption: string,
+    pageNum: number
+  ): { dataUrl: string; pageH: number } | null {
     if (!canvas || canvas.width === 0 || canvas.height === 0) {
       console.warn('PDF export: skipping page with empty capture canvas', caption);
       return null;
     }
+
+    // Fill the page width exactly; grow the page height to fit the content
+    // at that width, so nothing is ever letterboxed or cropped.
+    const w = AREA_W;
+    const h = (canvas.height / canvas.width) * w;
+    const pageH = Math.round(AREA_Y + h + FOOTER_H);
+    const x = AREA_X;
+    const y = AREA_Y;
+
     const pageCanvas = document.createElement('canvas');
-    pageCanvas.width = 1920;
-    pageCanvas.height = 1080;
+    pageCanvas.width = PAGE_W;
+    pageCanvas.height = pageH;
     const ctx = pageCanvas.getContext('2d') as CanvasRenderingContext2D;
 
     ctx.fillStyle = '#020617';
-    ctx.fillRect(0, 0, 1920, 1080);
+    ctx.fillRect(0, 0, PAGE_W, pageH);
 
     // Caption bar
     ctx.fillStyle = '#0f172a';
-    ctx.fillRect(0, 0, 1920, 74);
+    ctx.fillRect(0, 0, PAGE_W, 74);
     ctx.textBaseline = 'middle';
     ctx.direction = isRtl ? 'rtl' : 'ltr';
     ctx.font = 'bold 30px system-ui, -apple-system, sans-serif';
@@ -410,31 +437,18 @@ export async function downloadPdfTechnicalReport(
     ctx.textAlign = isRtl ? 'left' : 'right';
     ctx.fillText(t.clubName, isRtl ? 40 : 1880, 37);
 
-    // Fit the real screenshot (contain) into the remaining area
-    const areaX = 24;
-    const areaY = 94;
-    const areaW = 1920 - areaX * 2;
-    const areaH = 1080 - areaY - 46;
-    const scale = Math.min(areaW / canvas.width, areaH / canvas.height);
-    const w = canvas.width * scale;
-    const h = canvas.height * scale;
-    const x = areaX + (areaW - w) / 2;
-    const y = areaY + (areaH - h) / 2;
-
-    ctx.fillStyle = '#0f172a';
-    ctx.fillRect(x - 4, y - 4, w + 8, h + 8);
     ctx.drawImage(canvas, x, y, w, h);
 
     // Footer
     ctx.font = '16px system-ui, -apple-system, sans-serif';
     ctx.fillStyle = '#64748b';
     ctx.textAlign = isRtl ? 'right' : 'left';
-    ctx.fillText(t.generatedBy, isRtl ? 1880 : 40, 1060);
+    ctx.fillText(t.generatedBy, isRtl ? 1880 : 40, pageH - 20);
     ctx.textAlign = isRtl ? 'left' : 'right';
-    ctx.fillText(`${t.page} ${pageNum}`, isRtl ? 40 : 1880, 1060);
+    ctx.fillText(`${t.page} ${pageNum}`, isRtl ? 40 : 1880, pageH - 20);
 
     try {
-      return pageCanvas.toDataURL('image/jpeg', 0.92);
+      return { dataUrl: pageCanvas.toDataURL('image/jpeg', 0.92), pageH };
     } catch (err) {
       // A tainted canvas (cross-origin team logo without CORS headers) blocks
       // toDataURL entirely. Skip this page instead of aborting the whole export.
@@ -450,10 +464,10 @@ export async function downloadPdfTechnicalReport(
 
   const addCapturedPage = (canvas: HTMLCanvasElement, caption: string) => {
     try {
-      const dataUrl = composeScreenshotPage(canvas, caption, pageNum);
-      if (!dataUrl) return;
-      pdf.addPage([1920, 1080], 'landscape');
-      pdf.addImage(dataUrl, 'JPEG', 0, 0, 1920, 1080);
+      const composed = composeScreenshotPage(canvas, caption, pageNum);
+      if (!composed) return;
+      pdf.addPage([PAGE_W, composed.pageH], 'landscape');
+      pdf.addImage(composed.dataUrl, 'JPEG', 0, 0, PAGE_W, composed.pageH);
       pageNum++;
       pagesAdded++;
     } catch (err) {

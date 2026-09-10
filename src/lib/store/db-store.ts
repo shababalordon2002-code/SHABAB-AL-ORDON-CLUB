@@ -107,6 +107,7 @@ export const SEED_BOTONERA_TEMPLATES: BotoneraTemplate[] = [
         lagTime: 4,
         pitchRequired: 'zone_remate',
         descriptorGroups: [
+          { id: 'grp_t0', type: 'Claridad de Ocasión', options: ['Ocasiones muy claras', 'Ocasiones claras', 'Ocasiones sin importancia'] },
           { id: 'grp_t1', type: 'Resultado', options: ['Fuera', 'Poste', 'Parada', 'Gol'] },
           { id: 'grp_t2', type: 'Superficie de contacto', options: ['Pie derecho', 'Pie izquierdo', 'Cabeza', 'Volea'] },
           { id: 'grp_t3', type: 'Presión Rival', options: ['Sin marca', 'Presión media', 'Presión alta'] }
@@ -389,9 +390,27 @@ export const dbStore = {
     const remote = await getMatchesFromSupabase();
     if (remote && remote.length > 0) {
       const allLocal = this.getMatches();
-      const remoteIds = new Set(remote.map(m => m.id));
-      const localOnly = allLocal.filter(m => !remoteIds.has(m.id));
-      const merged = [...remote, ...localOnly].map(sanitizeMatchLogos);
+      const localMap = new Map(allLocal.map((m) => [m.id, m]));
+      const remoteIds = new Set(remote.map((m) => m.id));
+      const localOnly = allLocal.filter((m) => !remoteIds.has(m.id));
+
+      const mergedRemote = remote.map((rm) => {
+        const local = localMap.get(rm.id);
+        if (!local) return rm;
+        return {
+          ...rm,
+          home_lineup: rm.home_lineup || local.home_lineup || null,
+          away_lineup: rm.away_lineup || local.away_lineup || null,
+          video_type: rm.video_type || local.video_type,
+          video_url: rm.video_url || local.video_url,
+          video_source_name: rm.video_source_name || local.video_source_name,
+          p1_video_start_time: rm.p1_video_start_time ?? local.p1_video_start_time,
+          p2_video_start_time: rm.p2_video_start_time ?? local.p2_video_start_time,
+          botonera_template_id: rm.botonera_template_id || local.botonera_template_id,
+        };
+      });
+
+      const merged = [...mergedRemote, ...localOnly].map(sanitizeMatchLogos);
       setToStorage(STORAGE_KEYS.MATCHES, merged);
       return merged;
     }
@@ -760,8 +779,20 @@ export const dbStore = {
     const remote = await getAnalysesFromSupabase(matchId);
     if (remote && remote.length > 0) {
       const allLocal = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
-      const nonMatchLocal = matchId ? allLocal.filter(a => a.match_id !== matchId) : [];
-      const merged = [...remote, ...nonMatchLocal];
+      const localMap = new Map(allLocal.map((a) => [a.id, a]));
+      const nonMatchLocal = matchId ? allLocal.filter((a) => a.match_id !== matchId) : [];
+
+      const mergedRemote = remote.map((ra) => {
+        const local = localMap.get(ra.id) || allLocal.find((la) => la.match_id === ra.match_id);
+        if (!local) return ra;
+        return {
+          ...ra,
+          home_lineup: ra.home_lineup || local.home_lineup || null,
+          away_lineup: ra.away_lineup || local.away_lineup || null,
+        };
+      });
+
+      const merged = [...mergedRemote, ...nonMatchLocal];
       setToStorage(STORAGE_KEYS.MATCH_ANALYSES, merged);
       return this.getAnalyses(matchId);
     }

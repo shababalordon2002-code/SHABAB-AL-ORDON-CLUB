@@ -105,6 +105,7 @@ export const PITCH_MODE_OPTIONS = [
   { key: 'point_full', title: 'Punto (Campo)', desc: 'Punto (X, Y) campo entero', icon: '📍' },
   { key: 'point_half', title: 'Punto (Medio)', desc: 'Punto (X, Y) medio campo', icon: '📌' },
   { key: 'vector_arrow', title: 'Vector / Flechas', desc: 'Origen ➔ Destino (Pase, tiro)', icon: '🏹' },
+  { key: 'heatmap', title: 'Mapa de Calor', desc: 'Densidad térmica de acciones', icon: '🔥' },
   { key: 'zone_bandas_centro', title: 'Bandas y Centro', desc: '3 pasillos (Izq, Centro, Der)', icon: '↔️' },
   { key: 'zone_3_hitos', title: '3 Zonas', desc: 'Inicio - Creación - Finalización', icon: '📶' },
   { key: 'zone_4_zonas', title: '4 Cuadrantes', desc: 'Cuadrícula 2x2', icon: '📊' },
@@ -154,6 +155,22 @@ export function MiniPitchDiagram({ mode }: { mode: string }) {
           <path d="M 26 42 Q 50 16 74 24" fill="none" stroke="#f59e0b" strokeWidth="1.8" strokeDasharray="2.5 1.5" />
           <polygon points="74,24 68,20 70,26" fill="#f59e0b" />
           <circle cx="74" cy="24" r="2.5" fill="#f59e0b" />
+        </g>
+      )}
+
+      {mode === 'heatmap' && (
+        <g>
+          <defs>
+            <radialGradient id="mini-heat" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#ef4444" stopOpacity="0.9" />
+              <stop offset="40%" stopColor="#f59e0b" stopOpacity="0.7" />
+              <stop offset="70%" stopColor="#10b981" stopOpacity="0.4" />
+              <stop offset="100%" stopColor="#10b981" stopOpacity="0" />
+            </radialGradient>
+          </defs>
+          <circle cx="68" cy="26" r="14" fill="url(#mini-heat)" />
+          <circle cx="42" cy="38" r="11" fill="url(#mini-heat)" />
+          <circle cx="76" cy="36" r="10" fill="url(#mini-heat)" />
         </g>
       )}
 

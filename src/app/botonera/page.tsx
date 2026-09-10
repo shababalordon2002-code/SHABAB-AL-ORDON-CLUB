@@ -434,6 +434,18 @@ export default function BotoneraPage() {
           setIsTimerRunning(false);
         }
 
+        if (activeSession.selectedMatchId && (activeSession.home_lineup || activeSession.away_lineup)) {
+          const m = dbStore.getMatchById(activeSession.selectedMatchId);
+          if (m) {
+            dbStore.saveMatch({
+              ...m,
+              home_lineup: activeSession.home_lineup || m.home_lineup || null,
+              away_lineup: activeSession.away_lineup || m.away_lineup || null,
+            });
+            setMatches(dbStore.getMatches());
+          }
+        }
+
         if (activeSession.isConfigured) {
           setIsSessionConfigured(true);
           setVideoType(activeSession.videoType || 'link');
@@ -657,6 +669,8 @@ export default function BotoneraPage() {
       ? (dbStore.getActiveBotoneraSession()?.startTimestamp || Date.now() - timerSeconds * 1000)
       : null;
 
+    const targetMatch = matches.find((m) => m.id === selectedMatchId);
+
     dbStore.saveActiveBotoneraSession({
       selectedMatchId,
       period,
@@ -672,6 +686,8 @@ export default function BotoneraPage() {
       p1VideoStartSeconds: periodVideoOffsets[1] ?? null,
       p2VideoStartSeconds: periodVideoOffsets[2] ?? null,
       botoneraTemplateId: template?.id || null,
+      home_lineup: targetMatch?.home_lineup || null,
+      away_lineup: targetMatch?.away_lineup || null,
     });
   }, [
     timerSeconds,
@@ -685,6 +701,7 @@ export default function BotoneraPage() {
     videoUrl,
     periodVideoOffsets,
     template,
+    matches,
   ]);
 
   const handleStartNewRegistration = () => {
@@ -2010,15 +2027,17 @@ export default function BotoneraPage() {
               setEvents((prev) => [...prev, newEvt]);
             }}
             onUpdateLineup={(team, config, updatedPlayers) => {
-              const teamName = team === 'home' ? (selectedMatch?.home_team || 'Equipo Local') : (selectedMatch?.away_team || 'Equipo Visitante');
+              const currentM = matches.find((m) => m.id === selectedMatchId) || selectedMatch || matches[0];
+              const teamName = team === 'home'
+                ? (currentM?.home_team || 'Shabab Al Ordon')
+                : (currentM?.away_team || 'Al Ramtha');
               setPlayers((prev) => [
-                ...prev.filter((p) => p.team_name !== teamName),
+                ...prev.filter((p) => (p.team_name || '').toLowerCase().trim() !== teamName.toLowerCase().trim()),
                 ...updatedPlayers,
               ]);
-              const targetMatch = matches.find((m) => m.id === selectedMatchId) || selectedMatch;
-              if (targetMatch) {
+              if (currentM) {
                 const updatedMatch = {
-                  ...targetMatch,
+                  ...currentM,
                   [team === 'home' ? 'home_lineup' : 'away_lineup']: config,
                 };
                 dbStore.saveMatch(updatedMatch);
@@ -2383,7 +2402,7 @@ export default function BotoneraPage() {
           initialGlobalDescriptors={eventModalData.activeDescriptors}
           players={players}
           selectedPlayerId={selectedPlayerId}
-          currentMatch={matches.find((m) => m.id === selectedMatchId) || null}
+          currentMatch={matches.find((m) => m.id === selectedMatchId) || selectedMatch || (selectedMatchId && selectedMatchId !== 'free_session' ? dbStore.getMatchById(selectedMatchId) : null) || matches[0] || null}
           clickTimestamp={eventModalData.clickTimestamp}
           clickPeriod={eventModalData.clickPeriod}
           onSave={(finalDescriptors, pitchData, modalPlayerId, modalTeamName) =>

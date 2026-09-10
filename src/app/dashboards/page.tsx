@@ -37,6 +37,7 @@ import { MatchAnalysisSelectorModal } from '@/components/analysis/MatchAnalysisS
 import { useAuth } from '@/components/providers/AuthProvider';
 import { AdminDashboardConfigModal } from '@/components/dashboards/AdminDashboardConfigModal';
 import { TacticalLineupPitch } from '@/components/pitch/TacticalLineupPitch';
+import { calculateMatchScoresFromEvents } from '@/lib/analytics/dashboard-engine';
 
 interface MatchBlock {
   match: Match;
@@ -346,23 +347,34 @@ export default function DashboardsPage() {
                       <span className="truncate text-slate-400">{block.match.competition}</span>
                     </div>
 
-                    <h2 className="text-sm sm:text-base font-extrabold text-white truncate flex items-center gap-2">
-                      <img 
-                        src={block.match.home_team.toLowerCase().includes('shabab') || block.match.home_team.toLowerCase().includes('ordon') ? '/logo.png' : (block.match.home_team_logo || '/logo.png')} 
-                        alt="" 
-                        className="w-4.5 h-4.5 object-contain" 
-                      />
-                      <span>{block.match.home_team}</span>
-                      <span className="px-1.5 py-0.5 rounded bg-slate-950 text-amber-400 font-mono text-xs border border-slate-800 font-bold">
-                        {block.match.home_score} - {block.match.away_score}
-                      </span>
-                      <span>{block.match.away_team}</span>
-                      <img 
-                        src={block.match.away_team.toLowerCase().includes('shabab') || block.match.away_team.toLowerCase().includes('ordon') ? '/logo.png' : (block.match.away_team_logo || '/logo.png')} 
-                        alt="" 
-                        className="w-4.5 h-4.5 object-contain" 
-                      />
-                    </h2>
+                    {(() => {
+                      const blockScores = calculateMatchScoresFromEvents(
+                        block.events,
+                        block.match.home_team,
+                        block.match.away_team,
+                        block.match.home_score ?? 0,
+                        block.match.away_score ?? 0
+                      );
+                      return (
+                        <h2 className="text-sm sm:text-base font-extrabold text-white truncate flex items-center gap-2">
+                          <img 
+                            src={block.match.home_team.toLowerCase().includes('shabab') || block.match.home_team.toLowerCase().includes('ordon') ? '/logo.png' : (block.match.home_team_logo || '/logo.png')} 
+                            alt="" 
+                            className="w-4.5 h-4.5 object-contain" 
+                          />
+                          <span>{block.match.home_team}</span>
+                          <span className="px-1.5 py-0.5 rounded bg-slate-950 text-amber-400 font-mono text-xs border border-slate-800 font-bold">
+                            {blockScores.homeScore} - {blockScores.awayScore}
+                          </span>
+                          <span>{block.match.away_team}</span>
+                          <img 
+                            src={block.match.away_team.toLowerCase().includes('shabab') || block.match.away_team.toLowerCase().includes('ordon') ? '/logo.png' : (block.match.away_team_logo || '/logo.png')} 
+                            alt="" 
+                            className="w-4.5 h-4.5 object-contain" 
+                          />
+                        </h2>
+                      );
+                    })()}
 
                     <div className="flex items-center gap-2 text-[11px] pt-0.5 flex-wrap">
                       <span className="px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-amber-400 font-mono font-semibold">

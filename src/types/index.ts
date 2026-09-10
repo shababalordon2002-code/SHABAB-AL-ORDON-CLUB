@@ -95,6 +95,7 @@ export interface Player {
   flag_url?: string;
   market_value?: string;
   is_demo?: boolean;
+  isStarter?: boolean;
 }
 
 export interface TeamCircleStyle {
@@ -209,6 +210,7 @@ export type PitchRequiredType =
   | 'point_half'
   | 'vector'
   | 'vector_arrow'
+  | 'heatmap'
   | 'zone'
   | 'zone_bandas_centro'
   | 'zone_3_hitos'
@@ -297,6 +299,8 @@ export interface ActiveBotoneraSession {
   p1VideoStartSeconds?: number | null; // video timestamp in seconds for 1st half start
   p2VideoStartSeconds?: number | null; // video timestamp in seconds for 2nd half start
   botoneraTemplateId?: string | null;
+  home_lineup?: TeamLineupConfig | null;
+  away_lineup?: TeamLineupConfig | null;
 }
 
 

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useCallback } from 'react';
 import {
   Match,
   NormalizedEvent,
@@ -9,9 +9,8 @@ import {
   PitchRequiredType,
   Player,
 } from '@/types';
-import { TacticalLineupPitch, SubstitutionRecord } from '@/components/pitch/TacticalLineupPitch';
-import { BotoneraPitchCanvas, EventPitchMarker } from '@/components/botonera/BotoneraPitchCanvas';
-import { getButtonColorHex } from '@/components/botonera/BotoneraPanelEditor';
+import { TacticalLineupPitch, type SubstitutionRecord } from '@/components/pitch/TacticalLineupPitch';
+import { BotoneraPitchCanvas, type EventPitchMarker } from '@/components/botonera/BotoneraPitchCanvas';
 import { TeamLogo } from '@/components/player/PlayerBadge';
 import { dbStore } from '@/lib/store/db-store';
 import { calculateEventVideoTime, resolveEventPeriod } from '@/lib/analytics/video-utils';
@@ -37,8 +36,38 @@ import {
   Globe,
   MapPin,
 } from 'lucide-react';
-import { PdfLanguageModal, PdfReportLanguage } from './PdfLanguageModal';
+import { PdfLanguageModal, type PdfReportLanguage } from './PdfLanguageModal';
 import { downloadPdfTechnicalReport } from '@/lib/services/pdf-report-generator';
+
+const COLOR_MAP: Record<string, string> = {
+  emerald: '#10b981',
+  teal: '#14b8a6',
+  green: '#22c55e',
+  cyan: '#06b6d4',
+  sky: '#0ea5e9',
+  blue: '#3b82f6',
+  indigo: '#6366f1',
+  violet: '#8b5cf6',
+  purple: '#a855f7',
+  fuchsia: '#d946ef',
+  pink: '#ec4899',
+  rose: '#f43f5e',
+  red: '#ef4444',
+  coral: '#ff5722',
+  orange: '#f97316',
+  amber: '#f59e0b',
+  yellow: '#eab308',
+  gold: '#d97706',
+  slate: '#64748b',
+  zinc: '#71717a',
+  neutral: '#737373',
+};
+
+function getButtonColorHex(colorStr?: string | null): string {
+  if (!colorStr) return '#10b981';
+  if (colorStr.startsWith('#')) return colorStr;
+  return COLOR_MAP[colorStr.toLowerCase()] || '#10b981';
+}
 
 interface StandardMatchDashboardProps {
   match: Match;
@@ -85,7 +114,26 @@ export const StandardMatchDashboard: React.FC<StandardMatchDashboardProps> = ({
       // canvas, which then blocks toDataURL() later and silently kills every page
       // except the cover. useCORS alone just skips images that fail CORS (blank badge)
       // instead of breaking the whole export.
-      const captureOpts = { scale: 2, useCORS: true, backgroundColor: '#020617', logging: false };
+      // windowWidth/windowHeight force html2canvas's internal cloned iframe to a fixed
+      // desktop-sized viewport, so Tailwind's responsive classes (sm:/md:/lg:) always
+      // resolve to the desktop layout — otherwise a capture taken on a phone would
+      // faithfully screenshot the cramped mobile layout instead of the full desktop one.
+      // windowHeight is deliberately generous (well beyond a real 1080p screen): the
+      // event-detail modal caps itself at `max-h-[95vh]` with internal scrolling, and a
+      // short emulated window made that 95vh cap clip the tactical pitches mid-field
+      // during capture. A tall virtual window means 95vh always has enough room for the
+      // full modal content, so nothing gets cropped — the PDF page height then adapts
+      // to whatever the real captured content height is.
+      const captureOpts = {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#020617',
+        logging: false,
+        windowWidth: 1920,
+        windowHeight: 4000,
+        scrollX: 0,
+        scrollY: 0,
+      };
 
       // 1. Capture the main summary section exactly as rendered (score, lineups, comparison bars, evolution).
       setPdfProgressMsg('Capturando resumen del partido...');
@@ -413,47 +461,94 @@ export const StandardMatchDashboard: React.FC<StandardMatchDashboardProps> = ({
     setAllEvents((prev) => [...prev, newEvt]);
   };
 
-// Helper to match an event to a Botonera category button flexibly
+// Helper to match an event to a Botonera category button accurately and unambiguously
 function findMatchingButton(buttons: BotoneraButton[], evt: NormalizedEvent): BotoneraButton | undefined {
-  const eType = (evt.event_type || '').trim().toLowerCase();
-  const eCat = (evt.category || '').trim().toLowerCase();
-  const eSub = (evt.subcategory || '').trim().toLowerCase();
   const eBtnId = (evt.metadata?.buttonId || '').toString().trim().toLowerCase();
   const eBtnName = (evt.metadata?.buttonName || '').toString().trim().toLowerCase();
+  const eType = (evt.event_type || '').trim().toLowerCase();
 
-  // 1. Direct ID match
+  // 1. Direct button ID match
   if (eBtnId) {
     const match = buttons.find((b) => b.id.toLowerCase() === eBtnId);
     if (match) return match;
   }
 
-  // 2. Direct Name / ButtonName match
-  const nameToMatch = eBtnName || eType;
-  if (nameToMatch) {
-    const match = buttons.find((b) => b.name.trim().toLowerCase() === nameToMatch);
+  // 2. Direct button name match
+  if (eBtnName) {
+    const match = buttons.find((b) => b.name.trim().toLowerCase() === eBtnName);
     if (match) return match;
   }
 
-  // 3. Category match
-  if (eCat) {
-    const match = buttons.find(
-      (b) =>
-        b.name.trim().toLowerCase() === eCat ||
-        (b.category && b.category.trim().toLowerCase() === eCat)
+  // 3. Exact event_type match to button name or button id
+  if (eType) {
+    const exactMatch = buttons.find(
+      (b) => b.name.trim().toLowerCase() === eType || b.id.toLowerCase() === eType
     );
-    if (match) return match;
+    if (exactMatch) return exactMatch;
   }
 
-  // 4. Fuzzy / includes match
-  return buttons.find((b) => {
-    const bName = b.name.trim().toLowerCase();
-    const bCat = (b.category || '').trim().toLowerCase();
-    return (
-      (eType && (bName.includes(eType) || eType.includes(bName))) ||
-      (eCat && (bName.includes(eCat) || eCat.includes(bName) || bCat.includes(eCat) || eCat.includes(bCat))) ||
-      (eSub && (bName.includes(eSub) || eSub.includes(bName)))
-    );
-  });
+  // 4. Specific normalized category keyword mapping for imported events
+  if (eType) {
+    // Corners
+    if (eType.includes('corner') || eType.includes('córner') || eType.includes('esquina')) {
+      const match = buttons.find((b) => b.name.toLowerCase().includes('corner') || b.name.toLowerCase().includes('córner'));
+      if (match) return match;
+    }
+    // Faltas / Tiro libre (Free kick is a Falta, NOT a shot)
+    if (eType.includes('tiro libre') || eType.includes('falta') || eType.includes('foul')) {
+      const match = buttons.find((b) => b.name.toLowerCase().includes('falta'));
+      if (match) return match;
+    }
+    // Saque de banda
+    if (eType.includes('saque de banda') || eType.includes('sb') || eType.includes('throw')) {
+      const match = buttons.find((b) => b.name.toLowerCase().includes('sb') || b.name.toLowerCase().includes('banda'));
+      if (match) return match;
+    }
+    // Salidas
+    if (eType.includes('salida') || eType.includes('goal kick') || eType.includes('saque de puerta') || eType.includes('saque de meta')) {
+      const match = buttons.find((b) => b.name.toLowerCase().includes('salida'));
+      if (match) return match;
+    }
+    // Presion
+    if (eType.includes('presion') || eType.includes('presión') || eType.includes('press')) {
+      const match = buttons.find((b) => b.name.toLowerCase().includes('presion') || b.name.toLowerCase().includes('presión'));
+      if (match) return match;
+    }
+    // Recuperaciones
+    if (eType.includes('recuperaci') || eType.includes('intercepc') || eType.includes('recovery')) {
+      const match = buttons.find((b) => b.name.toLowerCase().includes('recuperaci'));
+      if (match) return match;
+    }
+    // Transiciones ofensivas
+    if (eType.includes('trans. ofen') || eType.includes('transicion ofen') || eType.includes('transición ofen') || eType.includes('contraataque')) {
+      const match = buttons.find((b) => b.name.toLowerCase().includes('trans. ofen') || b.name.toLowerCase().includes('transicion ofen') || b.name.toLowerCase().includes('transición ofen'));
+      if (match) return match;
+    }
+    // Transiciones defensivas
+    if (eType.includes('trans. defen') || eType.includes('transicion defen') || eType.includes('transición defen') || eType.includes('repliegue')) {
+      const match = buttons.find((b) => b.name.toLowerCase().includes('trans. defen') || b.name.toLowerCase().includes('transicion defen') || b.name.toLowerCase().includes('transición defen'));
+      if (match) return match;
+    }
+    // Remates / Tiros (ONLY if strictly a shot and not a free kick or corner)
+    if (
+      eType.includes('remate') ||
+      eType.includes('shot') ||
+      eType === 'gol' ||
+      eType === 'goal' ||
+      eType === 'tiro' ||
+      eType.startsWith('tiro a') ||
+      eType.includes('tiro /') ||
+      eType.includes('/ tiro')
+    ) {
+      const match = buttons.find((b) => {
+        const s = b.name.toLowerCase();
+        return s.includes('remate') || s.includes('tiro') || s.includes('shot');
+      });
+      if (match) return match;
+    }
+  }
+
+  return undefined;
 }
 
 // Helper to determine whether an event belongs to 1st or 2nd half and its relative minute
@@ -488,6 +583,219 @@ function resolveEventTiming(evt: NormalizedEvent): { period: 1 | 2; relMinute: n
   return { period: 1, relMinute: Math.max(0, rawMin) };
 }
 
+// Helper to calculate exact differential polygon areas between Green (SAO) and Red (Rival) dominance curves
+function generateDominanceDifferentialPaths(
+  saoPoints: Array<{ x: number; y: number; count: number }>,
+  rivalPoints: Array<{ x: number; y: number; count: number }>,
+  samplesPerSegment: number = 40
+) {
+  if (saoPoints.length < 2 || rivalPoints.length < 2) {
+    return { saoDominancePaths: [] as string[], rivalDominancePaths: [] as string[] };
+  }
+
+  // 1. High-resolution smooth sampling of both curves
+  const sampled: Array<{ x: number; ySao: number; yRiv: number }> = [];
+
+  for (let i = 0; i < saoPoints.length - 1; i++) {
+    const p0Sao = saoPoints[i];
+    const p1Sao = saoPoints[i + 1];
+    const p0Riv = rivalPoints[i];
+    const p1Riv = rivalPoints[i + 1];
+
+    const numSamples = i === saoPoints.length - 2 ? samplesPerSegment + 1 : samplesPerSegment;
+
+    for (let s = 0; s < numSamples; s++) {
+      const u = s / samplesPerSegment;
+      const x = p0Sao.x + u * (p1Sao.x - p0Sao.x);
+      // Smooth Hermite cubic interpolation matching the SVG bezier curve
+      const h0 = (1 - u) * (1 - u) * (1 + 2 * u);
+      const h1 = u * u * (3 - 2 * u);
+
+      const ySao = h0 * p0Sao.y + h1 * p1Sao.y;
+      const yRiv = h0 * p0Riv.y + h1 * p1Riv.y;
+
+      sampled.push({ x, ySao, yRiv });
+    }
+  }
+
+  const saoDominancePaths: string[] = [];
+  const rivalDominancePaths: string[] = [];
+
+  let currentDominance: 'sao' | 'rival' | 'none' = 'none';
+  let currentPoly: Array<{ x: number; yTop: number; yBottom: number }> = [];
+
+  const flushCurrentPoly = () => {
+    if (currentPoly.length >= 2) {
+      let d = `M ${currentPoly[0].x.toFixed(2)} ${currentPoly[0].yTop.toFixed(2)}`;
+      for (let k = 1; k < currentPoly.length; k++) {
+        d += ` L ${currentPoly[k].x.toFixed(2)} ${currentPoly[k].yTop.toFixed(2)}`;
+      }
+      for (let k = currentPoly.length - 1; k >= 0; k--) {
+        d += ` L ${currentPoly[k].x.toFixed(2)} ${currentPoly[k].yBottom.toFixed(2)}`;
+      }
+      d += ' Z';
+
+      if (currentDominance === 'sao') {
+        saoDominancePaths.push(d);
+      } else if (currentDominance === 'rival') {
+        rivalDominancePaths.push(d);
+      }
+    }
+    currentPoly = [];
+  };
+
+  for (let k = 0; k < sampled.length; k++) {
+    const pt = sampled[k];
+    // In SVG y coords: smaller y means higher value/position.
+    // If yRiv > ySao, then SAO has higher action count -> SAO dominates
+    const diff = pt.yRiv - pt.ySao;
+
+    let ptDominance: 'sao' | 'rival' | 'none' = 'none';
+    if (diff > 0.15) {
+      ptDominance = 'sao';
+    } else if (diff < -0.15) {
+      ptDominance = 'rival';
+    } else {
+      ptDominance = 'none';
+    }
+
+    if (ptDominance !== currentDominance) {
+      // Precise root calculation for seamless intersection point
+      if (k > 0) {
+        const prev = sampled[k - 1];
+        const dyPrev = prev.yRiv - prev.ySao;
+        const dyCurr = pt.yRiv - pt.ySao;
+        if ((dyPrev > 0 && dyCurr < 0) || (dyPrev < 0 && dyCurr > 0)) {
+          const t = Math.abs(dyPrev) / (Math.abs(dyPrev) + Math.abs(dyCurr));
+          const crossX = prev.x + t * (pt.x - prev.x);
+          const crossY = prev.ySao + t * (pt.ySao - prev.ySao);
+
+          if (currentPoly.length > 0) {
+            currentPoly.push({ x: crossX, yTop: crossY, yBottom: crossY });
+            flushCurrentPoly();
+          }
+
+          currentDominance = ptDominance;
+          if (ptDominance !== 'none') {
+            currentPoly.push({ x: crossX, yTop: crossY, yBottom: crossY });
+            currentPoly.push({ x: pt.x, yTop: Math.min(pt.ySao, pt.yRiv), yBottom: Math.max(pt.ySao, pt.yRiv) });
+          }
+          continue;
+        }
+      }
+
+      if (currentPoly.length > 0) {
+        flushCurrentPoly();
+      }
+      currentDominance = ptDominance;
+      if (ptDominance !== 'none') {
+        currentPoly.push({ x: pt.x, yTop: Math.min(pt.ySao, pt.yRiv), yBottom: Math.max(pt.ySao, pt.yRiv) });
+      }
+    } else {
+      if (ptDominance !== 'none') {
+        currentPoly.push({ x: pt.x, yTop: Math.min(pt.ySao, pt.yRiv), yBottom: Math.max(pt.ySao, pt.yRiv) });
+      }
+    }
+  }
+
+  flushCurrentPoly();
+
+  return { saoDominancePaths, rivalDominancePaths };
+}
+
+  function isGoalEvent(evt: NormalizedEvent): boolean {
+    const metaDescriptors = evt.metadata?.descriptors || [];
+    const outcomeStr = (evt.outcome || '').toLowerCase().trim();
+    const eventTypeStr = (evt.event_type || '').toLowerCase().trim();
+    const categoryStr = (evt.category || '').toLowerCase().trim();
+    const subcatStr = (evt.subcategory || '').toLowerCase().trim();
+
+    // 1. Direct outcome = Gol / Goal
+    const isOutcomeGol =
+      outcomeStr === 'gol' ||
+      outcomeStr === 'goal' ||
+      outcomeStr.includes('gol marcado') ||
+      outcomeStr.startsWith('gol');
+
+    // 2. Direct event type or category = Gol
+    const isTypeGol =
+      (eventTypeStr === 'gol' || eventTypeStr === 'goal' || eventTypeStr.startsWith('gol ') || eventTypeStr.endsWith(' gol')) &&
+      !eventTypeStr.includes('no gol') &&
+      !eventTypeStr.includes('fallido') &&
+      !eventTypeStr.includes('anulado');
+
+    const isCatGol =
+      (categoryStr === 'gol' || categoryStr === 'goal') &&
+      !categoryStr.includes('no gol') &&
+      !categoryStr.includes('fallido');
+
+    // 3. Descriptors indicate Gol (e.g. Remate / Tiro with descriptor "Resultado: Gol" or "Gol")
+    const hasGolDesc =
+      metaDescriptors.some((d: string) => {
+        const clean = d.toLowerCase().trim();
+        return (
+          clean === 'gol' ||
+          clean === 'goal' ||
+          clean.endsWith(': gol') ||
+          clean.endsWith(':gol') ||
+          clean.includes('resultado: gol') ||
+          clean.includes('resultado:gol') ||
+          clean.includes('finalización: gol') ||
+          clean.includes('finalizacion: gol') ||
+          clean.includes('consecuencia: gol') ||
+          clean.includes('tipo: gol')
+        );
+      }) ||
+      subcatStr === 'gol' ||
+      subcatStr.includes('gol');
+
+    return isOutcomeGol || isTypeGol || isCatGol || hasGolDesc;
+  }
+
+  const isEventOfHomeTeam = useCallback((ev: NormalizedEvent) => {
+    if (!ev) return false;
+    const cleanHome = (homeTeamName || '').toLowerCase().trim();
+    const cleanEvt = (ev.team_name || '').toLowerCase().trim();
+    if (cleanEvt) {
+      if (cleanEvt === cleanHome) return true;
+      if (/shabab|ordon|sao/i.test(cleanHome) && /shabab|ordon|sao/i.test(cleanEvt)) return true;
+      if (cleanEvt === (match.home_team || '').toLowerCase().trim()) return true;
+      return false;
+    }
+    if (ev.team_id) {
+      return ev.team_id === 'home_team' || ev.team_id === 'team_home' || ev.team_id === 'team_shabab_al_ordon';
+    }
+    return true;
+  }, [homeTeamName, match.home_team]);
+
+  const isEventOfAwayTeam = useCallback((ev: NormalizedEvent) => {
+    if (!ev) return false;
+    const cleanAway = (awayTeamName || '').toLowerCase().trim();
+    const cleanEvt = (ev.team_name || '').toLowerCase().trim();
+    if (cleanEvt) {
+      if (cleanEvt === cleanAway) return true;
+      if (/rival/i.test(cleanAway) && /rival/i.test(cleanEvt)) return true;
+      if (cleanEvt === (match.away_team || '').toLowerCase().trim()) return true;
+      return false;
+    }
+    if (ev.team_id) {
+      return ev.team_id === 'away_team' || ev.team_id === 'team_away' || ev.team_id === 'team_rival';
+    }
+    return false;
+  }, [awayTeamName, match.away_team]);
+
+  // Dynamically calculate scores from tagged goal events (Remates / Tiros con resultado GOL, Goles, etc.)
+  const calculatedHomeGoals = useMemo(() => {
+    return allEvents.filter((e) => isEventOfHomeTeam(e) && isGoalEvent(e)).length;
+  }, [allEvents, isEventOfHomeTeam]);
+
+  const calculatedAwayGoals = useMemo(() => {
+    return allEvents.filter((e) => isEventOfAwayTeam(e) && isGoalEvent(e)).length;
+  }, [allEvents, isEventOfAwayTeam]);
+
+  const displayHomeScore = allEvents.length > 0 ? calculatedHomeGoals : (match.home_score ?? 0);
+  const displayAwayScore = allEvents.length > 0 ? calculatedAwayGoals : (match.away_score ?? 0);
+
   // Extract all category buttons from template (or default categories if template unavailable)
   const categoryButtons: BotoneraButton[] = useMemo(() => {
     if (template?.buttons && template.buttons.length > 0) {
@@ -495,31 +803,135 @@ function resolveEventTiming(evt: NormalizedEvent): { period: 1 | 2; relMinute: n
     }
     // Fallback buttons if no template
     return [
+      { id: 'b_remates', name: 'Remates/tiros', category: 'Ataque', type: 'category', color: 'purple', leadTime: 5, lagTime: 5 },
       { id: 'b_corners', name: 'Corners', category: 'Balón Parado (ABP)', type: 'category', color: 'blue', leadTime: 5, lagTime: 5 },
       { id: 'b_faltas', name: 'Faltas', category: 'Balón Parado (ABP)', type: 'category', color: 'amber', leadTime: 5, lagTime: 5 },
       { id: 'b_sb', name: 'SB en campo rival', category: 'Ataque', type: 'category', color: 'cyan', leadTime: 5, lagTime: 5 },
       { id: 'b_salidas', name: 'Salidas', category: 'Ataque', type: 'category', color: 'emerald', leadTime: 5, lagTime: 5 },
       { id: 'b_presion', name: 'Presiones Altas', category: 'Defensa', type: 'category', color: 'rose', leadTime: 5, lagTime: 5 },
       { id: 'b_recuperaciones', name: 'Recuperaciones', category: 'Defensa', type: 'category', color: 'indigo', leadTime: 5, lagTime: 5 },
-      { id: 'b_remates', name: 'Remates/tiros', category: 'Ataque', type: 'category', color: 'purple', leadTime: 5, lagTime: 5 },
     ];
   }, [template]);
 
-  // Compute event counts per button for Home Team vs Away Team
+  // Helper to identify if a button or event name refers to Remates / Tiros
+  const isRemateButton = (nameOrId?: string) => {
+    if (!nameOrId) return false;
+    const s = nameOrId.toLowerCase();
+    return s.includes('remate') || s.includes('tiro') || s.includes('shot');
+  };
+
+  const isRemateEvent = useCallback(
+    (evt: NormalizedEvent) => {
+      const matched = findMatchingButton(categoryButtons, evt);
+      if (matched) {
+        return isRemateButton(matched.name) || isRemateButton(matched.id);
+      }
+      return false;
+    },
+    [categoryButtons]
+  );
+
+  // Classify a remate event into one of 3 occasion levels: muy_claras, claras, sin_importancia
+  const classifyRemateOccasion = (evt: NormalizedEvent): 'muy_claras' | 'claras' | 'sin_importancia' => {
+    const metaDescriptors = evt.metadata?.descriptors || [];
+    const metaStr = (
+      metaDescriptors.join(' ') +
+      ' ' +
+      (evt.outcome || '') +
+      ' ' +
+      (evt.subcategory || '') +
+      ' ' +
+      (evt.metadata?.occasion || '') +
+      ' ' +
+      (evt.metadata?.claridad || '')
+    ).toLowerCase();
+
+    // 1. Ocasiones muy claras
+    if (
+      metaStr.includes('muy clara') ||
+      metaStr.includes('muy claras') ||
+      metaStr.includes('100%') ||
+      metaStr.includes('mano a mano') ||
+      metaStr.includes('penalti') ||
+      isGoalEvent(evt)
+    ) {
+      return 'muy_claras';
+    }
+
+    // 2. Ocasiones claras
+    if (
+      metaStr.includes('clara') ||
+      metaStr.includes('claras') ||
+      metaStr.includes('a puerta') ||
+      metaStr.includes('poste') ||
+      metaStr.includes('parada') ||
+      metaStr.includes('peligro')
+    ) {
+      return 'claras';
+    }
+
+    // 3. Ocasiones sin importancia (por descarte o descriptores sin peligro)
+    return 'sin_importancia';
+  };
+
+  // Helper to test if an event is an offensive/ABP action for dominance calculation
+  const isOffensiveOrAbpEvent = (evt: NormalizedEvent, matchedBtn?: BotoneraButton | null) => {
+    const cat = (evt.category || matchedBtn?.category || '').toLowerCase();
+    const subcat = (evt.subcategory || '').toLowerCase();
+    const type = (evt.event_type || matchedBtn?.name || '').toLowerCase();
+    const metaStr = JSON.stringify(evt.metadata || {}).toLowerCase();
+
+    return (
+      cat.includes('ataque') ||
+      cat.includes('abp') ||
+      cat.includes('ofensiv') ||
+      cat.includes('balón parado') ||
+      cat.includes('balon parado') ||
+      type.includes('remate') ||
+      type.includes('tiro') ||
+      type.includes('gol') ||
+      type.includes('corner') ||
+      type.includes('córner') ||
+      type.includes('falta recibida') ||
+      type.includes('pase clave') ||
+      type.includes('salida') ||
+      type.includes('sb campo') ||
+      type.includes('trans. ofensiva') ||
+      type.includes('centro') ||
+      type.includes('regate') ||
+      subcat.includes('remate') ||
+      subcat.includes('tiro') ||
+      subcat.includes('ataque') ||
+      metaStr.includes('ofensiv') ||
+      metaStr.includes('remate') ||
+      metaStr.includes('tiro')
+    );
+  };
+
+  // Compute event counts per button for Home Team vs Away Team with Remates ALWAYS FIRST
   const horizontalBarData = useMemo(() => {
-    return categoryButtons.map((btn) => {
+    const sortedButtons = [...categoryButtons].sort((a, b) => {
+      const aIsRem = isRemateButton(a.name) || isRemateButton(a.id);
+      const bIsRem = isRemateButton(b.name) || isRemateButton(b.id);
+      if (aIsRem && !bIsRem) return -1;
+      if (!aIsRem && bIsRem) return 1;
+      return 0;
+    });
+
+    return sortedButtons.map((btn) => {
+      const isRem = isRemateButton(btn.name) || isRemateButton(btn.id);
       const homeEvts = events.filter((e) => {
         const isHome = e.team_name ? e.team_name === homeTeamName : e.team_id !== 'away_team';
         if (!isHome) return false;
         const matched = findMatchingButton(categoryButtons, e);
-        return matched?.id === btn.id || matched?.name.toLowerCase() === btn.name.toLowerCase();
+        return matched?.id === btn.id;
       });
 
       const awayEvts = events.filter((e) => {
         const isAway = e.team_name === awayTeamName || e.team_id === 'away_team';
         if (!isAway) return false;
         const matched = findMatchingButton(categoryButtons, e);
-        return matched?.id === btn.id || matched?.name.toLowerCase() === btn.name.toLowerCase();
+        return matched?.id === btn.id;
       });
 
       const colorHex = getButtonColorHex(btn.color || 'emerald');
@@ -527,6 +939,7 @@ function resolveEventTiming(evt: NormalizedEvent): { period: 1 | 2; relMinute: n
       return {
         button: btn,
         name: btn.name,
+        isRemate: isRem,
         colorHex,
         homeCount: homeEvts.length,
         awayCount: awayEvts.length,
@@ -535,7 +948,46 @@ function resolveEventTiming(evt: NormalizedEvent): { period: 1 | 2; relMinute: n
     });
   }, [categoryButtons, events, homeTeamName, awayTeamName]);
 
-  // Evolutionary timeline buckets (10-min intervals for 1st & 2nd half)
+  // Compute Remates 3 Descriptor Sub-bars (Ocasiones muy claras, Ocasiones claras, Ocasiones sin importancia)
+  const rematesSubBarData = useMemo(() => {
+    const remateBtn = categoryButtons.find((b) => isRemateButton(b.name) || isRemateButton(b.id));
+    const remateEvents = events.filter((e) => {
+      const matched = findMatchingButton(categoryButtons, e);
+      return Boolean(matched && remateBtn && matched.id === remateBtn.id);
+    });
+
+    const homeRemates = remateEvents.filter((e) => {
+      return e.team_name ? e.team_name === homeTeamName : e.team_id !== 'away_team';
+    });
+    const awayRemates = remateEvents.filter((e) => {
+      return e.team_name === awayTeamName || e.team_id === 'away_team';
+    });
+
+    const subCats: Array<{
+      key: 'muy_claras' | 'claras' | 'sin_importancia';
+      name: string;
+      colorHex: string;
+    }> = [
+      { key: 'muy_claras', name: 'Ocasiones muy claras', colorHex: '#10b981' },
+      { key: 'claras', name: 'Ocasiones claras', colorHex: '#38bdf8' },
+      { key: 'sin_importancia', name: 'Ocasiones sin importancia', colorHex: '#94a3b8' },
+    ];
+
+    return subCats.map((cat) => {
+      const homeCount = homeRemates.filter((e) => classifyRemateOccasion(e) === cat.key).length;
+      const awayCount = awayRemates.filter((e) => classifyRemateOccasion(e) === cat.key).length;
+      return {
+        key: cat.key,
+        name: cat.name,
+        colorHex: cat.colorHex,
+        homeCount,
+        awayCount,
+        total: homeCount + awayCount,
+      };
+    });
+  }, [events, categoryButtons, homeTeamName, awayTeamName]);
+
+  // Evolutionary timeline buckets (10-min intervals for 1st & 2nd half) with Dominance counts
   const timelineBuckets = useMemo(() => {
     const p1Intervals = [
       { start: 0, end: 10, label: "0-10'" },
@@ -553,70 +1005,102 @@ function resolveEventTiming(evt: NormalizedEvent): { period: 1 | 2; relMinute: n
       { start: 40, end: 50, label: "85-95'" },
     ];
 
-    const p1Buckets = p1Intervals.map(({ start, end, label }, idx) => {
-      const isLast = idx === p1Intervals.length - 1;
-      const countPerButton: Record<string, number> = {};
-      categoryButtons.forEach((b) => (countPerButton[b.name] = 0));
-      let unassignedCount = 0;
+    // Determine if Home Team is Shabab Al Ordon Club
+    const isHomeSao =
+      homeTeamName.toLowerCase().includes('shabab') ||
+      homeTeamName.toLowerCase().includes('sao') ||
+      !awayTeamName.toLowerCase().includes('shabab');
 
-      events.forEach((evt) => {
-        const { period: p, relMinute: relM } = resolveEventTiming(evt);
-        if (p !== 1) return;
+    const processIntervals = (intervals: typeof p1Intervals, targetPeriod: number) => {
+      return intervals.map(({ start, end, label }, idx) => {
+        const isLast = idx === intervals.length - 1;
+        const countPerButton: Record<string, number> = {};
+        categoryButtons.forEach((b) => (countPerButton[b.name] = 0));
+        let unassignedCount = 0;
 
-        const inRange = isLast ? relM >= start : relM >= start && relM < end;
-        if (inRange) {
-          const matchBtn = findMatchingButton(categoryButtons, evt);
-          if (matchBtn) {
-            countPerButton[matchBtn.name] = (countPerButton[matchBtn.name] || 0) + 1;
-          } else {
-            unassignedCount++;
+        let saoOffensiveCount = 0;
+        let rivalOffensiveCount = 0;
+
+        events.forEach((evt) => {
+          const { period: p, relMinute: relM } = resolveEventTiming(evt);
+          if (p !== targetPeriod) return;
+
+          const inRange = isLast ? relM >= start : relM >= start && relM < end;
+          if (inRange) {
+            const matchBtn = findMatchingButton(categoryButtons, evt);
+            if (matchBtn) {
+              countPerButton[matchBtn.name] = (countPerButton[matchBtn.name] || 0) + 1;
+            } else {
+              unassignedCount++;
+            }
+
+            const isOffensive = isOffensiveOrAbpEvent(evt, matchBtn);
+            if (isOffensive) {
+              const isHome = evt.team_name ? evt.team_name === homeTeamName : evt.team_id !== 'away_team';
+              const isSao = isHomeSao ? isHome : !isHome;
+              if (isSao) {
+                saoOffensiveCount++;
+              } else {
+                rivalOffensiveCount++;
+              }
+            }
           }
-        }
+        });
+
+        const total = Object.values(countPerButton).reduce((a, b) => a + b, 0) + unassignedCount;
+        return {
+          label,
+          total,
+          counts: countPerButton,
+          saoCount: saoOffensiveCount,
+          rivalCount: rivalOffensiveCount,
+        };
       });
+    };
 
-      const total = Object.values(countPerButton).reduce((a, b) => a + b, 0) + unassignedCount;
-      return { label, total, counts: countPerButton };
-    });
+    const p1Buckets = processIntervals(p1Intervals, 1);
+    const p2Buckets = processIntervals(p2Intervals, 2);
 
-    const p2Buckets = p2Intervals.map(({ start, end, label }, idx) => {
-      const isLast = idx === p2Intervals.length - 1;
-      const countPerButton: Record<string, number> = {};
-      categoryButtons.forEach((b) => (countPerButton[b.name] = 0));
-      let unassignedCount = 0;
-
-      events.forEach((evt) => {
-        const { period: p, relMinute: relM } = resolveEventTiming(evt);
-        if (p !== 2) return;
-
-        const inRange = isLast ? relM >= start : relM >= start && relM < end;
-        if (inRange) {
-          const matchBtn = findMatchingButton(categoryButtons, evt);
-          if (matchBtn) {
-            countPerButton[matchBtn.name] = (countPerButton[matchBtn.name] || 0) + 1;
-          } else {
-            unassignedCount++;
-          }
-        }
-      });
-
-      const total = Object.values(countPerButton).reduce((a, b) => a + b, 0) + unassignedCount;
-      return { label, total, counts: countPerButton };
-    });
-
-    return { p1Buckets, p2Buckets };
-  }, [events, categoryButtons]);
+    return { p1Buckets, p2Buckets, isHomeSao };
+  }, [events, categoryButtons, homeTeamName, awayTeamName]);
 
   // Selected event data for the detail modal
   const selectedEventDetail = useMemo(() => {
     if (!selectedEventName) return null;
+
+    // Check if one of the 3 Remate sub-bar occasions was clicked
+    if (
+      selectedEventName === 'Ocasiones muy claras' ||
+      selectedEventName === 'Ocasiones claras' ||
+      selectedEventName === 'Ocasiones sin importancia'
+    ) {
+      const keyMap: Record<string, 'muy_claras' | 'claras' | 'sin_importancia'> = {
+        'Ocasiones muy claras': 'muy_claras',
+        'Ocasiones claras': 'claras',
+        'Ocasiones sin importancia': 'sin_importancia',
+      };
+      const targetKey = keyMap[selectedEventName];
+      const filteredEvents = events.filter((e) => isRemateEvent(e) && classifyRemateOccasion(e) === targetKey);
+
+      const colorMap: Record<string, string> = {
+        'Ocasiones muy claras': '#10b981',
+        'Ocasiones claras': '#38bdf8',
+        'Ocasiones sin importancia': '#94a3b8',
+      };
+
+      return {
+        button: undefined,
+        name: selectedEventName,
+        events: filteredEvents,
+        colorHex: colorMap[selectedEventName] || '#10b981',
+      };
+    }
+
     const btn = categoryButtons.find((b) => b.name === selectedEventName);
 
     const filteredEvents = events.filter((e) => {
       const matched = findMatchingButton(categoryButtons, e);
-      return (
-        matched?.name.toLowerCase() === selectedEventName.toLowerCase() ||
-        (btn && matched?.id === btn.id)
-      );
+      return Boolean(matched && btn && matched.id === btn.id);
     });
 
     return {
@@ -625,18 +1109,27 @@ function resolveEventTiming(evt: NormalizedEvent): { period: 1 | 2; relMinute: n
       events: filteredEvents,
       colorHex: btn ? getButtonColorHex(btn.color) : '#10b981',
     };
-  }, [selectedEventName, categoryButtons, events]);
+  }, [selectedEventName, categoryButtons, events, isRemateEvent]);
 
   // Max count in horizontal bars for scaling
   const maxBarVal = useMemo(() => {
-    return Math.max(1, ...horizontalBarData.map((d) => Math.max(d.homeCount, d.awayCount)));
-  }, [horizontalBarData]);
+    const mainMax = Math.max(1, ...horizontalBarData.map((d) => Math.max(d.homeCount, d.awayCount)));
+    const subMax = Math.max(1, ...rematesSubBarData.map((d) => Math.max(d.homeCount, d.awayCount)));
+    return Math.max(mainMax, subMax);
+  }, [horizontalBarData, rematesSubBarData]);
 
   // Max total in evolution buckets for scaling
   const maxBucketVal = useMemo(() => {
     const p1Max = Math.max(1, ...timelineBuckets.p1Buckets.map((b) => b.total));
     const p2Max = Math.max(1, ...timelineBuckets.p2Buckets.map((b) => b.total));
     return Math.max(p1Max, p2Max);
+  }, [timelineBuckets]);
+
+  // Max dominance count for curve scaling
+  const maxDominanceVal = useMemo(() => {
+    const allP1 = timelineBuckets.p1Buckets.map((b) => Math.max(b.saoCount, b.rivalCount));
+    const allP2 = timelineBuckets.p2Buckets.map((b) => Math.max(b.saoCount, b.rivalCount));
+    return Math.max(1, ...allP1, ...allP2);
   }, [timelineBuckets]);
 
   return (
@@ -675,7 +1168,7 @@ function resolveEventTiming(evt: NormalizedEvent): { period: 1 | 2; relMinute: n
           {/* Score Badge */}
           <div className="px-3 sm:px-5 py-2 rounded-2xl bg-slate-900 border-2 border-emerald-500/50 shadow-lg shadow-emerald-950/40 text-center shrink-0">
             <span className="font-mono text-lg sm:text-2xl md:text-3xl font-black text-white tracking-wider">
-              {match.home_score ?? 0} - {match.away_score ?? 0}
+              {displayHomeScore} - {displayAwayScore}
             </span>
           </div>
 
@@ -732,62 +1225,127 @@ function resolveEventTiming(evt: NormalizedEvent): { period: 1 | 2; relMinute: n
             </span>
           </div>
 
-          {/* Rows Stream: Each button gets one row in the chart */}
+          {/* Rows Stream: Each button gets one row in the chart (Remates FIRST + 3 Sub-bars) */}
           <div className="space-y-2.5 flex-1 flex flex-col justify-center py-1 overflow-x-auto">
             {horizontalBarData.map((data) => {
               const homePct = (data.homeCount / maxBarVal) * 100;
               const awayPct = (data.awayCount / maxBarVal) * 100;
 
               return (
-                <div
-                  key={data.name}
-                  onClick={() => setSelectedEventName(data.name)}
-                  className="group cursor-pointer bg-slate-950/80 hover:bg-slate-800/90 border border-slate-800 hover:border-amber-500/60 rounded-xl p-2 transition-all shadow-sm min-w-[320px]"
-                  title={`Haz clic para ver el campograma y gráficas detalladas de "${data.name}"`}
-                >
-                  <div className="grid grid-cols-12 items-center gap-2 text-xs">
-                    {/* Home Bar (Extends from Right to Left) */}
-                    <div className="col-span-4 flex items-center justify-end gap-2">
-                      <span className="font-mono text-xs font-black text-slate-200 group-hover:text-cyan-300">
-                        {data.homeCount}
-                      </span>
-                      <div className="w-full bg-slate-900 h-3 rounded-l-full overflow-hidden flex justify-end">
-                        <div
-                          className="h-full rounded-l-full transition-all duration-500"
-                          style={{
-                            width: `${Math.max(6, homePct)}%`,
-                            backgroundColor: data.colorHex,
-                          }}
-                        />
+                <React.Fragment key={data.name}>
+                  {/* Main Category Button Row */}
+                  <div
+                    onClick={() => setSelectedEventName(data.name)}
+                    className="group cursor-pointer bg-slate-950/80 hover:bg-slate-800/90 border border-slate-800 hover:border-amber-500/60 rounded-xl p-2 transition-all shadow-sm min-w-[320px]"
+                    title={`Haz clic para ver el campograma y gráficas detalladas de "${data.name}"`}
+                  >
+                    <div className="grid grid-cols-12 items-center gap-2 text-xs">
+                      {/* Home Bar (Extends from Right to Left) */}
+                      <div className="col-span-4 flex items-center justify-end gap-2">
+                        <span className="font-mono text-xs font-black text-slate-200 group-hover:text-cyan-300">
+                          {data.homeCount}
+                        </span>
+                        <div className="w-full bg-slate-900 h-3 rounded-l-full overflow-hidden flex justify-end">
+                          <div
+                            className="h-full rounded-l-full transition-all duration-500"
+                            style={{
+                              width: `${Math.max(6, homePct)}%`,
+                              backgroundColor: data.colorHex,
+                            }}
+                          />
+                        </div>
                       </div>
-                    </div>
 
-                    {/* Middle Label: Event Name */}
-                    <div className="col-span-4 text-center font-extrabold text-slate-100 text-xs truncate group-hover:text-amber-400 transition-colors flex items-center justify-center gap-1">
-                      <span
-                        className="w-2 h-2 rounded-full shrink-0"
-                        style={{ backgroundColor: data.colorHex }}
-                      />
-                      <span className="truncate">{data.name}</span>
-                    </div>
-
-                    {/* Away Bar (Extends from Left to Right) */}
-                    <div className="col-span-4 flex items-center justify-start gap-2">
-                      <div className="w-full bg-slate-900 h-3 rounded-r-full overflow-hidden flex justify-start">
-                        <div
-                          className="h-full rounded-r-full transition-all duration-500 opacity-90"
-                          style={{
-                            width: `${Math.max(6, awayPct)}%`,
-                            backgroundColor: data.colorHex,
-                          }}
+                      {/* Middle Label: Event Name */}
+                      <div className="col-span-4 text-center font-extrabold text-slate-100 text-xs truncate group-hover:text-amber-400 transition-colors flex items-center justify-center gap-1">
+                        <span
+                          className="w-2 h-2 rounded-full shrink-0"
+                          style={{ backgroundColor: data.colorHex }}
                         />
+                        <span className="truncate">{data.name}</span>
                       </div>
-                      <span className="font-mono text-xs font-black text-slate-200 group-hover:text-amber-300">
-                        {data.awayCount}
-                      </span>
+
+                      {/* Away Bar (Extends from Left to Right) */}
+                      <div className="col-span-4 flex items-center justify-start gap-2">
+                        <div className="w-full bg-slate-900 h-3 rounded-r-full overflow-hidden flex justify-start">
+                          <div
+                            className="h-full rounded-r-full transition-all duration-500 opacity-90"
+                            style={{
+                              width: `${Math.max(6, awayPct)}%`,
+                              backgroundColor: data.colorHex,
+                            }}
+                          />
+                        </div>
+                        <span className="font-mono text-xs font-black text-slate-200 group-hover:text-amber-300">
+                          {data.awayCount}
+                        </span>
+                      </div>
                     </div>
                   </div>
-                </div>
+
+                  {/* ── 3 SUB-BARRAS ESPECÍFICAS DE REMATES (Ocasiones muy claras, claras, sin importancia) ── */}
+                  {data.isRemate && (
+                    <div className="space-y-1.5 pl-3 sm:pl-5 pr-1 border-l-2 border-amber-500/40 my-1">
+                      {rematesSubBarData.map((sub) => {
+                        const subHomePct = (sub.homeCount / maxBarVal) * 100;
+                        const subAwayPct = (sub.awayCount / maxBarVal) * 100;
+
+                        return (
+                          <div
+                            key={sub.key}
+                            onClick={() => setSelectedEventName(sub.name)}
+                            className="group/sub cursor-pointer bg-slate-950/50 hover:bg-slate-800/80 border border-slate-800/60 hover:border-emerald-500/60 rounded-lg p-1.5 transition-all min-w-[300px]"
+                            title={`Haz clic para ver las ${sub.name}`}
+                          >
+                            <div className="grid grid-cols-12 items-center gap-2 text-[11px]">
+                              {/* Sub Home Bar */}
+                              <div className="col-span-4 flex items-center justify-end gap-1.5">
+                                <span className="font-mono text-[10px] font-bold text-slate-300 group-hover/sub:text-emerald-300">
+                                  {sub.homeCount}
+                                </span>
+                                <div className="w-full bg-slate-900/90 h-2 rounded-l-full overflow-hidden flex justify-end">
+                                  <div
+                                    className="h-full rounded-l-full transition-all duration-500"
+                                    style={{
+                                      width: `${Math.max(4, subHomePct)}%`,
+                                      backgroundColor: sub.colorHex,
+                                    }}
+                                  />
+                                </div>
+                              </div>
+
+                              {/* Sub Label */}
+                              <div className="col-span-4 text-center font-bold text-slate-300 text-[10px] truncate group-hover/sub:text-emerald-300 transition-colors flex items-center justify-center gap-1">
+                                <span className="text-slate-500 text-[9px]">↳</span>
+                                <span
+                                  className="w-1.5 h-1.5 rounded-full shrink-0"
+                                  style={{ backgroundColor: sub.colorHex }}
+                                />
+                                <span className="truncate">{sub.name}</span>
+                              </div>
+
+                              {/* Sub Away Bar */}
+                              <div className="col-span-4 flex items-center justify-start gap-1.5">
+                                <div className="w-full bg-slate-900/90 h-2 rounded-r-full overflow-hidden flex justify-start">
+                                  <div
+                                    className="h-full rounded-r-full transition-all duration-500 opacity-90"
+                                    style={{
+                                      width: `${Math.max(4, subAwayPct)}%`,
+                                      backgroundColor: sub.colorHex,
+                                    }}
+                                  />
+                                </div>
+                                <span className="font-mono text-[10px] font-bold text-slate-300 group-hover/sub:text-amber-300">
+                                  {sub.awayCount}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </React.Fragment>
               );
             })}
           </div>
@@ -825,122 +1383,439 @@ function resolveEventTiming(evt: NormalizedEvent): { period: 1 | 2; relMinute: n
         </div>
       </div>
 
-      {/* ── 3. SECCIÓN INFERIOR: EVENTOS EVOLUTIVO EN EL TIEMPO (1ª Y 2ª PARTE) ── */}
+      {/* ── 3. SECCIÓN INFERIOR: EVENTOS EVOLUTIVO Y DOMINIO (1ª Y 2ª PARTE) ── */}
       <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
           <div className="flex items-center gap-2">
-            <TrendingUp className="w-5 h-5 text-blue-400" />
+            <TrendingUp className="w-5 h-5 text-emerald-400" />
             <div>
-              <h3 className="text-sm font-black text-white tracking-wide uppercase">
-                Eventos (1ª y 2ª parte)
+              <h3 className="text-sm font-black text-white tracking-wide uppercase flex items-center gap-2">
+                <span>Dominio y Evolución Táctica</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
+                  1ª y 2ª Parte
+                </span>
               </h3>
               <p className="text-xs text-slate-400">
-                Evolución de densidad de acciones por intervalo de 10 minutos
+                Densidad de acciones y curvas de dominio ofensivo / ABP por intervalos de 10 minutos
               </p>
             </div>
           </div>
 
-          {/* Event Color Legend */}
-          <div className="flex flex-wrap items-center gap-2">
-            {categoryButtons.map((btn) => (
-              <div key={btn.id} className="flex items-center gap-1.5 text-[11px] font-bold text-slate-300 bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800">
-                <span
-                  className="w-2.5 h-2.5 rounded-full shrink-0"
-                  style={{ backgroundColor: getButtonColorHex(btn.color) }}
-                />
-                <span>{btn.name}</span>
-              </div>
-            ))}
+          {/* Dominance Lines Legend */}
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Shabab Al Ordon Club: Green Line */}
+            <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-300 bg-emerald-950/60 px-3 py-1 rounded-xl border border-emerald-500/40 shadow-sm">
+              <span className="w-3.5 h-1.5 rounded-full bg-emerald-400 shrink-0 shadow-[0_0_8px_#10b981]" />
+              <span>{timelineBuckets.isHomeSao ? homeTeamName : awayTeamName} (Ofensivas / ABP)</span>
+            </div>
+
+            {/* Rival: Red Line */}
+            <div className="flex items-center gap-1.5 text-[11px] font-bold text-rose-300 bg-rose-950/60 px-3 py-1 rounded-xl border border-rose-500/40 shadow-sm">
+              <span className="w-3.5 h-1.5 rounded-full bg-rose-500 shrink-0 shadow-[0_0_8px_#ef4444]" />
+              <span>{!timelineBuckets.isHomeSao ? homeTeamName : awayTeamName} (Ofensivas / ABP)</span>
+            </div>
           </div>
         </div>
 
-        {/* 2 Evolution Chart Columns (1ª Parte vs 2ª Parte) */}
+        {/* Category color pills legend */}
+        <div className="flex flex-wrap items-center gap-2 pt-1 border-b border-slate-800/60 pb-2">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Eventos:</span>
+          {categoryButtons.map((btn) => (
+            <div key={btn.id} className="flex items-center gap-1.5 text-[10px] font-bold text-slate-300 bg-slate-950 px-2 py-0.5 rounded-lg border border-slate-800">
+              <span
+                className="w-2 h-2 rounded-full shrink-0"
+                style={{ backgroundColor: getButtonColorHex(btn.color) }}
+              />
+              <span>{btn.name}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* 2 Evolution & Dominance Chart Columns (1ª Parte vs 2ª Parte) */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
           {/* 1ª Parte Chart */}
-          <div className="space-y-2">
-            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider text-center">
-              Evolución 1ª Parte (0&apos; - 50&apos;)
-            </h4>
-            <div className="h-44 bg-slate-950 rounded-xl p-3 border border-slate-800 flex items-end justify-between gap-2 relative">
-              {timelineBuckets.p1Buckets.map((bucket) => {
-                const heightPct = (bucket.total / maxBucketVal) * 100;
-                return (
-                  <div key={bucket.label} className="flex-1 flex flex-col items-center gap-1.5 h-full justify-end group">
-                    <span className="text-[10px] font-mono font-bold text-slate-400 group-hover:text-blue-300">
-                      {bucket.total}
-                    </span>
-                    <div
-                      className="w-full bg-blue-600/80 hover:bg-blue-500 rounded-t-xl transition-all duration-300 relative overflow-hidden"
-                      style={{ height: `${Math.max(12, heightPct)}%` }}
-                    >
-                      {/* Stacked color stripes per button count */}
-                      <div className="absolute inset-0 flex flex-col-reverse">
-                        {categoryButtons.map((btn) => {
-                          const cnt = bucket.counts[btn.name] || 0;
-                          if (cnt === 0 || bucket.total === 0) return null;
-                          const stripePct = (cnt / bucket.total) * 100;
-                          return (
-                            <div
-                              key={btn.id}
-                              style={{
-                                height: `${stripePct}%`,
-                                backgroundColor: getButtonColorHex(btn.color),
-                              }}
-                            />
-                          );
-                        })}
-                      </div>
-                    </div>
-                    <span className="text-[10px] font-mono text-slate-500">{bucket.label}</span>
+          {(() => {
+            const buckets = timelineBuckets.p1Buckets;
+            const stepX = 100; // 5 buckets -> 0..500
+            const saoPoints = buckets.map((b, i) => ({
+              x: 50 + i * stepX,
+              y: Math.max(25, 130 - (b.saoCount / maxDominanceVal) * 95),
+              count: b.saoCount,
+              label: b.label,
+            }));
+            const rivalPoints = buckets.map((b, i) => ({
+              x: 50 + i * stepX,
+              y: Math.max(25, 130 - (b.rivalCount / maxDominanceVal) * 95),
+              count: b.rivalCount,
+              label: b.label,
+            }));
+
+            const makeCurve = (pts: typeof saoPoints) => {
+              if (pts.length === 0) return '';
+              let path = `M ${pts[0].x} ${pts[0].y}`;
+              for (let i = 0; i < pts.length - 1; i++) {
+                const cpX = (pts[i].x + pts[i + 1].x) / 2;
+                path += ` C ${cpX} ${pts[i].y}, ${cpX} ${pts[i + 1].y}, ${pts[i + 1].x} ${pts[i + 1].y}`;
+              }
+              return path;
+            };
+
+            const saoCurvePath = makeCurve(saoPoints);
+            const rivalCurvePath = makeCurve(rivalPoints);
+
+            // Compute differential area polygons (Green when SAO > Rival, Red when Rival > SAO)
+            const { saoDominancePaths, rivalDominancePaths } = generateDominanceDifferentialPaths(saoPoints, rivalPoints);
+
+            return (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between px-1">
+                  <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                    Evolución 1ª Parte (0&apos; - 50&apos;)
+                  </h4>
+                  <div className="flex items-center gap-2 text-[10px] font-mono font-bold">
+                    <span className="text-emerald-400">🟢 SAO: {buckets.reduce((a, b) => a + b.saoCount, 0)}</span>
+                    <span className="text-rose-400">🔴 Rival: {buckets.reduce((a, b) => a + b.rivalCount, 0)}</span>
                   </div>
-                );
-              })}
-            </div>
-            <p className="text-[10px] text-slate-500 text-center font-mono">Minutos de partido (1ª Parte)</p>
-          </div>
+                </div>
+
+                <div className="h-52 bg-slate-950 rounded-2xl p-3 border border-slate-800 relative flex flex-col justify-between overflow-hidden shadow-inner">
+                  {/* Subtle vertical columns for background density */}
+                  <div className="absolute inset-x-3 inset-y-3 flex items-end justify-between gap-2 pointer-events-none pb-7">
+                    {buckets.map((b) => {
+                      const heightPct = (b.total / maxBucketVal) * 100;
+                      return (
+                        <div key={b.label} className="flex-1 flex flex-col items-center h-full justify-end">
+                          <div
+                            className="w-full bg-slate-900/60 rounded-t-lg transition-all relative overflow-hidden"
+                            style={{ height: `${Math.max(8, heightPct * 0.7)}%` }}
+                          >
+                            <div className="absolute inset-0 flex flex-col-reverse opacity-40">
+                              {categoryButtons.map((btn) => {
+                                const cnt = b.counts[btn.name] || 0;
+                                if (cnt === 0 || b.total === 0) return null;
+                                const stripePct = (cnt / b.total) * 100;
+                                return (
+                                  <div
+                                    key={btn.id}
+                                    style={{
+                                      height: `${stripePct}%`,
+                                      backgroundColor: getButtonColorHex(btn.color),
+                                    }}
+                                  />
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* SVG Dominance Curves & Differential Area Overlay */}
+                  <svg viewBox="0 0 500 160" className="absolute inset-0 w-full h-full pointer-events-none">
+                    <defs>
+                      {/* Green Dominance Differential Fill Gradient */}
+                      <linearGradient id="p1GradSaoDom" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#10b981" stopOpacity="0.4" />
+                        <stop offset="100%" stopColor="#10b981" stopOpacity="0.15" />
+                      </linearGradient>
+                      {/* Red Dominance Differential Fill Gradient */}
+                      <linearGradient id="p1GradRivalDom" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#ef4444" stopOpacity="0.4" />
+                        <stop offset="100%" stopColor="#ef4444" stopOpacity="0.15" />
+                      </linearGradient>
+                    </defs>
+
+                    {/* 1. Shaded Differential Dominance Areas */}
+                    {saoDominancePaths.map((dPath, pIdx) => (
+                      <path
+                        key={`p1_sao_dom_${pIdx}`}
+                        d={dPath}
+                        fill="url(#p1GradSaoDom)"
+                        stroke="#10b981"
+                        strokeWidth="0.5"
+                        strokeOpacity="0.3"
+                      />
+                    ))}
+                    {rivalDominancePaths.map((dPath, pIdx) => (
+                      <path
+                        key={`p1_riv_dom_${pIdx}`}
+                        d={dPath}
+                        fill="url(#p1GradRivalDom)"
+                        stroke="#ef4444"
+                        strokeWidth="0.5"
+                        strokeOpacity="0.3"
+                      />
+                    ))}
+
+                    {/* 2. Rival Dominance Line (Red) */}
+                    <path
+                      d={rivalCurvePath}
+                      fill="none"
+                      stroke="#ef4444"
+                      strokeWidth="2.75"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      opacity="0.95"
+                    />
+
+                    {/* 3. SAO Dominance Line (Green) */}
+                    <path
+                      d={saoCurvePath}
+                      fill="none"
+                      stroke="#10b981"
+                      strokeWidth="3.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+
+                    {/* 4. Rival Points and Badges */}
+                    {rivalPoints.map((pt, i) => (
+                      <g key={`p1_rival_${i}`}>
+                        <circle cx={pt.x} cy={pt.y} r="4.5" fill="#ef4444" stroke="#450a0a" strokeWidth="2" />
+                        <text
+                          x={pt.x}
+                          y={pt.y - 8}
+                          textAnchor="middle"
+                          fill="#f87171"
+                          fontSize="10"
+                          fontFamily="monospace"
+                          fontWeight="900"
+                        >
+                          {pt.count}
+                        </text>
+                      </g>
+                    ))}
+
+                    {/* 5. SAO Points and Badges */}
+                    {saoPoints.map((pt, i) => (
+                      <g key={`p1_sao_${i}`}>
+                        <circle cx={pt.x} cy={pt.y} r="5.5" fill="#10b981" stroke="#064e3b" strokeWidth="2" />
+                        <text
+                          x={pt.x}
+                          y={pt.y - 10}
+                          textAnchor="middle"
+                          fill="#34d399"
+                          fontSize="11"
+                          fontFamily="monospace"
+                          fontWeight="900"
+                        >
+                          {pt.count}
+                        </text>
+                      </g>
+                    ))}
+                  </svg>
+
+                  {/* Bottom Timeline Labels */}
+                  <div className="z-10 flex items-center justify-between w-full mt-auto pt-2 border-t border-slate-800/80">
+                    {buckets.map((b) => (
+                      <div key={b.label} className="flex-1 flex flex-col items-center">
+                        <span className="text-[10px] font-mono font-bold text-slate-400 bg-slate-900/90 px-1.5 py-0.5 rounded border border-slate-800">
+                          {b.label}
+                        </span>
+                        <span className="text-[9px] font-mono text-slate-500 mt-0.5">
+                          {b.total} acts
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <p className="text-[10px] text-slate-500 text-center font-mono">Minutos de partido (1ª Parte)</p>
+              </div>
+            );
+          })()}
 
           {/* 2ª Parte Chart */}
-          <div className="space-y-2">
-            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider text-center">
-              Evolución 2ª Parte (45&apos; - 95&apos;)
-            </h4>
-            <div className="h-44 bg-slate-950 rounded-xl p-3 border border-slate-800 flex items-end justify-between gap-2 relative">
-              {timelineBuckets.p2Buckets.map((bucket) => {
-                const heightPct = (bucket.total / maxBucketVal) * 100;
-                return (
-                  <div key={bucket.label} className="flex-1 flex flex-col items-center gap-1.5 h-full justify-end group">
-                    <span className="text-[10px] font-mono font-bold text-slate-400 group-hover:text-blue-300">
-                      {bucket.total}
-                    </span>
-                    <div
-                      className="w-full bg-blue-600/80 hover:bg-blue-500 rounded-t-xl transition-all duration-300 relative overflow-hidden"
-                      style={{ height: `${Math.max(12, heightPct)}%` }}
-                    >
-                      {/* Stacked color stripes per button count */}
-                      <div className="absolute inset-0 flex flex-col-reverse">
-                        {categoryButtons.map((btn) => {
-                          const cnt = bucket.counts[btn.name] || 0;
-                          if (cnt === 0 || bucket.total === 0) return null;
-                          const stripePct = (cnt / bucket.total) * 100;
-                          return (
-                            <div
-                              key={btn.id}
-                              style={{
-                                height: `${stripePct}%`,
-                                backgroundColor: getButtonColorHex(btn.color),
-                              }}
-                            />
-                          );
-                        })}
-                      </div>
-                    </div>
-                    <span className="text-[10px] font-mono text-slate-500">{bucket.label}</span>
+          {(() => {
+            const buckets = timelineBuckets.p2Buckets;
+            const stepX = 100;
+            const saoPoints = buckets.map((b, i) => ({
+              x: 50 + i * stepX,
+              y: Math.max(25, 130 - (b.saoCount / maxDominanceVal) * 95),
+              count: b.saoCount,
+              label: b.label,
+            }));
+            const rivalPoints = buckets.map((b, i) => ({
+              x: 50 + i * stepX,
+              y: Math.max(25, 130 - (b.rivalCount / maxDominanceVal) * 95),
+              count: b.rivalCount,
+              label: b.label,
+            }));
+
+            const makeCurve = (pts: typeof saoPoints) => {
+              if (pts.length === 0) return '';
+              let path = `M ${pts[0].x} ${pts[0].y}`;
+              for (let i = 0; i < pts.length - 1; i++) {
+                const cpX = (pts[i].x + pts[i + 1].x) / 2;
+                path += ` C ${cpX} ${pts[i].y}, ${cpX} ${pts[i + 1].y}, ${pts[i + 1].x} ${pts[i + 1].y}`;
+              }
+              return path;
+            };
+
+            const saoCurvePath = makeCurve(saoPoints);
+            const rivalCurvePath = makeCurve(rivalPoints);
+
+            // Compute differential area polygons (Green when SAO > Rival, Red when Rival > SAO)
+            const { saoDominancePaths, rivalDominancePaths } = generateDominanceDifferentialPaths(saoPoints, rivalPoints);
+
+            return (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between px-1">
+                  <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                    Evolución 2ª Parte (45&apos; - 95&apos;)
+                  </h4>
+                  <div className="flex items-center gap-2 text-[10px] font-mono font-bold">
+                    <span className="text-emerald-400">🟢 SAO: {buckets.reduce((a, b) => a + b.saoCount, 0)}</span>
+                    <span className="text-rose-400">🔴 Rival: {buckets.reduce((a, b) => a + b.rivalCount, 0)}</span>
                   </div>
-                );
-              })}
-            </div>
-            <p className="text-[10px] text-slate-500 text-center font-mono">Minutos de partido (2ª Parte)</p>
-          </div>
+                </div>
+
+                <div className="h-52 bg-slate-950 rounded-2xl p-3 border border-slate-800 relative flex flex-col justify-between overflow-hidden shadow-inner">
+                  {/* Subtle vertical columns for background density */}
+                  <div className="absolute inset-x-3 inset-y-3 flex items-end justify-between gap-2 pointer-events-none pb-7">
+                    {buckets.map((b) => {
+                      const heightPct = (b.total / maxBucketVal) * 100;
+                      return (
+                        <div key={b.label} className="flex-1 flex flex-col items-center h-full justify-end">
+                          <div
+                            className="w-full bg-slate-900/60 rounded-t-lg transition-all relative overflow-hidden"
+                            style={{ height: `${Math.max(8, heightPct * 0.7)}%` }}
+                          >
+                            <div className="absolute inset-0 flex flex-col-reverse opacity-40">
+                              {categoryButtons.map((btn) => {
+                                const cnt = b.counts[btn.name] || 0;
+                                if (cnt === 0 || b.total === 0) return null;
+                                const stripePct = (cnt / b.total) * 100;
+                                return (
+                                  <div
+                                    key={btn.id}
+                                    style={{
+                                      height: `${stripePct}%`,
+                                      backgroundColor: getButtonColorHex(btn.color),
+                                    }}
+                                  />
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* SVG Dominance Curves & Differential Area Overlay */}
+                  <svg viewBox="0 0 500 160" className="absolute inset-0 w-full h-full pointer-events-none">
+                    <defs>
+                      {/* Green Dominance Differential Fill Gradient */}
+                      <linearGradient id="p2GradSaoDom" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#10b981" stopOpacity="0.4" />
+                        <stop offset="100%" stopColor="#10b981" stopOpacity="0.15" />
+                      </linearGradient>
+                      {/* Red Dominance Differential Fill Gradient */}
+                      <linearGradient id="p2GradRivalDom" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#ef4444" stopOpacity="0.4" />
+                        <stop offset="100%" stopColor="#ef4444" stopOpacity="0.15" />
+                      </linearGradient>
+                    </defs>
+
+                    {/* 1. Shaded Differential Dominance Areas */}
+                    {saoDominancePaths.map((dPath, pIdx) => (
+                      <path
+                        key={`p2_sao_dom_${pIdx}`}
+                        d={dPath}
+                        fill="url(#p2GradSaoDom)"
+                        stroke="#10b981"
+                        strokeWidth="0.5"
+                        strokeOpacity="0.3"
+                      />
+                    ))}
+                    {rivalDominancePaths.map((dPath, pIdx) => (
+                      <path
+                        key={`p2_riv_dom_${pIdx}`}
+                        d={dPath}
+                        fill="url(#p2GradRivalDom)"
+                        stroke="#ef4444"
+                        strokeWidth="0.5"
+                        strokeOpacity="0.3"
+                      />
+                    ))}
+
+                    {/* 2. Rival Dominance Line (Red) */}
+                    <path
+                      d={rivalCurvePath}
+                      fill="none"
+                      stroke="#ef4444"
+                      strokeWidth="2.75"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      opacity="0.95"
+                    />
+
+                    {/* 3. SAO Dominance Line (Green) */}
+                    <path
+                      d={saoCurvePath}
+                      fill="none"
+                      stroke="#10b981"
+                      strokeWidth="3.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+
+                    {/* 4. Rival Points and Badges */}
+                    {rivalPoints.map((pt, i) => (
+                      <g key={`p2_rival_${i}`}>
+                        <circle cx={pt.x} cy={pt.y} r="4.5" fill="#ef4444" stroke="#450a0a" strokeWidth="2" />
+                        <text
+                          x={pt.x}
+                          y={pt.y - 8}
+                          textAnchor="middle"
+                          fill="#f87171"
+                          fontSize="10"
+                          fontFamily="monospace"
+                          fontWeight="900"
+                        >
+                          {pt.count}
+                        </text>
+                      </g>
+                    ))}
+
+                    {/* 5. SAO Points and Badges */}
+                    {saoPoints.map((pt, i) => (
+                      <g key={`p2_sao_${i}`}>
+                        <circle cx={pt.x} cy={pt.y} r="5.5" fill="#10b981" stroke="#064e3b" strokeWidth="2" />
+                        <text
+                          x={pt.x}
+                          y={pt.y - 10}
+                          textAnchor="middle"
+                          fill="#34d399"
+                          fontSize="11"
+                          fontFamily="monospace"
+                          fontWeight="900"
+                        >
+                          {pt.count}
+                        </text>
+                      </g>
+                    ))}
+                  </svg>
+
+                  {/* Bottom Timeline Labels */}
+                  <div className="z-10 flex items-center justify-between w-full mt-auto pt-2 border-t border-slate-800/80">
+                    {buckets.map((b) => (
+                      <div key={b.label} className="flex-1 flex flex-col items-center">
+                        <span className="text-[10px] font-mono font-bold text-slate-400 bg-slate-900/90 px-1.5 py-0.5 rounded border border-slate-800">
+                          {b.label}
+                        </span>
+                        <span className="text-[9px] font-mono text-slate-500 mt-0.5">
+                          {b.total} acts
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <p className="text-[10px] text-slate-500 text-center font-mono">Minutos de partido (2ª Parte)</p>
+              </div>
+            );
+          })()}
         </div>
       </div>
       </div>
@@ -949,6 +1824,7 @@ function resolveEventTiming(evt: NormalizedEvent): { period: 1 | 2; relMinute: n
       {/* ── 4. MODAL DETALLE DEL EVENTO AL PULSAR CUALQUIER BARRA HORIZONTAL ── */}
       {selectedEventDetail && (
         <EventDetailModal
+          key={selectedEventName}
           eventDetail={selectedEventDetail}
           match={effectiveMatch}
           onClose={() => setSelectedEventName(null)}
@@ -1202,6 +2078,7 @@ const PlayerDetailModal: React.FC<PlayerDetailModalProps> = ({
                   initialMode="vector_arrow"
                   lockMode={true}
                   pitchViewMode="full"
+                  hideFooter={true}
                 />
               </div>
 
@@ -1344,8 +2221,23 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({
   const awayTeamName = effectiveMatch.away_team || 'Equipo Visitante';
 
   // Pitch view mode assigned to this event button
-  const pitchViewType: PitchRequiredType =
-    button?.dashboardConfig?.pitchViewType || button?.pitchRequired || 'vector_arrow';
+  const pitchViewType: PitchRequiredType = useMemo(() => {
+    if (button?.dashboardConfig?.pitchViewType && button.dashboardConfig.pitchViewType !== 'none') {
+      return button.dashboardConfig.pitchViewType as PitchRequiredType;
+    }
+    const normalizedName = (name || '').toLowerCase().trim();
+    if (
+      normalizedName.includes('recuperaci') ||
+      normalizedName.includes('recov') ||
+      normalizedName.includes('intercep')
+    ) {
+      return 'heatmap';
+    }
+    if (button?.pitchRequired && button.pitchRequired !== 'none') {
+      return button.pitchRequired;
+    }
+    return 'vector_arrow';
+  }, [button, name]);
 
   // Filter events by team
   const homeEvents = useMemo(() => {
@@ -2075,32 +2967,35 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({
           );
         })()}
 
-        <div className="flex-1 flex items-start justify-center pt-0 pb-1">
-          <BotoneraPitchCanvas
-            hideHeader={true}
-            startX={null}
-            startY={null}
-            endX={null}
-            endY={null}
-            onSetCoords={() => {}}
-            selectedZone={selectedZone}
-            onSelectZone={(zName) => onSelectZone(zName === selectedZone ? null : zName)}
-            onSelectMarker={(mId) => onSelectEventId(mId === selectedEventId ? null : mId)}
-            initialMode={pitchViewType}
-            lockMode={true}
-            pitchViewMode="full"
-            zoneCounts={teamData.zoneCounts}
-            pointsList={pointsListWithSelection}
-          />
+        <div className="flex-1 flex items-center justify-center pt-1 pb-1 min-h-0 w-full overflow-hidden">
+          <div className="w-full max-w-[310px] sm:max-w-[330px] mx-auto flex items-center justify-center">
+            <BotoneraPitchCanvas
+              hideHeader={true}
+              hideFooter={true}
+              startX={null}
+              startY={null}
+              endX={null}
+              endY={null}
+              onSetCoords={() => {}}
+              selectedZone={selectedZone}
+              onSelectZone={(zName) => onSelectZone(zName === selectedZone ? null : zName)}
+              onSelectMarker={(mId) => onSelectEventId(mId === selectedEventId ? null : mId)}
+              initialMode={pitchViewType}
+              lockMode={true}
+              pitchViewMode="full"
+              zoneCounts={teamData.zoneCounts}
+              pointsList={pointsListWithSelection}
+            />
+          </div>
         </div>
 
-        <div className="text-[9px] text-slate-500 text-center font-mono truncate">
+        <div className="text-[9px] text-slate-500 text-center font-mono truncate shrink-0">
           {selectedEventId ? (
             <span className="text-amber-400 font-bold">🎯 Flecha / Acción resaltada</span>
           ) : selectedZone ? (
             <span className="text-emerald-400 font-bold">Zona seleccionada: {selectedZone}</span>
           ) : (
-            `Haz clic en una zona o flecha para seleccionarla`
+            <span>Ubicaciones registradas en el terreno de juego</span>
           )}
         </div>
       </div>
@@ -2290,7 +3185,7 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-3.5 items-stretch h-full">
             {/* Col 1 (3/12): Far Left - Home Team Descriptores & Actions */}
-            <div className="lg:col-span-3 flex flex-col">
+            <div className="lg:col-span-3 min-w-0 flex flex-col">
               {renderTeamStats(
                 homeTeamName,
                 match.home_team_logo,
@@ -2326,7 +3221,7 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({
             </div>
 
             {/* Col 2 (3/12): Center-Left - Home Team Pitch Canvas */}
-            <div className="lg:col-span-3 flex flex-col">
+            <div className="lg:col-span-3 min-w-0 flex flex-col">
               {renderTeamPitch(
                 homeTeamName,
                 homeEvents,
@@ -2361,7 +3256,7 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({
             </div>
 
             {/* Col 3 (3/12): Center-Right - Away Team Pitch Canvas */}
-            <div className="lg:col-span-3 flex flex-col">
+            <div className="lg:col-span-3 min-w-0 flex flex-col">
               {renderTeamPitch(
                 awayTeamName,
                 awayEvents,
@@ -2396,7 +3291,7 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({
             </div>
 
             {/* Col 4 (3/12): Far Right - Away Team Descriptores & Actions */}
-            <div className="lg:col-span-3 flex flex-col">
+            <div className="lg:col-span-3 min-w-0 flex flex-col">
               {renderTeamStats(
                 awayTeamName,
                 match.away_team_logo,

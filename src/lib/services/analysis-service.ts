@@ -32,6 +32,8 @@ export async function getAnalysesFromSupabase(matchId?: string): Promise<MatchAn
       p1_video_start_time: row.p1_video_start_time ?? null,
       p2_video_start_time: row.p2_video_start_time ?? null,
       botonera_template_id: row.botonera_template_id || null,
+      home_lineup: typeof row.home_lineup === 'string' ? JSON.parse(row.home_lineup) : (row.home_lineup || null),
+      away_lineup: typeof row.away_lineup === 'string' ? JSON.parse(row.away_lineup) : (row.away_lineup || null),
       events: typeof row.events === 'string' ? JSON.parse(row.events) : (row.events || []),
       created_at: row.created_at,
       updated_at: row.updated_at,
@@ -54,7 +56,7 @@ export async function saveAnalysisToSupabase(analysis: MatchAnalysis): Promise<b
       supabase = createClient();
     }
 
-    const row = {
+    const row: Record<string, any> = {
       id: analysis.id,
       match_id: analysis.match_id,
       title: analysis.title,
@@ -66,13 +68,26 @@ export async function saveAnalysisToSupabase(analysis: MatchAnalysis): Promise<b
       p1_video_start_time: analysis.p1_video_start_time ?? null,
       p2_video_start_time: analysis.p2_video_start_time ?? null,
       botonera_template_id: analysis.botonera_template_id || null,
+      home_lineup: analysis.home_lineup || null,
+      away_lineup: analysis.away_lineup || null,
       events: analysis.events || [],
       updated_at: new Date().toISOString(),
     };
 
-    const { error } = await supabase
+    let { error } = await supabase
       .from('match_analyses')
       .upsert([row], { onConflict: 'id' });
+
+    if (error && /Could not find the '.+' column/.test(error.message)) {
+      console.warn(
+        `La tabla 'match_analyses' de Supabase no tiene las columnas de alineación (${error.message}). ` +
+        'Ejecuta supabase/migrations/0009_add_lineups_to_matches_and_analyses.sql en el SQL Editor.'
+      );
+      const fallbackRow = { ...row };
+      delete fallbackRow.home_lineup;
+      delete fallbackRow.away_lineup;
+      ({ error } = await supabase.from('match_analyses').upsert([fallbackRow], { onConflict: 'id' }));
+    }
 
     if (error) {
       if (!error.message.includes('relation "public.match_analyses" does not exist')) {
