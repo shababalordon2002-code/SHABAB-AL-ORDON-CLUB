@@ -11,7 +11,7 @@ import {
   getAnalysisEventsFromSupabase
 } from '@/lib/services/botonera-service';
 import { saveMatchesToSupabase, getMatchesFromSupabase } from '@/lib/services/matches-service';
-import { getPlayersFromSupabase } from '@/lib/services/players-service';
+import { getPlayersFromSupabase, savePlayersToSupabase } from '@/lib/services/players-service';
 import { getAnalysesFromSupabase, saveAnalysisToSupabase, deleteAnalysisFromSupabase } from '@/lib/services/analysis-service';
 import { getDashboardsFromSupabase, saveDashboardToSupabase, deleteDashboardFromSupabase } from '@/lib/services/dashboard-service';
 
@@ -605,17 +605,24 @@ export const dbStore = {
     const players = this.getPlayers();
     const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-    const idx = players.findIndex(p => p.id === player.id || norm(p.name) === norm(player.name));
+    const idx = players.findIndex(p => p.id === player.id || (p.name && norm(p.name) === norm(player.name)));
+    let saved: Player;
     if (idx >= 0) {
-      players[idx] = {
+      saved = {
         ...players[idx],
         ...player,
         id: players[idx].id, // Preserve existing ID
       };
+      players[idx] = saved;
     } else {
-      players.push(player);
+      saved = player;
+      players.push(saved);
     }
     setToStorage(STORAGE_KEYS.PLAYERS, players);
+
+    savePlayersToSupabase([saved]).catch((err) => {
+      console.warn('Could not sync player to Supabase:', err);
+    });
   },
 
   deletePlayer(playerId: string): void {

@@ -686,8 +686,8 @@ export default function BotoneraPage() {
       p1VideoStartSeconds: periodVideoOffsets[1] ?? null,
       p2VideoStartSeconds: periodVideoOffsets[2] ?? null,
       botoneraTemplateId: template?.id || null,
-      home_lineup: targetMatch?.home_lineup || null,
-      away_lineup: targetMatch?.away_lineup || null,
+      home_lineup: targetMatch?.home_lineup || selectedMatch?.home_lineup || (selectedMatchId ? dbStore.getMatchById(selectedMatchId)?.home_lineup : null) || null,
+      away_lineup: targetMatch?.away_lineup || selectedMatch?.away_lineup || (selectedMatchId ? dbStore.getMatchById(selectedMatchId)?.away_lineup : null) || null,
     });
   }, [
     timerSeconds,
