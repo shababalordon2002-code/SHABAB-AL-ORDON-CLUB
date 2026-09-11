@@ -510,7 +510,7 @@ export const dbStore = {
     }
   },
 
-  // Helper for deduplicating events by timestamp (minuto, segundo, periodo, tipo, equipo, jugador)
+  // Helper for deduplicating events by event_id (preserving unique events tagged by any analyst)
   deduplicateEventsByTime(events: NormalizedEvent[]): NormalizedEvent[] {
     if (!events || events.length === 0) return [];
     const trash = this.getTrashEvents();
@@ -521,43 +521,20 @@ export const dbStore = {
 
     // 2. Map by event_id first
     const byIdMap = new Map<string, NormalizedEvent>();
-    valid.forEach((e) => byIdMap.set(e.event_id, e));
-    const uniqueById = Array.from(byIdMap.values());
-
-    // 3. Map by minute, second, period, event_type, team, player
-    const byTimeMap = new Map<string, NormalizedEvent>();
-    uniqueById.forEach((e) => {
-      const period = e.period ?? 1;
-      let minute = e.minute;
-      let second = e.second;
-      if (minute == null || second == null) {
-        if (e.timestamp != null) {
-          minute = Math.floor(e.timestamp / 60);
-          second = Math.floor(e.timestamp % 60);
-        } else {
-          minute = 0;
-          second = 0;
-        }
-      }
-      const type = (e.event_type || e.category || '').toLowerCase().trim();
-      const team = (e.team_id || e.team_name || '').toLowerCase().trim();
-      const player = (e.player_name || e.player_id || '').toLowerCase().trim();
-
-      const timeKey = `p${period}_m${minute}_s${second}_t${type}_tm${team}_pl${player}`;
-
-      if (!byTimeMap.has(timeKey)) {
-        byTimeMap.set(timeKey, e);
+    valid.forEach((e) => {
+      if (!byIdMap.has(e.event_id)) {
+        byIdMap.set(e.event_id, e);
       } else {
-        const existing = byTimeMap.get(timeKey)!;
-        const existingScore = (existing.x != null ? 1 : 0) + (existing.y != null ? 1 : 0) + (existing.player_name ? 1 : 0) + (existing.source === 'longomatch' ? 2 : 0);
-        const currentScore = (e.x != null ? 1 : 0) + (e.y != null ? 1 : 0) + (e.player_name ? 1 : 0) + (e.source === 'longomatch' ? 2 : 0);
-        if (currentScore > existingScore) {
-          byTimeMap.set(timeKey, e);
+        const existing = byIdMap.get(e.event_id)!;
+        const existingTime = new Date(existing.updated_at || 0).getTime();
+        const currentTime = new Date(e.updated_at || 0).getTime();
+        if (currentTime > existingTime) {
+          byIdMap.set(e.event_id, e);
         }
       }
     });
 
-    return Array.from(byTimeMap.values());
+    return Array.from(byIdMap.values());
   },
 
   // Normalized Events
@@ -1067,37 +1044,51 @@ export const dbStore = {
   },
 
   saveAnalysis(analysis: MatchAnalysis): void {
+    if (!analysis || !analysis.match_id) return;
+    const targetId = analysis.id && analysis.id.startsWith('analysis_') ? analysis.id : `analysis_${analysis.match_id}`;
+    const normalizedAnalysis = { ...analysis, id: targetId };
+
     const all = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
-    const idx = all.findIndex(a => a.id === analysis.id);
+    const idx = all.findIndex(a => a.id === targetId || a.match_id === normalizedAnalysis.match_id);
     let updated: MatchAnalysis;
+
     if (idx >= 0) {
       const existing = all[idx];
+      const combinedAnalystNames = this.sanitizeAnalystNames([existing.analyst_name, normalizedAnalysis.analyst_name]);
+      const combinedEvents = this.deduplicateEventsByTime([...(existing.events || []), ...(normalizedAnalysis.events || [])]);
+
       updated = {
         ...existing,
-        ...analysis,
-        id: existing.id, // Keep existing ID
-        created_at: existing.created_at || analysis.created_at || new Date().toISOString(),
+        ...normalizedAnalysis,
+        id: targetId,
+        analyst_name: combinedAnalystNames,
+        events: combinedEvents,
+        created_at: existing.created_at || normalizedAnalysis.created_at || new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
       all[idx] = updated;
     } else {
       updated = {
-        ...analysis,
-        created_at: analysis.created_at || new Date().toISOString(),
+        ...normalizedAnalysis,
+        id: targetId,
+        analyst_name: this.sanitizeAnalystNames([normalizedAnalysis.analyst_name]),
+        created_at: normalizedAnalysis.created_at || new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
       all.unshift(updated);
     }
 
-    // Deduplicate remaining entries in storage by unique analysis id
-    const finalMap = new Map<string, MatchAnalysis>();
+    // Keep 1 single analysis entry per match_id in storage
+    const matchMap = new Map<string, MatchAnalysis>();
     all.forEach((item) => {
-      if (item && item.id) {
-        finalMap.set(item.id, item);
+      if (item && item.match_id) {
+        if (!matchMap.has(item.match_id) || item.id === targetId) {
+          matchMap.set(item.match_id, item);
+        }
       }
     });
 
-    const deduplicated = Array.from(finalMap.values());
+    const deduplicated = Array.from(matchMap.values());
     setToStorage(STORAGE_KEYS.MATCH_ANALYSES, deduplicated);
 
     // Sync analysis asynchronously to Supabase

@@ -48,6 +48,45 @@ export const MatchResultHeader: React.FC<MatchResultHeaderProps> = ({ match, eve
   const isWin = homeScore !== awayScore;
   const homeWon = homeScore > awayScore;
 
+  const [currentTimestamp, setCurrentTimestamp] = React.useState<number>(Date.now());
+  React.useEffect(() => {
+    const timer = setInterval(() => setCurrentTimestamp(Date.now()), 15000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const matchRegistrationStatus = useMemo(() => {
+    if (!events || events.length === 0) {
+      return { maxMinute: 0, formattedMinute: "0'", isFinished: false };
+    }
+    let maxMin = 0;
+    let maxTs = 0;
+    events.forEach((ev) => {
+      let minVal = 0;
+      if (typeof ev.minute === 'number' && !isNaN(ev.minute)) {
+        minVal = ev.minute;
+      } else if (typeof ev.timestamp === 'number' && !isNaN(ev.timestamp)) {
+        minVal = Math.floor(ev.timestamp / 60);
+      }
+      if (minVal > maxMin) maxMin = minVal;
+      const createdStr = ev.created_at || ev.updated_at;
+      if (createdStr) {
+        const ts = new Date(createdStr).getTime();
+        if (!isNaN(ts) && ts > maxTs) maxTs = ts;
+      }
+    });
+
+    if (maxTs === 0 && match?.updated_at) {
+      const ts = new Date(match.updated_at).getTime();
+      if (!isNaN(ts)) maxTs = ts;
+    }
+
+    const minsIdle = maxTs > 0 ? (currentTimestamp - maxTs) / (1000 * 60) : 999;
+    const isFinished = maxMin >= 90 && minsIdle > 15;
+    const formattedMinute = maxMin > 90 ? `90+${maxMin - 90}'` : `${maxMin}'`;
+
+    return { maxMinute: maxMin, formattedMinute, isFinished };
+  }, [events, match?.updated_at, currentTimestamp]);
+
   return (
     <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden">
       {/* Resultado + Escudos */}
@@ -67,14 +106,26 @@ export const MatchResultHeader: React.FC<MatchResultHeaderProps> = ({ match, eve
             </span>
           </div>
 
-          <div className="flex items-center gap-3 sm:gap-5 shrink-0">
-            <span className={`text-4xl sm:text-6xl font-black tabular-nums ${!isWin || homeWon ? 'text-emerald-400' : 'text-slate-300'}`}>
-              {homeScore}
-            </span>
-            <span className="text-2xl sm:text-3xl font-black text-slate-600">-</span>
-            <span className={`text-4xl sm:text-6xl font-black tabular-nums ${!isWin || !homeWon ? 'text-emerald-400' : 'text-slate-300'}`}>
-              {awayScore}
-            </span>
+          <div className="flex flex-col items-center gap-2 shrink-0">
+            <div className="flex items-center gap-3 sm:gap-5">
+              <span className={`text-4xl sm:text-6xl font-black tabular-nums ${!isWin || homeWon ? 'text-emerald-400' : 'text-slate-300'}`}>
+                {homeScore}
+              </span>
+              <span className="text-2xl sm:text-3xl font-black text-slate-600">-</span>
+              <span className={`text-4xl sm:text-6xl font-black tabular-nums ${!isWin || !homeWon ? 'text-emerald-400' : 'text-slate-300'}`}>
+                {awayScore}
+              </span>
+            </div>
+
+            {matchRegistrationStatus.isFinished ? (
+              <span className="px-2.5 py-0.5 rounded-md bg-emerald-950/80 border border-emerald-500/40 text-[10px] font-black tracking-widest text-emerald-400 uppercase flex items-center gap-1 shadow-sm">
+                FINALIZADO
+              </span>
+            ) : (
+              <span className="px-2.5 py-0.5 rounded-md bg-slate-900 border border-amber-500/40 text-[10px] font-extrabold tracking-wider text-amber-400 flex items-center gap-1 shadow-sm">
+                MIN. {matchRegistrationStatus.formattedMinute}
+              </span>
+            )}
           </div>
 
           <div className="flex flex-col items-center gap-2 flex-1 max-w-[180px]">

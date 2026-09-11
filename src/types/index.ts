@@ -61,6 +61,8 @@ export interface Match {
   botonera_template_id?: string | null;
   home_lineup?: TeamLineupConfig | null;
   away_lineup?: TeamLineupConfig | null;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface MatchAnalysis {

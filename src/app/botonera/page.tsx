@@ -1291,6 +1291,16 @@ export default function BotoneraPage() {
     }
   };
 
+  const handleOCRApplySync = (targetP: number, matchTimeSecs: number, videoTimeSecs: number) => {
+    const baseSecs = PERIOD_BASE_SECONDS[targetP] ?? 0;
+    const elapsedInPeriod = Math.max(0, matchTimeSecs - baseSecs);
+    const computedOffset = Math.max(0, videoTimeSecs - elapsedInPeriod);
+
+    handleUpdatePeriodOffset(targetP, computedOffset);
+    setPeriod(targetP);
+    setTimerSeconds(matchTimeSecs);
+  };
+
   /** Removes a period start marker (chrono falls back to its own clock for that period). */
   const handleClearPeriodOffset = (p: number) => {
     setPeriodVideoOffsets((prev) => {
@@ -1552,16 +1562,63 @@ export default function BotoneraPage() {
     setEvents((prev) => {
       const nextEvents = [newEvt, ...prev];
       dbStore.saveNormalizedEvents([newEvt], false);
+
+      if (selectedMatchId && selectedMatchId !== 'free_session') {
+        ownWritesRef.current.add(newEvt.event_id);
+        insertAnalysisEventToSupabase(selectedMatchId, newEvt).catch((err) =>
+          console.warn('Could not sync new event to Supabase:', err)
+        );
+
+        // Auto-save immediately to single master MatchAnalysis & Match record in Supabase & local DB
+        const targetId = selectedMatchId;
+        const targetMatch = dbStore.getMatchById(targetId) || matches.find((m) => m.id === targetId);
+        const currentAnalyst = profile?.full_name || user?.email || 'Analista SAO';
+
+        const masterAnalysisId = `analysis_${targetId}`;
+        const existingAnalyses = dbStore.getAnalyses(targetId);
+        const existingObj = existingAnalyses.find((a) => a.match_id === targetId || a.id === masterAnalysisId);
+
+        const combinedAnalystNames = dbStore.sanitizeAnalystNames([
+          ...(existingObj?.analyst_name ? [existingObj.analyst_name] : []),
+          currentAnalyst,
+        ]);
+
+        const updatedEvents = dbStore.deduplicateEventsByTime([...nextEvents, ...(existingObj?.events || [])]);
+
+        const masterAnalysis: MatchAnalysis = {
+          id: masterAnalysisId,
+          match_id: targetId,
+          title: `Análisis ${targetMatch ? targetMatch.home_team + ' vs ' + targetMatch.away_team : 'Etiquetado en Vivo'}`,
+          analyst_name: combinedAnalystNames,
+          status: 'in_progress' as const,
+          video_type: videoType || existingObj?.video_type || null,
+          video_url: videoUrl || existingObj?.video_url || null,
+          video_source_name: videoSourceName || existingObj?.video_source_name || null,
+          p1_video_start_time: periodVideoOffsets[1] ?? existingObj?.p1_video_start_time ?? null,
+          p2_video_start_time: periodVideoOffsets[2] ?? existingObj?.p2_video_start_time ?? null,
+          botonera_template_id: template?.id || existingObj?.botonera_template_id || null,
+          home_lineup: targetMatch?.home_lineup || existingObj?.home_lineup || null,
+          away_lineup: targetMatch?.away_lineup || existingObj?.away_lineup || null,
+          events: updatedEvents,
+          created_at: existingObj?.created_at || new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+
+        dbStore.saveAnalysis(masterAnalysis);
+        if (targetMatch) {
+          dbStore.saveMatch({
+            ...targetMatch,
+            event_count: updatedEvents.length,
+            status: 'Finalizado',
+            import_status: 'XML Importado',
+          });
+          setMatches(dbStore.getMatches());
+        }
+        setSavedAnalyses(dbStore.getAnalyses());
+      }
       return nextEvents;
     });
     setEventModalData(null);
-
-    if (selectedMatchId && selectedMatchId !== 'free_session') {
-      ownWritesRef.current.add(newEvt.event_id);
-      insertAnalysisEventToSupabase(selectedMatchId, newEvt).catch((err) =>
-        console.warn('Could not sync new event to Supabase:', err)
-      );
-    }
   };
 
   const handleDeleteEvent = (eventId: string) => {
@@ -1579,22 +1636,19 @@ export default function BotoneraPage() {
           console.warn('Could not sync event deletion to Supabase:', err)
         );
 
-        // Also update existing MatchAnalysis card if present
+        // Update single master MatchAnalysis card
         const targetId = selectedMatchId;
+        const masterAnalysisId = `analysis_${targetId}`;
         const analyses = dbStore.getAnalyses(targetId);
-        if (analyses.length > 0) {
-          const existing = editingAnalysisId
-            ? analyses.find((a) => a.id === editingAnalysisId) || analyses[0]
-            : analyses[0];
-          if (existing) {
-            const updatedAnalysis: MatchAnalysis = {
-              ...existing,
-              events: next,
-              updated_at: new Date().toISOString(),
-            };
-            dbStore.saveAnalysis(updatedAnalysis);
-            setSavedAnalyses(dbStore.getAnalyses());
-          }
+        const existing = analyses.find((a) => a.match_id === targetId || a.id === masterAnalysisId) || analyses[0];
+        if (existing) {
+          const updatedAnalysis: MatchAnalysis = {
+            ...existing,
+            events: next,
+            updated_at: new Date().toISOString(),
+          };
+          dbStore.saveAnalysis(updatedAnalysis);
+          setSavedAnalyses(dbStore.getAnalyses());
         }
       }
       return next;
@@ -1612,22 +1666,19 @@ export default function BotoneraPage() {
           console.warn('Could not sync event update to Supabase:', err)
         );
 
-        // Also update existing MatchAnalysis card if present
+        // Update single master MatchAnalysis card
         const targetId = selectedMatchId;
+        const masterAnalysisId = `analysis_${targetId}`;
         const analyses = dbStore.getAnalyses(targetId);
-        if (analyses.length > 0) {
-          const existing = editingAnalysisId
-            ? analyses.find((a) => a.id === editingAnalysisId) || analyses[0]
-            : analyses[0];
-          if (existing) {
-            const updatedAnalysis: MatchAnalysis = {
-              ...existing,
-              events: nextEvents,
-              updated_at: new Date().toISOString(),
-            };
-            dbStore.saveAnalysis(updatedAnalysis);
-            setSavedAnalyses(dbStore.getAnalyses());
-          }
+        const existing = analyses.find((a) => a.match_id === targetId || a.id === masterAnalysisId) || analyses[0];
+        if (existing) {
+          const updatedAnalysis: MatchAnalysis = {
+            ...existing,
+            events: nextEvents,
+            updated_at: new Date().toISOString(),
+          };
+          dbStore.saveAnalysis(updatedAnalysis);
+          setSavedAnalyses(dbStore.getAnalyses());
         }
       }
       return nextEvents;
@@ -1664,7 +1715,7 @@ export default function BotoneraPage() {
 
   const handleSaveToMatch = () => {
     if (events.length === 0) {
-      alert('⚠️ No hay eventos registrados aún en la sesión. Añade al menos un evento para guardar el registro de análisis.');
+      alert('⚠️ No hay eventos registrados aún en la sesión.');
       return;
     }
 
@@ -1687,7 +1738,6 @@ export default function BotoneraPage() {
     const masterAnalysisId = `analysis_${targetId}`;
     const existingAnalyses = dbStore.getAnalyses(targetId);
     const existingObj = existingAnalyses.find((a) => a.match_id === targetId || a.id === masterAnalysisId);
-    const resolvedAnalysisId = masterAnalysisId;
 
     const currentAnalyst = profile?.full_name || user?.email || 'Analista Principal (SAO)';
     const combinedAnalystNames = dbStore.sanitizeAnalystNames([
@@ -1699,7 +1749,7 @@ export default function BotoneraPage() {
     const cleanCombinedEvents = dbStore.deduplicateEventsByTime(combinedEventsRaw);
 
     const newAnalysis: MatchAnalysis = {
-      id: resolvedAnalysisId,
+      id: masterAnalysisId,
       match_id: targetId,
       title: `Análisis ${targetMatch ? targetMatch.home_team + ' vs ' + targetMatch.away_team : 'Etiquetado en Vivo'}`,
       analyst_name: combinedAnalystNames,
@@ -1710,21 +1760,17 @@ export default function BotoneraPage() {
       p1_video_start_time: periodVideoOffsets[1] ?? existingObj?.p1_video_start_time ?? null,
       p2_video_start_time: periodVideoOffsets[2] ?? existingObj?.p2_video_start_time ?? null,
       botonera_template_id: template?.id || existingObj?.botonera_template_id || null,
-      home_lineup: targetMatch?.home_lineup || selectedMatch?.home_lineup || existingObj?.home_lineup || null,
-      away_lineup: targetMatch?.away_lineup || selectedMatch?.away_lineup || existingObj?.away_lineup || null,
+      home_lineup: targetMatch?.home_lineup || existingObj?.home_lineup || null,
+      away_lineup: targetMatch?.away_lineup || existingObj?.away_lineup || null,
       events: cleanCombinedEvents,
       created_at: existingObj?.created_at || new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
 
     dbStore.saveAnalysis(newAnalysis);
-    dbStore.clearActiveBotoneraSession(targetId);
-    clearAnalysisEventsFromSupabase(targetId).catch((err) =>
-      console.warn('Could not clear live analysis events in Supabase after save:', err)
-    );
     setSavedAnalyses(dbStore.getAnalyses());
-    setEditingAnalysisId(resolvedAnalysisId);
-    alert(`✅ Registro de análisis guardado con éxito (${cleanCombinedEvents.length} eventos).`);
+    setEditingAnalysisId(masterAnalysisId);
+    alert(`✅ Análisis guardado y sincronizado en vivo (${cleanCombinedEvents.length} eventos).`);
   };
 
   const handleExportXml = () => {
@@ -2231,6 +2277,7 @@ export default function BotoneraPage() {
                   onCapturePeriodOffset={handleCapturePeriodOffset}
                   onSeekVideoToTime={(t) => seekVideoTo(t)}
                   getCurrentVideoTime={getCurrentVideoTime}
+                  onOCRApplySync={handleOCRApplySync}
                 />
 
                 {/* Feed de Eventos — directamente debajo del vídeo */}
@@ -2321,6 +2368,7 @@ export default function BotoneraPage() {
                     onCapturePeriodOffset={handleCapturePeriodOffset}
                     onSeekVideoToTime={(t) => seekVideoTo(t)}
                     getCurrentVideoTime={getCurrentVideoTime}
+                    onOCRApplySync={handleOCRApplySync}
                   />
                 </div>
               )}

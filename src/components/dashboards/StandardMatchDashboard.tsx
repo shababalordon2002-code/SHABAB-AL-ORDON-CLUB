@@ -1145,13 +1145,104 @@ function generateDominanceDifferentialPaths(
     return Math.max(1, ...allP1, ...allP2);
   }, [timelineBuckets]);
 
+  // Periodic ticker to auto-update activity check every 15s
+  const [currentTimestamp, setCurrentTimestamp] = useState<number>(Date.now());
+  React.useEffect(() => {
+    const timer = setInterval(() => setCurrentTimestamp(Date.now()), 15000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Calculate match analysis registration status (max minute & time since last addition)
+  const matchRegistrationStatus = useMemo(() => {
+    if (!allEvents || allEvents.length === 0) {
+      return {
+        maxMinute: 0,
+        formattedMinute: "0'",
+        isFinished: false,
+        displayLabel: 'Sin eventos registrados',
+      };
+    }
+
+    let maxMin = 0;
+    let maxEventCreatedTime = 0;
+
+    allEvents.forEach((ev) => {
+      let minVal = 0;
+      if (typeof ev.minute === 'number' && !isNaN(ev.minute)) {
+        minVal = ev.minute;
+      } else if (typeof ev.timestamp === 'number' && !isNaN(ev.timestamp)) {
+        minVal = Math.floor(ev.timestamp / 60);
+      }
+      if (minVal > maxMin) {
+        maxMin = minVal;
+      }
+
+      const createdStr = ev.created_at || ev.updated_at;
+      if (createdStr) {
+        const ts = new Date(createdStr).getTime();
+        if (!isNaN(ts) && ts > maxEventCreatedTime) {
+          maxEventCreatedTime = ts;
+        }
+      }
+    });
+
+    if (maxEventCreatedTime === 0) {
+      if (match?.updated_at) {
+        const ts = new Date(match.updated_at).getTime();
+        if (!isNaN(ts)) maxEventCreatedTime = ts;
+      } else if (match?.created_at) {
+        const ts = new Date(match.created_at).getTime();
+        if (!isNaN(ts)) maxEventCreatedTime = ts;
+      }
+    }
+
+    const minutesSinceLastAdd = maxEventCreatedTime > 0
+      ? (currentTimestamp - maxEventCreatedTime) / (1000 * 60)
+      : 999;
+
+    // Rule: if maxMinute >= 90 AND > 15 minutes since last addition => "Finalizado"
+    const isFinished = maxMin >= 90 && minutesSinceLastAdd > 15;
+
+    let formattedMin = `${maxMin}'`;
+    if (maxMin > 90) {
+      formattedMin = `90+${maxMin - 90}'`;
+    }
+
+    return {
+      maxMinute: maxMin,
+      formattedMinute: formattedMin,
+      isFinished,
+      displayLabel: isFinished ? 'Finalizado' : `Min. ${formattedMin}`,
+    };
+  }, [allEvents, match?.updated_at, match?.created_at, currentTimestamp]);
+
   return (
     <div className="space-y-6 bg-slate-950 p-4 sm:p-6 rounded-3xl border border-slate-800 shadow-2xl text-slate-100 select-none">
-      {/* ── 1. BARRA SUPERIOR: FECHA + EXPORTAR PDF (excluida de la captura) ── */}
+      {/* ── 1. BARRA SUPERIOR: FECHA + REGISTRO MINUTO / FINALIZADO + EXPORTAR PDF (excluida de la captura) ── */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-3 w-full px-2 pb-3 border-b border-slate-800/80">
-        <div className="text-[11px] font-bold text-amber-400 uppercase tracking-widest flex items-center gap-1.5">
-          <Calendar className="w-3.5 h-3.5 text-amber-400" />
-          <span>{match.competition || 'Jordan Pro League'} • {match.date || '04.09.2026'}</span>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="text-[11px] font-bold text-amber-400 uppercase tracking-widest flex items-center gap-1.5">
+            <Calendar className="w-3.5 h-3.5 text-amber-400" />
+            <span>{match.competition || 'Jordan Pro League'} • {match.date || '04.09.2026'}</span>
+          </div>
+
+          <span className="text-slate-700 hidden sm:inline">•</span>
+
+          {matchRegistrationStatus.isFinished ? (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-black tracking-wide shadow-sm">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              FINALIZADO
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-extrabold tracking-wide shadow-sm">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+              </span>
+              <Clock className="w-3.5 h-3.5 text-amber-400" />
+              <span>REGISTRADO HASTA MIN. {matchRegistrationStatus.formattedMinute}</span>
+            </span>
+          )}
         </div>
 
         <button
@@ -1178,11 +1269,25 @@ function generateDominanceDifferentialPaths(
             <TeamLogo teamName={homeTeamName} logoUrl={match.home_team_logo} size={48} />
           </div>
 
-          {/* Score Badge */}
-          <div className="px-3 sm:px-5 py-2 rounded-2xl bg-slate-900 border-2 border-emerald-500/50 shadow-lg shadow-emerald-950/40 text-center shrink-0">
-            <span className="font-mono text-lg sm:text-2xl md:text-3xl font-black text-white tracking-wider">
-              {displayHomeScore} - {displayAwayScore}
-            </span>
+          {/* Score Badge + Minute / Finished Indicator */}
+          <div className="flex flex-col items-center gap-1.5 shrink-0">
+            <div className="px-3 sm:px-5 py-2 rounded-2xl bg-slate-900 border-2 border-emerald-500/50 shadow-lg shadow-emerald-950/40 text-center">
+              <span className="font-mono text-lg sm:text-2xl md:text-3xl font-black text-white tracking-wider">
+                {displayHomeScore} - {displayAwayScore}
+              </span>
+            </div>
+
+            {matchRegistrationStatus.isFinished ? (
+              <span className="px-2.5 py-0.5 rounded-md bg-emerald-950/80 border border-emerald-500/40 text-[10px] font-black tracking-widest text-emerald-400 uppercase flex items-center gap-1 shadow-sm">
+                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                FINALIZADO
+              </span>
+            ) : (
+              <span className="px-2.5 py-0.5 rounded-md bg-slate-900 border border-amber-500/40 text-[10px] font-extrabold tracking-wider text-amber-400 flex items-center gap-1 shadow-sm">
+                <Clock className="w-3 h-3 text-amber-400" />
+                MIN. {matchRegistrationStatus.formattedMinute}
+              </span>
+            )}
           </div>
 
           {/* Away Team */}

@@ -56,8 +56,10 @@ export async function saveAnalysisToSupabase(analysis: MatchAnalysis): Promise<b
       supabase = createClient();
     }
 
+    const targetId = analysis.id && analysis.id.startsWith('analysis_') ? analysis.id : `analysis_${analysis.match_id}`;
+
     const row: Record<string, any> = {
-      id: analysis.id,
+      id: targetId,
       match_id: analysis.match_id,
       title: analysis.title,
       analyst_name: analysis.analyst_name || 'Analista SAO',
@@ -76,7 +78,11 @@ export async function saveAnalysisToSupabase(analysis: MatchAnalysis): Promise<b
 
     let { error } = await supabase
       .from('match_analyses')
-      .upsert([row], { onConflict: 'id' });
+      .upsert([row], { onConflict: 'match_id' });
+
+    if (error && error.message.includes('onConflict')) {
+      ({ error } = await supabase.from('match_analyses').upsert([row], { onConflict: 'id' }));
+    }
 
     if (error && /Could not find the '.+' column/.test(error.message)) {
       console.warn(
@@ -86,7 +92,10 @@ export async function saveAnalysisToSupabase(analysis: MatchAnalysis): Promise<b
       const fallbackRow = { ...row };
       delete fallbackRow.home_lineup;
       delete fallbackRow.away_lineup;
-      ({ error } = await supabase.from('match_analyses').upsert([fallbackRow], { onConflict: 'id' }));
+      ({ error } = await supabase.from('match_analyses').upsert([fallbackRow], { onConflict: 'match_id' }));
+      if (error) {
+        ({ error } = await supabase.from('match_analyses').upsert([fallbackRow], { onConflict: 'id' }));
+      }
     }
 
     if (error) {

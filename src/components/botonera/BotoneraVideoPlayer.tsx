@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { PictureInPicture2, ExternalLink, Minimize2, Maximize2, Video as VideoIcon, ArrowLeftRight, Clock, RotateCcw, CheckCircle2, Pencil, Check, X, Crosshair, SkipForward, CircleDashed } from 'lucide-react';
+import { PictureInPicture2, ExternalLink, Minimize2, Maximize2, Video as VideoIcon, ArrowLeftRight, Clock, RotateCcw, CheckCircle2, Pencil, Check, X, Crosshair, SkipForward, CircleDashed, Scan } from 'lucide-react';
 import { BotoneraProjectVideoType } from '@/types';
+import { OCRClockScannerModal } from './OCRClockScannerModal';
 
 interface BotoneraVideoPlayerProps {
   videoType: BotoneraProjectVideoType;
@@ -36,6 +37,8 @@ interface BotoneraVideoPlayerProps {
   resumeAtSeconds?: number | null;
   /** True si el vídeo estaba reproduciéndose en la ventana emergente al acoplarlo. */
   resumeAutoPlay?: boolean;
+  /** Callback fired when OCR scanner confirms a match time & period sync */
+  onOCRApplySync?: (period: number, matchTimeSeconds: number, videoTimeSeconds: number) => void;
 }
 
 // Converts common YouTube URL formats (watch, youtu.be, shorts, already-embed) into an embeddable URL.
@@ -117,6 +120,7 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
   objectUrl = null,
   resumeAtSeconds = null,
   resumeAutoPlay = false,
+  onOCRApplySync,
 }) => {
   const fmtVideoTime = (secs: number) => {
     const total = Math.max(0, Math.floor(secs));
@@ -148,6 +152,7 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [editingPeriod, setEditingPeriod] = useState<number | null>(null);
   const [editingPeriodValue, setEditingPeriodValue] = useState<string>('');
+  const [isOCRModalOpen, setIsOCRModalOpen] = useState<boolean>(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -247,14 +252,26 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
      Muestra el minutaje del vídeo registrado para cada parte (editable a mano) */
   const syncBar = (
     <div className="px-2 sm:px-3 py-2 bg-slate-950/90 border-b border-slate-800/80 space-y-1.5 overflow-x-auto">
-      <div className="flex items-center gap-1.5">
-        <Clock className="w-3.5 h-3.5 text-emerald-400" />
-        <span className="text-xs font-black text-slate-200 uppercase tracking-wider">
-          Inicio de cada parte en el vídeo
-        </span>
-        <span className="text-[11px] text-slate-400 hidden sm:inline">
-          — consulta o edita a mano el minuto del vídeo en el que arranca cada parte
-        </span>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <Clock className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+          <span className="text-xs font-black text-slate-200 uppercase tracking-wider truncate">
+            Inicio de cada parte en el vídeo
+          </span>
+          <span className="text-[11px] text-slate-400 hidden sm:inline truncate">
+            — consulta o edita a mano el minuto del vídeo en el que arranca cada parte
+          </span>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setIsOCRModalOpen(true)}
+          className="px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 text-[11px] font-bold transition flex items-center gap-1.5 cursor-pointer shrink-0"
+          title="Escanear minutaje del reloj de televisión en pantalla mediante visión OCR"
+        >
+          <Scan className="w-3.5 h-3.5 text-amber-400" />
+          <span>🔍 Visor OCR Cronómetro TV</span>
+        </button>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -469,6 +486,27 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
             />
           )}
         </div>
+      )}
+
+      {isOCRModalOpen && (
+        <OCRClockScannerModal
+          videoElement={videoRef.current}
+          iframeElement={null}
+          currentPeriod={currentPeriod || 1}
+          currentVideoTime={getCurrentVideoTime?.() ?? 0}
+          onApplySync={(p, matchTimeSecs, videoTimeSecs) => {
+            if (onOCRApplySync) {
+              onOCRApplySync(p, matchTimeSecs, videoTimeSecs);
+            } else if (onUpdatePeriodOffset) {
+              // Calculate offset from match time and video time
+              const baseSecs = p === 1 ? 0 : p === 2 ? 2700 : p === 3 ? 5400 : 6300;
+              const elapsedInPeriod = Math.max(0, matchTimeSecs - baseSecs);
+              const computedOffset = Math.max(0, videoTimeSecs - elapsedInPeriod);
+              onUpdatePeriodOffset(p, computedOffset);
+            }
+          }}
+          onClose={() => setIsOCRModalOpen(false)}
+        />
       )}
     </div>
   );

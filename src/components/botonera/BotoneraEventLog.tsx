@@ -332,6 +332,7 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
               </th>
               <th className="p-2.5">Evento</th>
               <th className="p-2.5">Jugador</th>
+              <th className="p-2.5">Analista</th>
               <th className="p-2.5">Descriptores</th>
               <th className="p-2.5 text-right">Acciones</th>
             </tr>
@@ -339,7 +340,7 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
           <tbody className="divide-y divide-slate-800/60 bg-slate-900/60 font-medium">
             {sortedEvents.length === 0 ? (
               <tr>
-                <td colSpan={6} className="p-6 text-center text-slate-500 text-xs italic">
+                <td colSpan={7} className="p-6 text-center text-slate-500 text-xs italic">
                   No hay eventos registrados aún. Usa la botonera o atajos de teclado para marcar acciones del partido.
                 </td>
               </tr>
@@ -391,6 +392,14 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
 
                       <td className="p-2.5 font-semibold text-slate-200">
                         {evt.player_name || 'Sin asignar'}
+                      </td>
+
+                      {/* Atribución de Analista */}
+                      <td className="p-2.5">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-950/70 text-sky-300 text-[10px] font-mono font-semibold border border-sky-800/40">
+                          <User className="w-3 h-3 text-sky-400 shrink-0" />
+                          <span>{evt.created_by_name || 'Analista SAO'}</span>
+                        </span>
                       </td>
 
                       {/* Descriptores marcados */}
@@ -461,7 +470,7 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
                     {/* Detalle desplegable: categoría, coordenadas y metadatos */}
                     {isExpanded && (
                       <tr style={{ backgroundColor: `${color}0f` }}>
-                        <td colSpan={6} className="px-3 pb-3 pt-1">
+                        <td colSpan={7} className="px-3 pb-3 pt-1">
                           <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-[11px] bg-slate-950/70 border border-slate-800 rounded-xl px-3 py-2">
                             <span className="flex items-center gap-1.5">
                               <Tag className="w-3 h-3 text-slate-500" />
