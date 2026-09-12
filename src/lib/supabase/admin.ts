@@ -25,6 +25,9 @@ function getValidServiceRoleKey() {
 }
 
 export function createAdminClient() {
+  if (typeof window !== 'undefined') {
+    throw new Error('createAdminClient cannot be called from the browser');
+  }
   return createSupabaseClient(getValidUrl(), getValidServiceRoleKey(), {
     auth: {
       autoRefreshToken: false,

@@ -111,6 +111,8 @@ export const PITCH_MODE_OPTIONS = [
   { key: 'zone_4_zonas', title: '4 Cuadrantes', desc: 'Cuadrícula 2x2', icon: '📊' },
   { key: 'zone_remate', title: 'Zonas Remate', desc: 'Área pequeña, área grande, borde', icon: '🎯' },
   { key: 'zone_counter', title: 'Conteo por Zona', desc: 'Zonas con contador numérico', icon: '🔢' },
+  { key: 'goal_mouth', title: 'Portería (Tiro)', desc: 'Coordenadas y zona en portería', icon: '🥅' },
+  { key: 'pitch_and_goal', title: 'Campo + Portería', desc: 'Doble: Campo (tiro) + Portería (meta)', icon: '🎯🥅' },
 ];
 
 export function MiniPitchDiagram({ mode }: { mode: string }) {
@@ -234,6 +236,39 @@ export function MiniPitchDiagram({ mode }: { mode: string }) {
           <text x="81" y="19.5" fill="#000" fontSize="5" fontWeight="bold" textAnchor="middle">3</text>
         </g>
       )}
+
+      {mode === 'goal_mouth' && (
+        <g>
+          {/* Ground */}
+          <rect x="16" y="46" width="68" height="8" rx="1" fill="#047857" />
+          {/* Net */}
+          <rect x="22" y="18" width="56" height="28" fill="#1e293b" fillOpacity="0.85" stroke="#64748b" strokeWidth="0.6" strokeDasharray="1.5 1.5" />
+          {/* Posts & Crossbar */}
+          <line x1="22" y1="18" x2="22" y2="46" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" />
+          <line x1="78" y1="18" x2="78" y2="46" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" />
+          <line x1="21" y1="18" x2="79" y2="18" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" />
+          {/* Shot Ball in top-right corner */}
+          <circle cx="68" cy="25" r="4" fill="#f59e0b" stroke="#ffffff" strokeWidth="0.8" />
+          <circle cx="68" cy="25" r="6" fill="none" stroke="#f59e0b" strokeWidth="0.8" strokeDasharray="1.5 1.5" />
+        </g>
+      )}
+
+      {mode === 'pitch_and_goal' && (
+        <g>
+          {/* Pitch area on Left */}
+          <rect x="8" y="16" width="34" height="30" fill="#065f46" fillOpacity="0.6" stroke="#10b981" strokeWidth="0.8" rx="1" />
+          <circle cx="20" cy="31" r="2.5" fill="#3b82f6" />
+          {/* Goal on Right */}
+          <rect x="56" y="18" width="34" height="26" fill="#1e293b" fillOpacity="0.85" stroke="#64748b" strokeWidth="0.5" strokeDasharray="1.5 1.5" />
+          <line x1="56" y1="18" x2="56" y2="44" stroke="#ffffff" strokeWidth="2" />
+          <line x1="90" y1="18" x2="90" y2="44" stroke="#ffffff" strokeWidth="2" />
+          <line x1="55" y1="18" x2="91" y2="18" stroke="#ffffff" strokeWidth="2" />
+          {/* Connecting Curved Arrow */}
+          <path d="M 20 31 Q 40 10 74 24" fill="none" stroke="#f59e0b" strokeWidth="1.6" strokeDasharray="2 1.5" />
+          <polygon points="74,24 68,21 70,27" fill="#f59e0b" />
+          <circle cx="74" cy="24" r="2.8" fill="#f59e0b" stroke="#ffffff" strokeWidth="0.6" />
+        </g>
+      )}
     </svg>
   );
 }
@@ -274,6 +309,156 @@ export function getButtonStyles(colorStr: string) {
     }
   };
 }
+
+const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? React.useLayoutEffect : React.useEffect;
+
+interface AutoFitButtonTextProps {
+  text: string;
+  fontSizePref?: string;
+  isHeader?: boolean;
+  style?: React.CSSProperties;
+  className?: string;
+  buttonWidthPct?: number;
+  buttonHeightPct?: number;
+}
+
+const getMaxFontSize = (pref?: string, isHeader?: boolean): number => {
+  if (isHeader) {
+    switch (pref) {
+      case 'sm': return 13;
+      case 'md': return 16;
+      case 'lg': return 20;
+      case 'xl': return 25;
+      case '2xl': return 30;
+      default: return 18;
+    }
+  }
+  switch (pref) {
+    case 'sm': return 11;
+    case 'md': return 13.5;
+    case 'lg': return 16;
+    case 'xl': return 20;
+    case '2xl': return 24;
+    default: return 13.5;
+  }
+};
+
+export const AutoFitButtonText: React.FC<AutoFitButtonTextProps> = ({
+  text,
+  fontSizePref,
+  isHeader = false,
+  style = {},
+  className = '',
+  buttonWidthPct,
+  buttonHeightPct,
+}) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const textRef = useRef<HTMLSpanElement>(null);
+
+  const maxFont = getMaxFontSize(fontSizePref, isHeader);
+  const minFont = 6.5;
+
+  const [fontSize, setFontSize] = useState<number>(() => {
+    const trimmed = (text || '').trim();
+    if (!trimmed) return maxFont;
+    const words = trimmed.split(/\s+/);
+    const longestWord = words.reduce((m, w) => (w.length > m.length ? w : m), '');
+    if (buttonWidthPct && longestWord.length > 0) {
+      const estWidth = Math.max(16, (buttonWidthPct / 100) * 850 - 18);
+      const estForWord = estWidth / (longestWord.length * 0.62);
+      return Math.max(minFont, Math.min(maxFont, Math.floor(estForWord * 2) / 2));
+    }
+    return maxFont;
+  });
+
+  useIsomorphicLayoutEffect(() => {
+    const container = containerRef.current;
+    const textEl = textRef.current;
+    if (!container || !textEl) return;
+
+    const adjust = () => {
+      const cWidth = container.clientWidth;
+      const cHeight = container.clientHeight;
+      if (cWidth <= 2 || cHeight <= 2) return;
+
+      const max = getMaxFontSize(fontSizePref, isHeader);
+      const min = 6.5;
+
+      // Start by checking if max font size fits without overflowing
+      textEl.style.fontSize = `${max}px`;
+      const overflowsMax =
+        textEl.scrollWidth > cWidth + 0.8 ||
+        textEl.scrollHeight > cHeight + 0.8 ||
+        container.scrollWidth > cWidth + 0.8 ||
+        container.scrollHeight > cHeight + 0.8;
+
+      if (!overflowsMax) {
+        setFontSize(max);
+        return;
+      }
+
+      // Fast binary search with 7 iterations for 0.5px precision
+      let low = min;
+      let high = max;
+      let best = min;
+
+      for (let i = 0; i < 7; i++) {
+        const mid = Math.round(((low + high) / 2) * 2) / 2;
+        textEl.style.fontSize = `${mid}px`;
+        const overflows =
+          textEl.scrollWidth > cWidth + 0.8 ||
+          textEl.scrollHeight > cHeight + 0.8 ||
+          container.scrollWidth > cWidth + 0.8 ||
+          container.scrollHeight > cHeight + 0.8;
+
+        if (overflows) {
+          high = mid - 0.5;
+        } else {
+          best = mid;
+          low = mid + 0.5;
+        }
+      }
+
+      textEl.style.fontSize = `${best}px`;
+      setFontSize(best);
+    };
+
+    adjust();
+
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => {
+        adjust();
+      });
+      ro.observe(container);
+    }
+
+    return () => {
+      if (ro) ro.disconnect();
+    };
+  }, [text, fontSizePref, isHeader, buttonWidthPct, buttonHeightPct, maxFont]);
+
+  return (
+    <div
+      ref={containerRef}
+      className={`w-full h-full min-w-0 min-h-0 flex flex-col items-center justify-center text-center overflow-hidden pointer-events-none select-none ${className}`}
+    >
+      <span
+        ref={textRef}
+        style={{
+          ...style,
+          fontSize: `${fontSize}px`,
+          lineHeight: isHeader ? 1.15 : 1.12,
+        }}
+        className={`block w-full text-center uppercase font-extrabold break-words ${
+          fontSize <= 10.5 ? 'tracking-normal' : isHeader ? 'tracking-wider' : 'tracking-wide'
+        }`}
+      >
+        {text}
+      </span>
+    </div>
+  );
+};
 
 export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
   template,
@@ -1203,13 +1388,16 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                       style={{ fontSize: btn.fontSize === '2xl' ? '1.5rem' : btn.fontSize === 'xl' ? '1.25rem' : '1rem' }}
                     />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center text-center px-1 pointer-events-none">
-                      <span
+                    <div className="w-full h-full min-w-0 min-h-0 flex items-center justify-center text-center px-1 pointer-events-none overflow-hidden">
+                      <AutoFitButtonText
+                        text={btn.name}
+                        fontSizePref={btn.fontSize}
+                        isHeader={true}
                         style={textColorStyle}
-                        className={`font-black uppercase tracking-widest block break-words drop-shadow text-center ${fontSizeClass}`}
-                      >
-                        {btn.name}
-                      </span>
+                        className="font-black uppercase drop-shadow text-center"
+                        buttonWidthPct={widthPct}
+                        buttonHeightPct={heightPct}
+                      />
                     </div>
                   )}
 
@@ -1273,7 +1461,9 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                     setSelectedBtnId(btn.id);
                   }
                 }}
-                className={`absolute p-2.5 rounded-2xl border flex flex-col items-center justify-center text-center transition-shadow duration-75 select-none shadow-xl ${
+                className={`absolute ${
+                  widthPct < 11 || heightPct < 9 ? 'p-1 rounded-lg' : widthPct < 16 || heightPct < 12 ? 'p-1.5 rounded-xl' : 'p-2 sm:p-2.5 rounded-2xl'
+                } border flex flex-col items-center justify-center text-center transition-shadow duration-75 select-none shadow-xl overflow-hidden ${
                   isTagActive
                     ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-amber-950/50 ring-4 ring-amber-400 z-30'
                     : styles.className
@@ -1283,16 +1473,23 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
               >
                 {/* Optional Key Shortcut Pill (Top Right) */}
                 {btn.keyShortcut && (
-                  <span className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-slate-950/80 text-slate-200 border border-slate-700/60 pointer-events-none z-10">
+                  <span className={`absolute ${
+                    widthPct < 14 || heightPct < 10
+                      ? 'top-0.5 right-0.5 px-1 py-0 text-[7.5px]'
+                      : 'top-1.5 right-1.5 px-1.5 py-0.5 text-[9px]'
+                  } rounded font-mono font-bold bg-slate-950/80 text-slate-200 border border-slate-700/60 pointer-events-none z-10`}>
                     [{btn.keyShortcut}]
                   </span>
                 )}
 
                 {/* Centered Uppercase Button Title */}
-                <div className="flex flex-col items-center justify-center text-center w-full h-full pointer-events-none px-1">
-                  <span className={`font-extrabold leading-snug tracking-wider block break-words uppercase ${fontSizeClass}`}>
-                    {btn.name}
-                  </span>
+                <div className="flex flex-col items-center justify-center text-center w-full h-full min-w-0 min-h-0 pointer-events-none px-0.5">
+                  <AutoFitButtonText
+                    text={btn.name}
+                    fontSizePref={btn.fontSize}
+                    buttonWidthPct={widthPct}
+                    buttonHeightPct={heightPct}
+                  />
                 </div>
 
                 {/* POWERPOINT SELECTION & RESIZE HANDLES IN EDIT MODE */}
@@ -1792,56 +1989,298 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                 </div>
               </div>
 
-              {/* 1. SELECCIÓN DE REGISTRO ESPACIAL / CAMPOGRAMA (CON DIBUJOS EN PEQUEÑO) */}
-              {editingButton.type !== 'header' && (
-                <div className="p-3 rounded-xl bg-slate-950 border border-emerald-500/30 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <label className="block text-xs font-extrabold text-emerald-400 flex items-center gap-1.5">
-                      <span>📍 Modo de Registro de Datos en Campograma</span>
-                    </label>
-                    <span className="text-[10px] text-slate-400 font-mono">
-                      Seleccionado: <strong className="text-emerald-300">{(PITCH_MODE_OPTIONS.find(o => o.key === (editingButton.pitchRequired || 'none'))?.title)}</strong>
-                    </span>
-                  </div>
+              {/* 1. SELECCIÓN DE REGISTRO ESPACIAL / CAMPOGRAMA (1 O 2 CAMPOGRAMAS) */}
+              {editingButton.type !== 'header' && (() => {
+                const isDualPitch = editingButton.pitchDisplayCount === 2 || (
+                  editingButton.pitchDisplayCount !== 1 && Boolean(
+                    editingButton.pitchRequired === 'pitch_and_goal' ||
+                    (editingButton.secondaryPitchRequired === 'goal_mouth' && editingButton.pitchRequired && editingButton.pitchRequired !== 'goal_mouth' && editingButton.pitchRequired !== 'none') ||
+                    (editingButton.goalRequired && editingButton.pitchRequired && editingButton.pitchRequired !== 'goal_mouth' && editingButton.pitchRequired !== 'none')
+                  )
+                );
+                const pitchCount = isDualPitch ? 2 : (editingButton.pitchRequired && editingButton.pitchRequired !== 'none' ? 1 : 0);
 
-                  {/* Grid de tarjetas visuales con dibujos en pequeño de cada tipo de campograma */}
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 max-h-72 overflow-y-auto pr-1">
-                    {PITCH_MODE_OPTIONS.map((opt) => {
-                      const isSelected = (editingButton.pitchRequired || 'none') === opt.key;
-                      return (
+                // Opciones de campo para Campograma 1 (excluyendo none, goal_mouth y pitch_and_goal)
+                const fieldPitchOptions = PITCH_MODE_OPTIONS.filter(o => o.key !== 'none' && o.key !== 'goal_mouth' && o.key !== 'pitch_and_goal');
+
+                return (
+                  <div className="p-3.5 rounded-xl bg-slate-950 border border-emerald-500/30 space-y-4">
+                    {/* SELECTOR EXPLÍCITO: 1 CAMPOGRAMA O 2 CAMPOGRAMAS */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-black text-emerald-400 flex items-center gap-1.5">
+                          <span>🗺️ ¿Cuántos Campogramas mostrar al pulsar este botón?</span>
+                        </label>
+                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border border-slate-700 bg-slate-900">
+                          {pitchCount === 0 && <span className="text-slate-400">⚡ Sin Campograma</span>}
+                          {pitchCount === 1 && (
+                            editingButton.pitchRequired === 'goal_mouth' ? (
+                              <span className="text-amber-300">🥅 1 Campograma (Solo Portería)</span>
+                            ) : (
+                              <span className="text-emerald-300">🏟️ 1 Campograma Activo (Campo)</span>
+                            )
+                          )}
+                          {pitchCount === 2 && <span className="text-amber-300">🎯 2 Campogramas Activos (Doble)</span>}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-2 p-1 bg-slate-900 rounded-xl border border-slate-800">
+                        {/* Opción 0: Sin Campograma */}
                         <button
-                          key={opt.key}
                           type="button"
-                          onClick={() => setEditingButton({ ...editingButton, pitchRequired: opt.key as any })}
-                          className={`p-2 rounded-xl border text-left flex flex-col justify-between gap-2 transition-all cursor-pointer ${
-                            isSelected
-                              ? 'bg-emerald-600/20 border-emerald-400 ring-2 ring-emerald-500/50 shadow-lg shadow-emerald-950/40 text-emerald-200'
-                              : 'bg-slate-900/90 border-slate-800 text-slate-400 hover:border-slate-700 hover:bg-slate-850 hover:text-slate-200'
+                          onClick={() => {
+                            setEditingButton({
+                              ...editingButton,
+                              pitchDisplayCount: 1,
+                              pitchRequired: 'none',
+                              goalRequired: false,
+                              secondaryPitchRequired: undefined,
+                            });
+                          }}
+                          className={`py-2 px-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                            pitchCount === 0
+                              ? 'bg-slate-800 text-white border border-slate-600 shadow'
+                              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-850'
                           }`}
                         >
-                          {/* Dibujo en pequeño SVG del tipo de campograma */}
-                          <MiniPitchDiagram mode={opt.key} />
-
-                          <div>
-                            <div className="flex items-center justify-between gap-1">
-                              <span className="text-[11px] font-bold text-slate-100 truncate flex items-center gap-1">
-                                <span>{opt.icon}</span>
-                                <span>{opt.title}</span>
-                              </span>
-                              {isSelected && <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
-                            </div>
-                            <p className="text-[9.5px] text-slate-400 leading-tight mt-0.5">{opt.desc}</p>
-                          </div>
+                          <span>⚡ Ninguno</span>
                         </button>
-                      );
-                    })}
-                  </div>
 
-                  <p className="text-[10px] text-slate-400 italic">
-                    Selecciona el dibujo del campograma que aparecerá al pulsar este botón durante el análisis en directo.
-                  </p>
-                </div>
-              )}
+                        {/* Opción 1: 1 Campograma */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const currentP = editingButton.pitchRequired;
+                            const nextP = (currentP && currentP !== 'none' && currentP !== 'pitch_and_goal') ? currentP : 'point_full';
+                            setEditingButton({
+                              ...editingButton,
+                              pitchDisplayCount: 1,
+                              pitchRequired: nextP,
+                              goalRequired: false,
+                              secondaryPitchRequired: undefined,
+                            });
+                          }}
+                          className={`py-2 px-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                            pitchCount === 1
+                              ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/60 border border-emerald-400 ring-2 ring-emerald-500/40'
+                              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-850'
+                          }`}
+                        >
+                          <span>🏟️ 1 Campograma</span>
+                        </button>
+
+                        {/* Opción 2: 2 Campogramas */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const currentP = editingButton.pitchRequired;
+                            const nextField = (currentP && currentP !== 'none' && currentP !== 'goal_mouth' && currentP !== 'pitch_and_goal') ? currentP : 'point_half';
+                            setEditingButton({
+                              ...editingButton,
+                              pitchDisplayCount: 2,
+                              pitchRequired: nextField,
+                              goalRequired: true,
+                              secondaryPitchRequired: 'goal_mouth',
+                              dualPitchLayout: editingButton.dualPitchLayout || 'simultaneous',
+                            });
+                          }}
+                          className={`py-2 px-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                            pitchCount === 2
+                              ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 shadow-md shadow-amber-950/60 font-black border border-amber-300 ring-2 ring-amber-400/50'
+                              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-850'
+                          }`}
+                        >
+                          <span>🎯 2 Campogramas</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* CASO 1: SELECCIONÓ 1 CAMPOGRAMA */}
+                    {pitchCount === 1 && (
+                      <div className="space-y-2 pt-1 border-t border-slate-800/80">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-bold text-slate-300">
+                            Selecciona el campograma a mostrar (Campo de juego o Portería):
+                          </span>
+                          <span className={`text-[10px] font-mono font-bold ${editingButton.pitchRequired === 'goal_mouth' ? 'text-amber-300' : 'text-emerald-300'}`}>
+                            {(PITCH_MODE_OPTIONS.find(o => o.key === (editingButton.pitchRequired || 'point_full'))?.title)}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 max-h-72 overflow-y-auto pr-1">
+                          {PITCH_MODE_OPTIONS.filter(opt => opt.key !== 'none' && opt.key !== 'pitch_and_goal').map((opt) => {
+                            const isSelected = (editingButton.pitchRequired || 'point_full') === opt.key;
+                            const isGoal = opt.key === 'goal_mouth';
+                            return (
+                              <button
+                                key={opt.key}
+                                type="button"
+                                onClick={() => {
+                                  setEditingButton({
+                                    ...editingButton,
+                                    pitchRequired: opt.key as any,
+                                    pitchDisplayCount: 1,
+                                    goalRequired: false,
+                                    secondaryPitchRequired: undefined,
+                                  });
+                                }}
+                                className={`p-2 rounded-xl border text-left flex flex-col justify-between gap-2 transition-all cursor-pointer ${
+                                  isSelected
+                                    ? isGoal
+                                      ? 'bg-amber-600/25 border-amber-400 ring-2 ring-amber-500/50 shadow-lg shadow-amber-950/40 text-amber-200'
+                                      : 'bg-emerald-600/20 border-emerald-400 ring-2 ring-emerald-500/50 shadow-lg shadow-emerald-950/40 text-emerald-200'
+                                    : isGoal
+                                      ? 'bg-amber-950/20 border-amber-500/30 text-slate-300 hover:border-amber-400 hover:bg-amber-950/40'
+                                      : 'bg-slate-900/90 border-slate-800 text-slate-400 hover:border-slate-700 hover:bg-slate-850 hover:text-slate-200'
+                                }`}
+                              >
+                                <MiniPitchDiagram mode={opt.key} />
+                                <div>
+                                  <div className="flex items-center justify-between gap-1">
+                                    <span className="text-[11px] font-bold text-slate-100 truncate flex items-center gap-1">
+                                      <span>{opt.icon}</span>
+                                      <span>{opt.title}</span>
+                                    </span>
+                                    {isSelected && (
+                                      <Check className={`w-3.5 h-3.5 shrink-0 ${isGoal ? 'text-amber-400' : 'text-emerald-400'}`} />
+                                    )}
+                                  </div>
+                                  <p className="text-[9.5px] text-slate-400 leading-tight mt-0.5">{opt.desc}</p>
+                                  {isGoal && (
+                                    <span className="mt-1 inline-block text-[8.5px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                                      🥅 Solo Portería (Individual)
+                                    </span>
+                                  )}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* CASO 2: SELECCIONÓ 2 CAMPOGRAMAS */}
+                    {pitchCount === 2 && (
+                      <div className="space-y-3.5 pt-1 border-t border-slate-800/80">
+                        {/* 1er Campograma: Terreno de juego */}
+                        <div className="p-3 rounded-xl bg-slate-900/90 border border-emerald-500/30 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
+                              <span>🏟️ 1er Campograma: Terreno de Juego (Origen de la Jugada)</span>
+                            </span>
+                            <span className="text-[10px] text-emerald-400 font-mono font-bold">
+                              {(fieldPitchOptions.find(o => o.key === (editingButton.pitchRequired || 'point_half'))?.title)}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-400">
+                            Elige el formato de campo para marcar dónde se inició la jugada o el tiro:
+                          </p>
+
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-56 overflow-y-auto pr-1">
+                            {fieldPitchOptions.map((opt) => {
+                              const isSelected = (editingButton.pitchRequired || 'point_half') === opt.key;
+                              return (
+                                <button
+                                  key={opt.key}
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingButton({
+                                      ...editingButton,
+                                      pitchRequired: opt.key as any,
+                                      pitchDisplayCount: 2,
+                                      goalRequired: true,
+                                      secondaryPitchRequired: 'goal_mouth',
+                                    });
+                                  }}
+                                  className={`p-2 rounded-xl border text-left flex flex-col justify-between gap-1.5 transition-all cursor-pointer ${
+                                    isSelected
+                                      ? 'bg-emerald-600/25 border-emerald-400 ring-2 ring-emerald-500/50 shadow-md text-emerald-200'
+                                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                                  }`}
+                                >
+                                  <MiniPitchDiagram mode={opt.key} />
+                                  <div className="flex items-center justify-between gap-1">
+                                    <span className="text-[10.5px] font-bold text-slate-100 truncate flex items-center gap-1">
+                                      <span>{opt.icon}</span>
+                                      <span>{opt.title}</span>
+                                    </span>
+                                    {isSelected && <Check className="w-3 h-3 text-emerald-400 shrink-0" />}
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* 2do Campograma: Portería */}
+                        <div className="p-3 rounded-xl bg-slate-900/90 border border-amber-500/30 flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-16 h-10 rounded-lg overflow-hidden shrink-0 border border-slate-800">
+                              <MiniPitchDiagram mode="goal_mouth" />
+                            </div>
+                            <div>
+                              <span className="text-xs font-bold text-amber-300 block flex items-center gap-1.5">
+                                <span>🥅 2º Campograma: Portería (Destino del Disparo)</span>
+                                <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[9px] font-bold border border-amber-500/40">
+                                  ACTIVADO
+                                </span>
+                              </span>
+                              <span className="text-[10px] text-slate-400 block">
+                                Permite marcar la zona exacta del disparo (escuadras, postes, centro, raso) con coordenadas (X, Y).
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Selector de cómo mostrar los 2 campogramas en pantalla durante el análisis */}
+                        <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
+                          <span className="text-xs font-bold text-slate-200 block">
+                            📺 ¿Cómo mostrar los 2 campogramas en pantalla durante el análisis?
+                          </span>
+
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setEditingButton({ ...editingButton, dualPitchLayout: 'simultaneous' })}
+                              className={`p-2.5 rounded-xl border text-left flex flex-col gap-1 transition cursor-pointer ${
+                                (editingButton.dualPitchLayout || 'simultaneous') === 'simultaneous'
+                                  ? 'bg-amber-500/20 border-amber-400 text-amber-200 ring-2 ring-amber-400/50 shadow'
+                                  : 'bg-slate-950 border-slate-800 text-slate-400 hover:bg-slate-900 hover:text-slate-200'
+                              }`}
+                            >
+                              <span className="text-[11px] font-bold flex items-center gap-1">
+                                <span>👥 Ambos a la vez (Simultáneos)</span>
+                                {(editingButton.dualPitchLayout || 'simultaneous') === 'simultaneous' && <Check className="w-3 h-3 text-amber-400 ml-auto" />}
+                              </span>
+                              <span className="text-[9.5px] text-slate-400 leading-tight">
+                                Muestra el campo y la portería al mismo tiempo para marcar ambos sin cambiar de pestaña.
+                              </span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setEditingButton({ ...editingButton, dualPitchLayout: 'tabs' })}
+                              className={`p-2.5 rounded-xl border text-left flex flex-col gap-1 transition cursor-pointer ${
+                                editingButton.dualPitchLayout === 'tabs'
+                                  ? 'bg-amber-500/20 border-amber-400 text-amber-200 ring-2 ring-amber-400/50 shadow'
+                                  : 'bg-slate-950 border-slate-800 text-slate-400 hover:bg-slate-900 hover:text-slate-200'
+                              }`}
+                            >
+                              <span className="text-[11px] font-bold flex items-center gap-1">
+                                <span>🗂️ Por pestañas (Paso a paso)</span>
+                                {editingButton.dualPitchLayout === 'tabs' && <Check className="w-3 h-3 text-amber-400 ml-auto" />}
+                              </span>
+                              <span className="text-[9.5px] text-slate-400 leading-tight">
+                                Muestra primero el campo y al marcarlo pasa a la pestaña de portería.
+                              </span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* 2. DESCRIPTORES ESTRUCTURADOS (TIPO Y POSIBILIDADES 100% EDITABLES) */}
               {editingButton.type === 'category' && (

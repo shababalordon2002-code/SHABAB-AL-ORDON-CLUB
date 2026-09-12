@@ -15,7 +15,7 @@ import {
 import { useAuth } from '@/components/providers/AuthProvider';
 import { Match, Player, NormalizedEvent, BotoneraTemplate, BotoneraButton, BotoneraProjectVideoType, MatchAnalysis } from '@/types';
 import { setRecordingLocked } from '@/lib/recording-lock';
-import { calculateEventVideoTime } from '@/lib/analytics/video-utils';
+import { calculateEventVideoTime, formatVideoTime, openClipPopupWindow } from '@/lib/analytics/video-utils';
 
 import { BotoneraHeader } from '@/components/botonera/BotoneraHeader';
 import { BotoneraPitchCanvas } from '@/components/botonera/BotoneraPitchCanvas';
@@ -29,7 +29,7 @@ import { BotoneraStopwatch, PERIOD_BASE_SECONDS } from '@/components/botonera/Bo
 import { BotoneraEventModal } from '@/components/botonera/BotoneraEventModal';
 import { BotoneraLiveScoreboard } from '@/components/botonera/BotoneraLiveScoreboard';
 import { AnalysisVisor } from '@/components/analysis/AnalysisVisor';
-import { Compass, Flame, Sliders, PlayCircle, Trophy, CheckCircle2, FileCode2, Save, Radio, Pencil, Ban, X, Home, FolderOpen, Eye, Edit3, Trash2, AlertTriangle, User, Video } from 'lucide-react';
+import { Compass, Flame, Sliders, PlayCircle, Trophy, CheckCircle2, FileCode2, Save, Radio, Pencil, Ban, X, Home, FolderOpen, Eye, Edit3, Trash2, AlertTriangle, User, Video, LogOut } from 'lucide-react';
 
 /**
  * Calculates features string for window.open to ensure the pop-out window
@@ -95,6 +95,9 @@ export default function BotoneraPage() {
 
   // Live Tagged Events List
   const [events, setEvents] = useState<NormalizedEvent[]>([]);
+
+  // Active Event Clip being played in the floating event player
+  const [activeClipEvent, setActiveClipEvent] = useState<NormalizedEvent | null>(null);
 
   // Registro colaborativo: analista autenticado + otros analistas conectados al mismo partido
   const { user, profile } = useAuth();
@@ -332,7 +335,8 @@ export default function BotoneraPage() {
     const offset = offsets[activeP];
     if (offset === undefined) return;
 
-    const matchTime = Math.max(0, Math.floor(videoTime - offset));
+    const base = PERIOD_BASE_SECONDS[activeP] ?? 0;
+    const matchTime = Math.max(0, Math.floor(videoTime - offset + base));
     setTimerSeconds((prev) => (prev === matchTime ? prev : matchTime));
   }, []);
 
@@ -415,14 +419,26 @@ export default function BotoneraPage() {
         if (activeSession.period) {
           setPeriod(activeSession.period);
         }
+        const matchFallback = activeSession.selectedMatchId ? dbStore.getMatchById(activeSession.selectedMatchId) : null;
+        const existingAns = activeSession.selectedMatchId ? dbStore.getAnalyses(activeSession.selectedMatchId) : [];
+        const analysisFallback = existingAns.length > 0 ? existingAns[0] : null;
+
         if (activeSession.events && activeSession.events.length > 0) {
           setEvents(activeSession.events);
+        } else if (analysisFallback?.events && analysisFallback.events.length > 0) {
+          setEvents(analysisFallback.events);
+        } else if (activeSession.selectedMatchId) {
+          const matchEvts = dbStore.getNormalizedEvents(activeSession.selectedMatchId);
+          if (matchEvts.length > 0) {
+            setEvents(matchEvts);
+          }
         }
 
-        // Restore video start offsets for 1st and 2nd halves from Supabase / active session
         const offsets: Record<number, number> = {};
-        if (activeSession.p1VideoStartSeconds != null) offsets[1] = activeSession.p1VideoStartSeconds;
-        if (activeSession.p2VideoStartSeconds != null) offsets[2] = activeSession.p2VideoStartSeconds;
+        const p1 = activeSession.p1VideoStartSeconds ?? analysisFallback?.p1_video_start_time ?? matchFallback?.p1_video_start_time ?? null;
+        const p2 = activeSession.p2VideoStartSeconds ?? analysisFallback?.p2_video_start_time ?? matchFallback?.p2_video_start_time ?? null;
+        if (p1 != null) offsets[1] = p1;
+        if (p2 != null) offsets[2] = p2;
         setPeriodVideoOffsets(offsets);
 
         if (activeSession.isTimerRunning && activeSession.startTimestamp) {
@@ -446,13 +462,26 @@ export default function BotoneraPage() {
           }
         }
 
-        if (activeSession.isConfigured) {
+        const resolvedVideoUrl = activeSession.videoUrl || analysisFallback?.video_url || matchFallback?.video_url || null;
+        const resolvedVideoType =
+          activeSession.videoType ||
+          analysisFallback?.video_type ||
+          matchFallback?.video_type ||
+          (resolvedVideoUrl ? (resolvedVideoUrl.includes('http') ? 'link' : 'local') : 'link');
+        const resolvedVideoSourceName =
+          activeSession.videoSourceName ||
+          analysisFallback?.video_source_name ||
+          matchFallback?.video_source_name ||
+          (resolvedVideoUrl ? 'Vídeo del Partido' : null);
+
+        if (activeSession.isConfigured || resolvedVideoUrl || p1 != null) {
           setIsSessionConfigured(true);
-          setVideoType(activeSession.videoType || 'link');
-          setVideoSourceName(activeSession.videoSourceName || null);
-          setVideoUrl(activeSession.videoUrl || null);
-          if (activeSession.botoneraTemplateId && templates && templates.length > 0) {
-            const savedTemplate = templates.find((t) => t.id === activeSession.botoneraTemplateId);
+          setVideoType(resolvedVideoType);
+          setVideoSourceName(resolvedVideoSourceName);
+          setVideoUrl(resolvedVideoUrl);
+          const tmplId = activeSession.botoneraTemplateId || analysisFallback?.botonera_template_id || matchFallback?.botonera_template_id;
+          if (tmplId && templates && templates.length > 0) {
+            const savedTemplate = templates.find((t) => t.id === tmplId);
             if (savedTemplate) setTemplate(savedTemplate);
           }
           if (urlMatchId || urlAnalysisId || urlMode) {
@@ -679,11 +708,24 @@ export default function BotoneraPage() {
 
   // Sync Active Tagging Session State to LocalStorage / dbStore / Supabase
   useEffect(() => {
+    // Prevent unconfigured blank state from wiping active session on initial mount
+    if (!isSessionConfigured && (!selectedMatchId || selectedMatchId === 'free_session') && events.length === 0) {
+      return;
+    }
+
     const startTimestamp = isTimerRunning
       ? (dbStore.getActiveBotoneraSession()?.startTimestamp || Date.now() - timerSeconds * 1000)
       : null;
 
-    const targetMatch = matches.find((m) => m.id === selectedMatchId);
+    const targetMatch = matches.find((m) => m.id === selectedMatchId) || (selectedMatchId ? dbStore.getMatchById(selectedMatchId) : null);
+    const existingAns = selectedMatchId ? dbStore.getAnalyses(selectedMatchId) : [];
+    const targetAnalysis = existingAns.length > 0 ? existingAns[0] : null;
+
+    const resolvedVideoUrl = (videoUrl && videoUrl.trim()) || targetAnalysis?.video_url || targetMatch?.video_url || null;
+    const resolvedVideoType = videoType || targetAnalysis?.video_type || targetMatch?.video_type || (resolvedVideoUrl ? (resolvedVideoUrl.includes('http') ? 'link' : 'local') : 'link');
+    const resolvedVideoSourceName = videoSourceName || targetAnalysis?.video_source_name || targetMatch?.video_source_name || (resolvedVideoUrl ? 'Vídeo del Partido' : null);
+    const resolvedP1 = periodVideoOffsets[1] ?? targetAnalysis?.p1_video_start_time ?? targetMatch?.p1_video_start_time ?? null;
+    const resolvedP2 = periodVideoOffsets[2] ?? targetAnalysis?.p2_video_start_time ?? targetMatch?.p2_video_start_time ?? null;
 
     dbStore.saveActiveBotoneraSession({
       selectedMatchId,
@@ -694,11 +736,11 @@ export default function BotoneraPage() {
       lastUpdatedTimestamp: Date.now(),
       events,
       isConfigured: isSessionConfigured,
-      videoType,
-      videoSourceName,
-      videoUrl,
-      p1VideoStartSeconds: periodVideoOffsets[1] ?? null,
-      p2VideoStartSeconds: periodVideoOffsets[2] ?? null,
+      videoType: resolvedVideoType,
+      videoSourceName: resolvedVideoSourceName,
+      videoUrl: resolvedVideoUrl,
+      p1VideoStartSeconds: resolvedP1,
+      p2VideoStartSeconds: resolvedP2,
       botoneraTemplateId: template?.id || null,
       home_lineup: targetMatch?.home_lineup || selectedMatch?.home_lineup || (selectedMatchId ? dbStore.getMatchById(selectedMatchId)?.home_lineup : null) || null,
       away_lineup: targetMatch?.away_lineup || selectedMatch?.away_lineup || (selectedMatchId ? dbStore.getMatchById(selectedMatchId)?.away_lineup : null) || null,
@@ -716,6 +758,128 @@ export default function BotoneraPage() {
     periodVideoOffsets,
     template,
     matches,
+  ]);
+
+  /**
+   * Continuous Real-time Persistence:
+   * Automatically saves events, video parameters, period start markers, and lineups
+   * to dbStore (localStorage + Supabase) without requiring manual save clicks.
+   */
+  const autoSaveToMatch = useCallback(
+    (silent: boolean = true) => {
+      if (!isSessionConfigured) return;
+
+      const targetId = (!selectedMatchId || selectedMatchId === 'free_session') ? 'match_demo_1' : selectedMatchId;
+      const targetMatch = dbStore.getMatchById(targetId) || matches.find((m) => m.id === targetId);
+
+      // Save or update the single shared Match Analysis card per match
+      const masterAnalysisId = `analysis_${targetId}`;
+      const existingAnalyses = dbStore.getAnalyses(targetId);
+      const existingObj = existingAnalyses.find((a) => a.match_id === targetId || a.id === masterAnalysisId);
+      const existingEventsCount = existingObj?.events?.length || 0;
+
+      // CRITICAL DATA LOSS PREVENTION: Never overwrite existing events with an empty array!
+      if (events.length === 0 && existingEventsCount > 0) {
+        console.warn(`[AutoSave] Blocked saving empty events over ${existingEventsCount} existing events for ${targetId}`);
+        return;
+      }
+
+      const normalizedEvts = events.map((e) => ({ ...e, match_id: targetId }));
+      if (normalizedEvts.length > 0) {
+        dbStore.saveNormalizedEvents(normalizedEvts, true, targetId);
+      }
+
+      const currentAnalyst = profile?.full_name || user?.email || 'Analista Principal (SAO)';
+      const combinedAnalystNames = dbStore.sanitizeAnalystNames([
+        ...(existingObj?.analyst_name ? [existingObj.analyst_name] : []),
+        currentAnalyst,
+      ]);
+
+      const resolvedVideoUrl = (videoUrl && videoUrl.trim()) || existingObj?.video_url || targetMatch?.video_url || null;
+      const resolvedVideoType = videoType || existingObj?.video_type || targetMatch?.video_type || (resolvedVideoUrl ? (resolvedVideoUrl.includes('http') ? 'link' : 'local') : null);
+      const resolvedVideoSourceName = videoSourceName || existingObj?.video_source_name || targetMatch?.video_source_name || (resolvedVideoUrl ? 'Vídeo del Partido' : null);
+      const resolvedP1 = periodVideoOffsets[1] ?? existingObj?.p1_video_start_time ?? targetMatch?.p1_video_start_time ?? null;
+      const resolvedP2 = periodVideoOffsets[2] ?? existingObj?.p2_video_start_time ?? targetMatch?.p2_video_start_time ?? null;
+      const resolvedTemplateId = template?.id || existingObj?.botonera_template_id || targetMatch?.botonera_template_id || null;
+
+      const newAnalysis: MatchAnalysis = {
+        id: masterAnalysisId,
+        match_id: targetId,
+        title: `Análisis ${targetMatch ? targetMatch.home_team + ' vs ' + targetMatch.away_team : 'Etiquetado en Vivo'}`,
+        analyst_name: combinedAnalystNames,
+        status: (existingObj?.status || 'in_progress') as 'completed' | 'in_progress',
+        video_type: resolvedVideoType,
+        video_url: resolvedVideoUrl,
+        video_source_name: resolvedVideoSourceName,
+        p1_video_start_time: resolvedP1,
+        p2_video_start_time: resolvedP2,
+        botonera_template_id: resolvedTemplateId,
+        home_lineup: targetMatch?.home_lineup || existingObj?.home_lineup || null,
+        away_lineup: targetMatch?.away_lineup || existingObj?.away_lineup || null,
+        events: normalizedEvts.length > 0 ? normalizedEvts : (existingObj?.events || []),
+        created_at: existingObj?.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      dbStore.saveAnalysis(newAnalysis);
+      if (targetMatch) {
+        dbStore.saveMatch({
+          ...targetMatch,
+          event_count: (newAnalysis.events || []).length,
+          video_type: resolvedVideoType,
+          video_url: resolvedVideoUrl || undefined,
+          video_source_name: resolvedVideoSourceName || undefined,
+          p1_video_start_time: resolvedP1,
+          p2_video_start_time: resolvedP2,
+          botonera_template_id: resolvedTemplateId || undefined,
+        });
+        setMatches(dbStore.getMatches());
+      }
+      setSavedAnalyses(dbStore.getAnalyses());
+      setEditingAnalysisId(masterAnalysisId);
+      if (!silent) {
+        alert(`✅ Análisis guardado y sincronizado (${(newAnalysis.events || []).length} eventos).`);
+      }
+    },
+    [
+      isSessionConfigured,
+      selectedMatchId,
+      events,
+      matches,
+      profile,
+      user,
+      videoUrl,
+      videoType,
+      videoSourceName,
+      periodVideoOffsets,
+      template,
+    ]
+  );
+
+  // Auto-save debounced effect whenever analysis state mutates
+  const isAutoSaveInitMount = useRef(true);
+  useEffect(() => {
+    if (isAutoSaveInitMount.current) {
+      isAutoSaveInitMount.current = false;
+      return;
+    }
+    if (!isSessionConfigured) return;
+    if (events.length === 0) return; // Never auto-save when events is empty
+
+    const timer = setTimeout(() => {
+      autoSaveToMatch(true);
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [
+    events,
+    periodVideoOffsets,
+    videoUrl,
+    videoType,
+    videoSourceName,
+    template,
+    isSessionConfigured,
+    autoSaveToMatch,
   ]);
 
   const handleStartNewRegistration = () => {
@@ -751,10 +915,15 @@ export default function BotoneraPage() {
     matchId: string;
     templateId: string;
   }) => {
-    // Reset all old session/analysis states so this NEW project starts 100% clean
+    // Check if match already has an existing analysis with events
+    const existingAns = config.matchId !== 'free_session' ? dbStore.getAnalyses(config.matchId) : [];
+    const targetAnalysis = existingAns.length > 0 ? existingAns[0] : null;
+    const existingEvents = (targetAnalysis?.events && targetAnalysis.events.length > 0) ? targetAnalysis.events : [];
+
+    // Reset session states, preserving existing analysis events if already present for this match
     dbStore.clearActiveBotoneraSession(config.matchId);
-    setEditingAnalysisId(null);
-    setEvents([]);
+    setEditingAnalysisId(targetAnalysis?.id || null);
+    setEvents(existingEvents);
     setTimerSeconds(0);
     setIsTimerRunning(false);
     setPeriod(1);
@@ -779,7 +948,7 @@ export default function BotoneraPage() {
       isTimerRunning: false,
       startTimestamp: null,
       lastUpdatedTimestamp: Date.now(),
-      events: [],
+      events: existingEvents,
       isConfigured: true,
       videoType: config.videoType,
       videoSourceName: config.videoSourceName,
@@ -795,21 +964,16 @@ export default function BotoneraPage() {
   };
 
   const handleEndSession = () => {
-    if (events.length > 0) {
-      const ok = confirm(
-        '¿Deseas finalizar y guardar este registro en directo? Se creará una tarjeta de análisis permanente en Supabase con todos tus eventos.'
-      );
-      if (!ok) return;
+    // Ensure all changes are flushed to DB & Supabase
+    autoSaveToMatch(true);
 
-      // Save events, match status and permanent Match Analysis card
-      handleSaveToMatch();
+    const ok = confirm(
+      '¿Deseas cerrar la sesión de análisis? Todos tus cortes, datos y ajustes ya están guardados automáticamente.'
+    );
+    if (!ok) return;
 
-      // Refresh list of saved analyses from DB
-      setSavedAnalyses(dbStore.getAnalyses());
-    } else {
-      const ok = confirm('¿Finalizar la sesión de etiquetado?');
-      if (!ok) return;
-    }
+    // Refresh list of saved analyses from DB
+    setSavedAnalyses(dbStore.getAnalyses());
 
     // Reset session states & transition back to Botonera Landing Dashboard
     setIsTimerRunning(false);
@@ -920,32 +1084,47 @@ export default function BotoneraPage() {
   const handleSelectMatch = (matchId: string) => {
     setSelectedMatchId(matchId);
     const existingAnalyses = dbStore.getAnalyses(matchId);
-    if (existingAnalyses.length > 0) {
-      setEditingAnalysisId(existingAnalyses[0].id);
+    const targetAnalysis = existingAnalyses.length > 0 ? existingAnalyses[0] : null;
+    if (targetAnalysis) {
+      setEditingAnalysisId(targetAnalysis.id);
     }
     if (matchId !== 'free_session') {
       const matchEvents = dbStore.getNormalizedEvents(matchId);
-      setEvents(matchEvents);
+      const targetEvents = (targetAnalysis?.events && targetAnalysis.events.length > 0)
+        ? targetAnalysis.events
+        : matchEvents;
+      setEvents(targetEvents);
 
       const targetMatch = dbStore.getMatchById(matchId);
-      if (targetMatch) {
-        if (targetMatch.video_type) setVideoType(targetMatch.video_type);
-        if (targetMatch.video_url) setVideoUrl(targetMatch.video_url);
-        if (targetMatch.video_source_name) setVideoSourceName(targetMatch.video_source_name);
 
-        const offsets: Record<number, number> = {};
-        if (targetMatch.p1_video_start_time != null) offsets[1] = targetMatch.p1_video_start_time;
-        if (targetMatch.p2_video_start_time != null) offsets[2] = targetMatch.p2_video_start_time;
-        setPeriodVideoOffsets(offsets);
+      // "A Fuego": resolve video settings checking BOTH targetAnalysis and targetMatch
+      const resolvedVideoUrl = targetAnalysis?.video_url || targetMatch?.video_url || null;
+      const resolvedVideoType =
+        targetAnalysis?.video_type ||
+        targetMatch?.video_type ||
+        (resolvedVideoUrl ? (resolvedVideoUrl.includes('http') ? 'link' : 'local') : 'link');
+      const resolvedVideoSourceName =
+        targetAnalysis?.video_source_name || targetMatch?.video_source_name || (resolvedVideoUrl ? 'Vídeo del Partido' : null);
 
-        if (targetMatch.botonera_template_id) {
-          const t = dbStore.getBotoneraTemplates().find((x) => x.id === targetMatch.botonera_template_id);
-          if (t) setTemplate(t);
-        }
+      if (resolvedVideoType) setVideoType(resolvedVideoType);
+      if (resolvedVideoUrl) setVideoUrl(resolvedVideoUrl);
+      if (resolvedVideoSourceName) setVideoSourceName(resolvedVideoSourceName);
 
-        if (targetMatch.video_type || targetMatch.p1_video_start_time != null || matchEvents.length > 0) {
-          setIsSessionConfigured(true);
-        }
+      const offsets: Record<number, number> = {};
+      const p1 = targetAnalysis?.p1_video_start_time ?? targetMatch?.p1_video_start_time;
+      const p2 = targetAnalysis?.p2_video_start_time ?? targetMatch?.p2_video_start_time;
+      if (p1 != null) offsets[1] = p1;
+      if (p2 != null) offsets[2] = p2;
+      setPeriodVideoOffsets(offsets);
+
+      const templateId = targetAnalysis?.botonera_template_id || targetMatch?.botonera_template_id;
+      if (templateId) {
+        const t = dbStore.getBotoneraTemplates().find((x) => x.id === templateId);
+        if (t) setTemplate(t);
+      }
+
+      if (resolvedVideoUrl || p1 != null || matchEvents.length > 0) {
+        setIsSessionConfigured(true);
       }
     } else {
       setEvents([]);
@@ -1245,12 +1424,27 @@ export default function BotoneraPage() {
    */
   const handleTimerChange = (seconds: number, seekVideo = true) => {
     const target = Math.max(0, seconds);
-    const offset = periodVideoOffsets[period];
-    if (offset !== undefined) {
-      seekVideoTo(offset + target, isTimerRunning);
-    } else {
-      seekVideoTo(Math.max(0, getCurrentVideoTime() + (seconds - timerSeconds)), isTimerRunning);
+    const base = PERIOD_BASE_SECONDS[period] ?? 0;
+
+    if (!seekVideo) {
+      // Edición manual con el lápiz:
+      // "el video debe continuar sin cambiar por donde estaba"
+      // Re-sincronizamos el offset de la parte actual con el minutaje indicado,
+      // SIN mover el vídeo y manteniendo intactos todos los eventos registrados antes.
+      const curVideoTime = getCurrentVideoTime();
+      if (curVideoTime > 0) {
+        const elapsedInPeriod = Math.max(0, target - base);
+        const newOffset = Math.max(0, curVideoTime - elapsedInPeriod);
+        handleUpdatePeriodOffset(period, newOffset);
+      }
+      setTimerSeconds(target);
+      return;
     }
+
+    // Salto relativo (+10s / -10s):
+    const curVideoTime = getCurrentVideoTime();
+    const delta = seconds - timerSeconds;
+    seekVideoTo(Math.max(0, curVideoTime + delta), isTimerRunning);
     setTimerSeconds(target);
   };
 
@@ -1280,6 +1474,19 @@ export default function BotoneraPage() {
             botonera_template_id: template?.id || m.botonera_template_id,
           });
         }
+        const existingAns = dbStore.getAnalyses(selectedMatchId);
+        const masterAn = existingAns.length > 0 ? existingAns[0] : null;
+        if (masterAn) {
+          dbStore.saveAnalysis({
+            ...masterAn,
+            p1_video_start_time: updatedOffsets[1] ?? masterAn.p1_video_start_time ?? null,
+            p2_video_start_time: updatedOffsets[2] ?? masterAn.p2_video_start_time ?? null,
+            video_type: videoType || masterAn.video_type,
+            video_url: videoUrl || masterAn.video_url,
+            video_source_name: videoSourceName || masterAn.video_source_name,
+            botonera_template_id: template?.id || masterAn.botonera_template_id,
+          });
+        }
       }
       return updatedOffsets;
     });
@@ -1291,15 +1498,7 @@ export default function BotoneraPage() {
     }
   };
 
-  const handleOCRApplySync = (targetP: number, matchTimeSecs: number, videoTimeSecs: number) => {
-    const baseSecs = PERIOD_BASE_SECONDS[targetP] ?? 0;
-    const elapsedInPeriod = Math.max(0, matchTimeSecs - baseSecs);
-    const computedOffset = Math.max(0, videoTimeSecs - elapsedInPeriod);
 
-    handleUpdatePeriodOffset(targetP, computedOffset);
-    setPeriod(targetP);
-    setTimerSeconds(matchTimeSecs);
-  };
 
   /** Removes a period start marker (chrono falls back to its own clock for that period). */
   const handleClearPeriodOffset = (p: number) => {
@@ -1316,6 +1515,15 @@ export default function BotoneraPage() {
             p2_video_start_time: updatedOffsets[2] ?? null,
           });
         }
+        const existingAns = dbStore.getAnalyses(selectedMatchId);
+        const masterAn = existingAns.length > 0 ? existingAns[0] : null;
+        if (masterAn) {
+          dbStore.saveAnalysis({
+            ...masterAn,
+            p1_video_start_time: updatedOffsets[1] ?? null,
+            p2_video_start_time: updatedOffsets[2] ?? null,
+          });
+        }
       }
       return updatedOffsets;
     });
@@ -1324,14 +1532,15 @@ export default function BotoneraPage() {
   /** Al pulsar uno de los 4 botones de parte en el crono:
    * 1. Registra el segundo del vídeo como inicio de esa parte.
    * 2. Activa el periodo (poniendo el botón verde).
-   * 3. Inicia el cronómetro desde 0 (00:00).
+   * 3. Inicia el cronómetro desde el minutaje base de esa parte (ej: 45:00 para 2ª parte).
    * 4. Enciende el cronómetro (isTimerRunning = true).
    */
   const handlePeriodSelect = (p: number) => {
     setPeriod(p);
     const videoTime = getCurrentVideoTime();
     handleUpdatePeriodOffset(p, videoTime);
-    setTimerSeconds(0);
+    const base = PERIOD_BASE_SECONDS[p] ?? 0;
+    setTimerSeconds(base);
     setIsTimerRunning(true);
   };
 
@@ -1372,6 +1581,19 @@ export default function BotoneraPage() {
             botonera_template_id: template?.id || m.botonera_template_id,
           });
         }
+        const existingAns = dbStore.getAnalyses(selectedMatchId);
+        const masterAn = existingAns.length > 0 ? existingAns[0] : null;
+        if (masterAn) {
+          dbStore.saveAnalysis({
+            ...masterAn,
+            p1_video_start_time: updatedOffsets[1] ?? masterAn.p1_video_start_time ?? null,
+            p2_video_start_time: updatedOffsets[2] ?? masterAn.p2_video_start_time ?? null,
+            video_type: videoType || masterAn.video_type,
+            video_url: videoUrl || masterAn.video_url,
+            video_source_name: videoSourceName || masterAn.video_source_name,
+            botonera_template_id: template?.id || masterAn.botonera_template_id,
+          });
+        }
       }
       return updatedOffsets;
     });
@@ -1387,14 +1609,21 @@ export default function BotoneraPage() {
   const handleSaveVideoSettings = (e: React.FormEvent) => {
     e.preventDefault();
     setVideoType(editVideoType);
+    let resolvedNewUrl: string | null = null;
+    let resolvedNewSource: string | null = null;
+
     if (editVideoType === 'link') {
+      resolvedNewUrl = editVideoUrl;
+      resolvedNewSource = null;
       setVideoUrl(editVideoUrl);
       setVideoSourceName(null);
       setVideoFile(null);
     } else if (editVideoType === 'local' && editVideoFile) {
+      resolvedNewUrl = URL.createObjectURL(editVideoFile);
+      resolvedNewSource = editVideoFile.name;
       setVideoFile(editVideoFile);
       setVideoSourceName(editVideoFile.name);
-      setVideoUrl(URL.createObjectURL(editVideoFile));
+      setVideoUrl(resolvedNewUrl);
     }
 
     if (selectedMatchId && selectedMatchId !== 'free_session') {
@@ -1403,11 +1632,24 @@ export default function BotoneraPage() {
         dbStore.saveMatch({
           ...m,
           video_type: editVideoType,
-          video_url: editVideoType === 'link' ? editVideoUrl : m.video_url,
-          video_source_name: editVideoType === 'local' && editVideoFile ? editVideoFile.name : m.video_source_name,
+          video_url: resolvedNewUrl || m.video_url,
+          video_source_name: resolvedNewSource || m.video_source_name,
           p1_video_start_time: periodVideoOffsets[1] ?? m.p1_video_start_time,
           p2_video_start_time: periodVideoOffsets[2] ?? m.p2_video_start_time,
           botonera_template_id: template?.id || m.botonera_template_id,
+        });
+      }
+      const existingAnalyses = dbStore.getAnalyses(selectedMatchId);
+      const masterAn = existingAnalyses.length > 0 ? existingAnalyses[0] : null;
+      if (masterAn) {
+        dbStore.saveAnalysis({
+          ...masterAn,
+          video_type: editVideoType,
+          video_url: resolvedNewUrl || masterAn.video_url,
+          video_source_name: resolvedNewSource || masterAn.video_source_name,
+          p1_video_start_time: periodVideoOffsets[1] ?? masterAn.p1_video_start_time,
+          p2_video_start_time: periodVideoOffsets[2] ?? masterAn.p2_video_start_time,
+          botonera_template_id: template?.id || masterAn.botonera_template_id,
         });
       }
     }
@@ -1416,57 +1658,23 @@ export default function BotoneraPage() {
   };
 
   /**
-   * Seeks the video to (periodOffset + eventSecondsInPeriod - 12s) and opens a centered pop-up window.
-   * Called when the analyst clicks an event row in the Feed/Stats or an element in the Campograma.
+   * Reproduces a cut event in a centered pop-up window (ventana emergente).
+   * Does NOT seek or pause the main match video player, allowing the match reproduction
+   * to continue uninterrupted in the main page.
+   *
+   * Formula: targetVideoTime = periodOffset + elapsedEventTime
+   * (e.g. 1st half start 12:00 + cut at 2:00 => video timestamp 14:00).
    */
   const handleSeekToEvent = (evt: NormalizedEvent) => {
-    const targetVideoTime = calculateEventVideoTime(evt, selectedMatch || undefined, periodVideoOffsets, 12);
-    const matchTimestamp = evt.timestamp ?? (evt.minute !== null ? evt.minute * 60 + (evt.second || 0) : 0);
-
-    // 1. Move embedded/slaved player to the target clip time
-    seekVideoTo(targetVideoTime, true);
-
-    // 2. Open centered pop-up window so the analyst can view the clip in the center of the screen
-    const clipTitle = `Revisión: ${evt.category} - ${evt.player_name || 'Jugador'} (${formatTime(matchTimestamp)})`;
-
-    if (videoType === 'local' && (localObjectUrl || videoElementRef.current?.src)) {
-      const src = localObjectUrl || videoElementRef.current?.src;
-      const win = window.open('', 'sao_clip_player', getCenteredPopUpFeatures(960, 560));
-      if (win) {
-        win.document.write(`
-          <!doctype html>
-          <html>
-            <head>
-              <title>${clipTitle}</title>
-              <style>
-                html, body { margin:0; padding:0; background:#000; height:100%; overflow:hidden; }
-                video { width:100%; height:100%; object-fit:contain; background:#000; }
-              </style>
-            </head>
-            <body>
-              <video id="v" src="${src}" controls autoplay></video>
-              <script>
-                const v = document.getElementById('v');
-                const startAt = ${targetVideoTime};
-                v.currentTime = startAt;
-                v.addEventListener('loadedmetadata', () => { v.currentTime = startAt; });
-              </script>
-            </body>
-          </html>
-        `);
-        win.document.close();
-      }
-    } else if (videoType === 'link' && videoUrl) {
-      try {
-        const embedUrl = new URL(toEmbedUrl(videoUrl));
-        embedUrl.searchParams.set('start', Math.floor(targetVideoTime).toString());
-        embedUrl.searchParams.set('autoplay', '1');
-        window.open(embedUrl.toString(), 'sao_clip_player', getCenteredPopUpFeatures(960, 560));
-      } catch {
-        // Fallback for non-standard video URLs
-        window.open(videoUrl, 'sao_clip_player', getCenteredPopUpFeatures(960, 560));
-      }
-    }
+    setActiveClipEvent(evt);
+    openClipPopupWindow({
+      event: evt,
+      match: selectedMatch,
+      periodVideoOffsets,
+      videoUrl: videoElementRef.current?.src || videoUrl,
+      videoType,
+      localObjectUrl,
+    });
   };
 
   /**
@@ -1489,7 +1697,9 @@ export default function BotoneraPage() {
     const hasFlatDescriptors = btn.descriptors && btn.descriptors.length > 0;
     const hasGroupDescriptors = btn.descriptorGroups && btn.descriptorGroups.length > 0;
     const hasDescriptors = hasFlatDescriptors || hasGroupDescriptors;
-    const hasPitch = btn.pitchRequired && btn.pitchRequired !== 'none';
+    const hasPitch =
+      (btn.pitchRequired && btn.pitchRequired !== 'none') ||
+      Boolean(btn.goalRequired || btn.secondaryPitchRequired || btn.pitchModes?.includes('goal_mouth'));
     const hasPlayerRequirement = btn.playerRequiredMode && btn.playerRequiredMode !== 'none';
 
     // Freeze exact click timestamp and period at the precise moment the button is pressed
@@ -1510,10 +1720,14 @@ export default function BotoneraPage() {
     overridePlayerId?: string | null,
     overrideTeamName?: string | null,
     eventTimestamp?: number,
-    eventPeriod?: number
+    eventPeriod?: number,
+    overridePlayerObj?: Player | null
   ) => {
     const targetPlayerId = overridePlayerId !== undefined ? overridePlayerId : selectedPlayerId;
-    const activePlayer = players.find((p) => p.id === targetPlayerId);
+    const activePlayer =
+      overridePlayerObj ||
+      players.find((p) => p.id === targetPlayerId) ||
+      (targetPlayerId ? dbStore.getPlayers().find((p) => p.id === targetPlayerId) : null);
     let outcomeVal = descriptorsToSave.find((d) => ['Éxito', 'Fallido', 'Gol', 'A puerta', 'Fuera'].includes(d)) || null;
 
     const chosenTeamName = overrideTeamName || (activePlayer ? activePlayer.team_name : 'Shabab Al Ordon Club');
@@ -1542,12 +1756,18 @@ export default function BotoneraPage() {
       y: pitchData?.startY ?? null,
       end_x: pitchData?.endX ?? null,
       end_y: pitchData?.endY ?? null,
+      goal_x: pitchData?.goalX ?? null,
+      goal_y: pitchData?.goalY ?? null,
+      goal_zone: pitchData?.goalZone ?? null,
       outcome: outcomeVal,
       metadata: {
         leadTime: btn.leadTime,
         lagTime: btn.lagTime,
         descriptors: descriptorsToSave,
         zone: pitchData?.selectedZone ?? null,
+        goal_x: pitchData?.goalX ?? null,
+        goal_y: pitchData?.goalY ?? null,
+        goal_zone: pitchData?.goalZone ?? null,
         buttonId: btn.id,
         buttonName: btn.name,
         buttonColor: btn.color,
@@ -1585,18 +1805,25 @@ export default function BotoneraPage() {
 
         const updatedEvents = dbStore.deduplicateEventsByTime([...nextEvents, ...(existingObj?.events || [])]);
 
+        const resolvedVideoUrl = (videoUrl && videoUrl.trim()) || existingObj?.video_url || targetMatch?.video_url || null;
+        const resolvedVideoType = videoType || existingObj?.video_type || targetMatch?.video_type || (resolvedVideoUrl ? (resolvedVideoUrl.includes('http') ? 'link' : 'local') : null);
+        const resolvedVideoSourceName = videoSourceName || existingObj?.video_source_name || targetMatch?.video_source_name || (resolvedVideoUrl ? 'Vídeo del Partido' : null);
+        const resolvedP1 = periodVideoOffsets[1] ?? existingObj?.p1_video_start_time ?? targetMatch?.p1_video_start_time ?? null;
+        const resolvedP2 = periodVideoOffsets[2] ?? existingObj?.p2_video_start_time ?? targetMatch?.p2_video_start_time ?? null;
+        const resolvedTemplateId = template?.id || existingObj?.botonera_template_id || targetMatch?.botonera_template_id || null;
+
         const masterAnalysis: MatchAnalysis = {
           id: masterAnalysisId,
           match_id: targetId,
           title: `Análisis ${targetMatch ? targetMatch.home_team + ' vs ' + targetMatch.away_team : 'Etiquetado en Vivo'}`,
           analyst_name: combinedAnalystNames,
           status: 'in_progress' as const,
-          video_type: videoType || existingObj?.video_type || null,
-          video_url: videoUrl || existingObj?.video_url || null,
-          video_source_name: videoSourceName || existingObj?.video_source_name || null,
-          p1_video_start_time: periodVideoOffsets[1] ?? existingObj?.p1_video_start_time ?? null,
-          p2_video_start_time: periodVideoOffsets[2] ?? existingObj?.p2_video_start_time ?? null,
-          botonera_template_id: template?.id || existingObj?.botonera_template_id || null,
+          video_type: resolvedVideoType,
+          video_url: resolvedVideoUrl,
+          video_source_name: resolvedVideoSourceName,
+          p1_video_start_time: resolvedP1,
+          p2_video_start_time: resolvedP2,
+          botonera_template_id: resolvedTemplateId,
           home_lineup: targetMatch?.home_lineup || existingObj?.home_lineup || null,
           away_lineup: targetMatch?.away_lineup || existingObj?.away_lineup || null,
           events: updatedEvents,
@@ -1611,6 +1838,12 @@ export default function BotoneraPage() {
             event_count: updatedEvents.length,
             status: 'Finalizado',
             import_status: 'XML Importado',
+            video_type: resolvedVideoType,
+            video_url: resolvedVideoUrl || undefined,
+            video_source_name: resolvedVideoSourceName || undefined,
+            p1_video_start_time: resolvedP1,
+            p2_video_start_time: resolvedP2,
+            botonera_template_id: resolvedTemplateId || undefined,
           });
           setMatches(dbStore.getMatches());
         }
@@ -1632,7 +1865,8 @@ export default function BotoneraPage() {
 
       if (selectedMatchId && selectedMatchId !== 'free_session') {
         ownWritesRef.current.add(eventId);
-        deleteAnalysisEventFromSupabase(eventId).catch((err) =>
+        const deleterName = profile?.full_name || user?.email || 'Analista';
+        deleteAnalysisEventFromSupabase(eventId, deleterName).catch((err) =>
           console.warn('Could not sync event deletion to Supabase:', err)
         );
 
@@ -1686,19 +1920,23 @@ export default function BotoneraPage() {
   };
 
   const handleClearAllEvents = () => {
-    setEvents((prev) => {
-      if (prev.length > 0) {
-        dbStore.backupDeletedEvents(prev);
-      }
-      if (selectedMatchId && selectedMatchId !== 'free_session') {
-        dbStore.saveNormalizedEvents([], true);
-        clearAnalysisEventsFromSupabase(selectedMatchId).catch((err) =>
-          console.warn('Could not clear live analysis events in Supabase:', err)
-        );
-      }
-      dbStore.clearActiveBotoneraSession();
-      return [];
-    });
+    if (events.length === 0) return;
+    const ok = confirm(
+      '¿Seguro que deseas vaciar todos los eventos de la sesión? Los registros se enviarán a la papelera de seguridad.'
+    );
+    if (!ok) return;
+
+    dbStore.backupDeletedEvents(events);
+    if (selectedMatchId && selectedMatchId !== 'free_session') {
+      const deleterName = profile?.full_name || user?.email || 'Analista';
+      events.forEach((e) => {
+        deleteAnalysisEventFromSupabase(e.event_id, deleterName).catch(() => {});
+      });
+    }
+
+    setEvents([]);
+    dbStore.saveNormalizedEvents([], true, selectedMatchId);
+    dbStore.clearActiveBotoneraSession();
   };
 
   const handleRestoreDeletedEvents = () => {
@@ -1710,67 +1948,18 @@ export default function BotoneraPage() {
         const newOnes = restored.filter((r) => !prevIds.has(r.event_id));
         return [...newOnes, ...prev];
       });
+
+      // Re-insert into Supabase analysis_events table immediately
+      if (selectedMatchId && selectedMatchId !== 'free_session') {
+        restored.forEach((r) => {
+          insertAnalysisEventToSupabase(selectedMatchId, r).catch(() => {});
+        });
+      }
     }
   };
 
   const handleSaveToMatch = () => {
-    if (events.length === 0) {
-      alert('⚠️ No hay eventos registrados aún en la sesión.');
-      return;
-    }
-
-    const targetId = selectedMatchId === 'free_session' ? 'match_demo_1' : selectedMatchId;
-    const normalizedEvts = events.map((e) => ({ ...e, match_id: targetId }));
-    dbStore.saveNormalizedEvents(normalizedEvts, true);
-
-    const targetMatch = dbStore.getMatchById(targetId) || matches.find((m) => m.id === targetId);
-    if (targetMatch) {
-      dbStore.saveMatch({
-        ...targetMatch,
-        event_count: events.length,
-        status: 'Finalizado',
-        import_status: 'XML Importado',
-      });
-      setMatches(dbStore.getMatches());
-    }
-
-    // Save or update the single shared Match Analysis card per match
-    const masterAnalysisId = `analysis_${targetId}`;
-    const existingAnalyses = dbStore.getAnalyses(targetId);
-    const existingObj = existingAnalyses.find((a) => a.match_id === targetId || a.id === masterAnalysisId);
-
-    const currentAnalyst = profile?.full_name || user?.email || 'Analista Principal (SAO)';
-    const combinedAnalystNames = dbStore.sanitizeAnalystNames([
-      ...(existingObj?.analyst_name ? [existingObj.analyst_name] : []),
-      currentAnalyst,
-    ]);
-
-    const combinedEventsRaw = [...(existingObj?.events || []), ...normalizedEvts];
-    const cleanCombinedEvents = dbStore.deduplicateEventsByTime(combinedEventsRaw);
-
-    const newAnalysis: MatchAnalysis = {
-      id: masterAnalysisId,
-      match_id: targetId,
-      title: `Análisis ${targetMatch ? targetMatch.home_team + ' vs ' + targetMatch.away_team : 'Etiquetado en Vivo'}`,
-      analyst_name: combinedAnalystNames,
-      status: 'completed' as const,
-      video_type: videoType || existingObj?.video_type || null,
-      video_url: videoUrl || existingObj?.video_url || null,
-      video_source_name: videoSourceName || existingObj?.video_source_name || null,
-      p1_video_start_time: periodVideoOffsets[1] ?? existingObj?.p1_video_start_time ?? null,
-      p2_video_start_time: periodVideoOffsets[2] ?? existingObj?.p2_video_start_time ?? null,
-      botonera_template_id: template?.id || existingObj?.botonera_template_id || null,
-      home_lineup: targetMatch?.home_lineup || existingObj?.home_lineup || null,
-      away_lineup: targetMatch?.away_lineup || existingObj?.away_lineup || null,
-      events: cleanCombinedEvents,
-      created_at: existingObj?.created_at || new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    dbStore.saveAnalysis(newAnalysis);
-    setSavedAnalyses(dbStore.getAnalyses());
-    setEditingAnalysisId(masterAnalysisId);
-    alert(`✅ Análisis guardado y sincronizado en vivo (${cleanCombinedEvents.length} eventos).`);
+    autoSaveToMatch(false);
   };
 
   const handleExportXml = () => {
@@ -1881,13 +2070,28 @@ export default function BotoneraPage() {
                   <span className="hidden sm:inline">✏️ EDITAR BOTONERA</span>
                   <span className="sm:hidden">✏️</span>
                 </button>
+                {/* Live Continuous Auto-save Indicator */}
+                <div
+                  className="flex items-center gap-2 px-3 py-2 sm:px-3.5 sm:py-2.5 rounded-xl text-xs font-black bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 shadow-sm"
+                  title="Cualquier cambio se guarda y sincroniza automáticamente en tiempo real"
+                >
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                  <span className="hidden sm:inline tracking-wide">GUARDADO AUTOMÁTICO</span>
+                  <span className="sm:hidden">AUTO</span>
+                </div>
+
+                {/* Salir / Cerrar Sesión (sin obligar a guardar manualmente porque ya está guardado) */}
                 <button
                   onClick={handleEndSession}
-                  className="flex items-center gap-2 px-3 py-2 sm:px-4 sm:py-2.5 rounded-xl text-xs font-extrabold bg-emerald-500 hover:bg-emerald-400 text-slate-950 transition-all shadow-md shadow-emerald-500/20"
+                  className="flex items-center gap-1.5 px-3 py-2 sm:px-3.5 sm:py-2.5 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-all"
+                  title="Cerrar la sesión de análisis (todo queda guardado automáticamente)"
                 >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span className="hidden sm:inline">FINALIZAR Y GUARDAR REGISTRO</span>
-                  <span className="sm:hidden">FINALIZAR</span>
+                  <LogOut className="w-3.5 h-3.5 text-slate-400" />
+                  <span className="hidden sm:inline">Cerrar Sesión</span>
+                  <span className="sm:hidden">Salir</span>
                 </button>
               </>
             )}
@@ -2277,7 +2481,6 @@ export default function BotoneraPage() {
                   onCapturePeriodOffset={handleCapturePeriodOffset}
                   onSeekVideoToTime={(t) => seekVideoTo(t)}
                   getCurrentVideoTime={getCurrentVideoTime}
-                  onOCRApplySync={handleOCRApplySync}
                 />
 
                 {/* Feed de Eventos — directamente debajo del vídeo */}
@@ -2292,6 +2495,8 @@ export default function BotoneraPage() {
                   onSeekToEvent={handleSeekToEvent}
                   buttons={template?.buttons || []}
                   players={players}
+                  match={selectedMatch}
+                  periodVideoOffsets={periodVideoOffsets}
                 />
               </div>
 
@@ -2330,10 +2535,14 @@ export default function BotoneraPage() {
                 {/* 3. Estadísticas provisionales — debajo de la botonera */}
                 <BotoneraLiveStats
                   events={events}
-                  videoUrl={videoUrl}
-                  onSeekVideoToTime={(t) => seekVideoTo(t, true)}
+                  match={selectedMatch}
+                  videoUrl={localObjectUrl || videoUrl}
+                  periodVideoOffsets={periodVideoOffsets}
+                  onSeekVideoToTime={(t) => seekVideoTo(t, isTimerRunning)}
                   onSeekToEvent={handleSeekToEvent}
                   buttons={template?.buttons || []}
+                  externalPlayingEvent={activeClipEvent}
+                  onClearExternalPlayingEvent={() => setActiveClipEvent(null)}
                 />
               </div>
             </div>
@@ -2368,7 +2577,6 @@ export default function BotoneraPage() {
                     onCapturePeriodOffset={handleCapturePeriodOffset}
                     onSeekVideoToTime={(t) => seekVideoTo(t)}
                     getCurrentVideoTime={getCurrentVideoTime}
-                    onOCRApplySync={handleOCRApplySync}
                   />
                 </div>
               )}
@@ -2433,14 +2641,20 @@ export default function BotoneraPage() {
                   onSeekToEvent={handleSeekToEvent}
                   buttons={template?.buttons || []}
                   players={players}
+                  match={selectedMatch}
+                  periodVideoOffsets={periodVideoOffsets}
                 />
 
                 <BotoneraLiveStats
                   events={events}
-                  videoUrl={videoUrl}
-                  onSeekVideoToTime={(t) => seekVideoTo(t, true)}
+                  match={selectedMatch}
+                  videoUrl={localObjectUrl || videoUrl}
+                  periodVideoOffsets={periodVideoOffsets}
+                  onSeekVideoToTime={(t) => seekVideoTo(t, isTimerRunning)}
                   onSeekToEvent={handleSeekToEvent}
                   buttons={template?.buttons || []}
+                  externalPlayingEvent={activeClipEvent}
+                  onClearExternalPlayingEvent={() => setActiveClipEvent(null)}
                 />
               </div>
             </div>
@@ -2497,13 +2711,13 @@ export default function BotoneraPage() {
               <FileCode2 className="w-3.5 h-3.5" />
               Exportar XML
             </button>
-            <button
-              onClick={handleSaveToMatch}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-slate-950 font-bold transition shadow-lg shadow-emerald-950/40"
+            <div
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-bold"
+              title="Todos los eventos y parámetros se guardan automáticamente en vivo"
             >
-              <Save className="w-3.5 h-3.5 fill-slate-950" />
-              Guardar en Partido ({events.length})
-            </button>
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Guardado en Partido ({events.length})</span>
+            </div>
           </div>
         </div>
       )}
@@ -2605,7 +2819,8 @@ export default function BotoneraPage() {
           currentMatch={matches.find((m) => m.id === selectedMatchId) || selectedMatch || (selectedMatchId && selectedMatchId !== 'free_session' ? dbStore.getMatchById(selectedMatchId) : null) || matches[0] || null}
           clickTimestamp={eventModalData.clickTimestamp}
           clickPeriod={eventModalData.clickPeriod}
-          onSave={(finalDescriptors, pitchData, modalPlayerId, modalTeamName) =>
+          matchEvents={events}
+          onSave={(finalDescriptors, pitchData, modalPlayerId, modalTeamName, modalPlayerObj) =>
             commitEvent(
               eventModalData.button,
               finalDescriptors,
@@ -2613,7 +2828,8 @@ export default function BotoneraPage() {
               modalPlayerId,
               modalTeamName,
               eventModalData.clickTimestamp,
-              eventModalData.clickPeriod
+              eventModalData.clickPeriod,
+              modalPlayerObj
             )
           }
           onCancel={() => setEventModalData(null)}

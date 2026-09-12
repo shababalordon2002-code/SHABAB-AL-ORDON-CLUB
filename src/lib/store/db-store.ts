@@ -455,8 +455,22 @@ export const dbStore = {
     });
 
     let savedTarget: Match;
-    if (existingIdx >= 0) {
-      const existing = matches[existingIdx];
+    const existing = existingIdx >= 0 ? matches[existingIdx] : undefined;
+
+    // Check associated analysis for fallback video & offsets
+    const analyses = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
+    const associatedAnalysis = analyses.find((a) => a.match_id === match.id || a.id === match.id || a.id === `analysis_${match.id}`);
+
+    const resolvedVideoUrl = (match.video_url && match.video_url.trim()) || existing?.video_url || associatedAnalysis?.video_url || null;
+    const resolvedVideoType = match.video_type || existing?.video_type || associatedAnalysis?.video_type || (resolvedVideoUrl ? (resolvedVideoUrl.includes('http') ? 'link' : 'local') : undefined);
+    const resolvedVideoSourceName = match.video_source_name || existing?.video_source_name || associatedAnalysis?.video_source_name || undefined;
+    const resolvedP1 = match.p1_video_start_time != null ? match.p1_video_start_time : (existing?.p1_video_start_time ?? associatedAnalysis?.p1_video_start_time ?? null);
+    const resolvedP2 = match.p2_video_start_time != null ? match.p2_video_start_time : (existing?.p2_video_start_time ?? associatedAnalysis?.p2_video_start_time ?? null);
+    const resolvedTemplateId = match.botonera_template_id || existing?.botonera_template_id || associatedAnalysis?.botonera_template_id || undefined;
+    const resolvedHomeLineup = match.home_lineup || existing?.home_lineup || associatedAnalysis?.home_lineup || undefined;
+    const resolvedAwayLineup = match.away_lineup || existing?.away_lineup || associatedAnalysis?.away_lineup || undefined;
+
+    if (existingIdx >= 0 && existing) {
       savedTarget = sanitizeMatchLogos({
         ...existing,
         ...match,
@@ -466,18 +480,28 @@ export const dbStore = {
         status: match.status === 'Finalizado' ? 'Finalizado' : existing.status,
         import_status: existing.import_status === 'XML Importado' ? 'XML Importado' : match.import_status,
         event_count: existing.event_count > 0 ? existing.event_count : match.event_count,
-        video_type: match.video_type !== undefined ? match.video_type : existing.video_type,
-        video_url: match.video_url !== undefined ? match.video_url : existing.video_url,
-        video_source_name: match.video_source_name !== undefined ? match.video_source_name : existing.video_source_name,
-        p1_video_start_time: match.p1_video_start_time !== undefined ? match.p1_video_start_time : existing.p1_video_start_time,
-        p2_video_start_time: match.p2_video_start_time !== undefined ? match.p2_video_start_time : existing.p2_video_start_time,
-        botonera_template_id: match.botonera_template_id !== undefined ? match.botonera_template_id : existing.botonera_template_id,
-        home_lineup: match.home_lineup !== undefined ? match.home_lineup : existing.home_lineup,
-        away_lineup: match.away_lineup !== undefined ? match.away_lineup : existing.away_lineup,
+        video_type: resolvedVideoType,
+        video_url: resolvedVideoUrl || undefined,
+        video_source_name: resolvedVideoSourceName,
+        p1_video_start_time: resolvedP1,
+        p2_video_start_time: resolvedP2,
+        botonera_template_id: resolvedTemplateId,
+        home_lineup: resolvedHomeLineup,
+        away_lineup: resolvedAwayLineup,
       });
       matches[existingIdx] = savedTarget;
     } else {
-      savedTarget = sanitizeMatchLogos(match);
+      savedTarget = sanitizeMatchLogos({
+        ...match,
+        video_type: resolvedVideoType,
+        video_url: resolvedVideoUrl || undefined,
+        video_source_name: resolvedVideoSourceName,
+        p1_video_start_time: resolvedP1,
+        p2_video_start_time: resolvedP2,
+        botonera_template_id: resolvedTemplateId,
+        home_lineup: resolvedHomeLineup,
+        away_lineup: resolvedAwayLineup,
+      });
       matches.unshift(savedTarget);
     }
     setToStorage(STORAGE_KEYS.MATCHES, matches.map(sanitizeMatchLogos));
@@ -487,26 +511,29 @@ export const dbStore = {
       console.warn('Could not sync match analysis to Supabase:', err);
     });
 
-    // Also update home_lineup and away_lineup in associated match_analyses
-    if (savedTarget.home_lineup || savedTarget.away_lineup) {
-      const analyses = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
-      let changed = false;
-      const updatedAnalyses = analyses.map((a) => {
-        if (a.match_id === savedTarget.id || a.id === savedTarget.id) {
-          changed = true;
-          const updatedA = {
-            ...a,
-            home_lineup: savedTarget.home_lineup || a.home_lineup,
-            away_lineup: savedTarget.away_lineup || a.away_lineup,
-          };
-          saveAnalysisToSupabase(updatedA).catch(() => {});
-          return updatedA;
-        }
-        return a;
-      });
-      if (changed) {
-        setToStorage(STORAGE_KEYS.MATCH_ANALYSES, updatedAnalyses);
+    // Also update and permanently preserve video, period offsets and lineups in associated match_analyses
+    let analysesChanged = false;
+    const updatedAnalyses = analyses.map((a) => {
+      if (a.match_id === savedTarget.id || a.id === savedTarget.id || a.id === `analysis_${savedTarget.id}`) {
+        analysesChanged = true;
+        const updatedA: MatchAnalysis = {
+          ...a,
+          video_url: resolvedVideoUrl || a.video_url,
+          video_type: resolvedVideoType || a.video_type,
+          video_source_name: resolvedVideoSourceName || a.video_source_name,
+          p1_video_start_time: resolvedP1 != null ? resolvedP1 : a.p1_video_start_time,
+          p2_video_start_time: resolvedP2 != null ? resolvedP2 : a.p2_video_start_time,
+          botonera_template_id: resolvedTemplateId || a.botonera_template_id,
+          home_lineup: resolvedHomeLineup || a.home_lineup,
+          away_lineup: resolvedAwayLineup,
+        };
+        saveAnalysisToSupabase(updatedA).catch(() => {});
+        return updatedA;
       }
+      return a;
+    });
+    if (analysesChanged) {
+      setToStorage(STORAGE_KEYS.MATCH_ANALYSES, updatedAnalyses);
     }
   },
 
@@ -590,6 +617,16 @@ export const dbStore = {
   deleteMatchEvents(matchId: string): void {
     const allEvents = this.getNormalizedEvents();
     const filtered = allEvents.filter(e => e.match_id !== matchId);
+    setToStorage(STORAGE_KEYS.EVENTS, filtered);
+  },
+
+  deleteNormalizedEvent(eventId: string): void {
+    const allEvents = this.getNormalizedEvents();
+    const target = allEvents.find(e => e.event_id === eventId);
+    if (target) {
+      this.backupDeletedEvents([target]);
+    }
+    const filtered = allEvents.filter(e => e.event_id !== eventId);
     setToStorage(STORAGE_KEYS.EVENTS, filtered);
   },
 
@@ -879,20 +916,49 @@ export const dbStore = {
       const cleanEvents = this.deduplicateEventsByTime(allEventsRaw);
 
       if (group.length === 1) {
+        const single = group[0];
+        const resolvedVideoUrl = (single.video_url && single.video_url.trim()) || (matchObj?.video_url && matchObj.video_url.trim()) || null;
+        const resolvedVideoType = single.video_type || matchObj?.video_type || (resolvedVideoUrl ? (resolvedVideoUrl.includes('http') ? 'link' : 'local') : null);
+        const resolvedVideoSourceName = single.video_source_name || matchObj?.video_source_name || null;
+        const resolvedP1 = single.p1_video_start_time != null ? single.p1_video_start_time : (matchObj?.p1_video_start_time ?? null);
+        const resolvedP2 = single.p2_video_start_time != null ? single.p2_video_start_time : (matchObj?.p2_video_start_time ?? null);
+        const resolvedTemplateId = single.botonera_template_id || matchObj?.botonera_template_id || null;
+        const resolvedHomeLineup = single.home_lineup || matchObj?.home_lineup || null;
+        const resolvedAwayLineup = single.away_lineup || matchObj?.away_lineup || null;
+
         consolidated.push({
-          ...group[0],
-          analyst_name: this.sanitizeAnalystNames([group[0].analyst_name]),
+          ...single,
+          analyst_name: this.sanitizeAnalystNames([single.analyst_name]),
           events: cleanEvents,
+          video_url: resolvedVideoUrl,
+          video_type: resolvedVideoType,
+          video_source_name: resolvedVideoSourceName,
+          p1_video_start_time: resolvedP1,
+          p2_video_start_time: resolvedP2,
+          botonera_template_id: resolvedTemplateId,
+          home_lineup: resolvedHomeLineup,
+          away_lineup: resolvedAwayLineup,
         });
       } else {
         // Multiple analyses for the same match -> Merge into 1 Master Analysis
         const analystNames = this.sanitizeAnalystNames(group.map((a) => a.analyst_name));
 
-        const withVideo = group.find((a) => a.video_url) || group[0];
-        const withHomeLineup = group.find((a) => a.home_lineup && Object.keys(a.home_lineup).length > 0);
-        const withAwayLineup = group.find((a) => a.away_lineup && Object.keys(a.away_lineup).length > 0);
+        const withVideo = group.find((a) => a.video_url && a.video_url.trim()) || (matchObj?.video_url ? {
+          video_url: matchObj.video_url,
+          video_type: matchObj.video_type,
+          video_source_name: matchObj.video_source_name,
+        } : null) || group[0];
+        const withHomeLineup = group.find((a) => a.home_lineup && Object.keys(a.home_lineup).length > 0) || (matchObj?.home_lineup ? { home_lineup: matchObj.home_lineup } : null);
+        const withAwayLineup = group.find((a) => a.away_lineup && Object.keys(a.away_lineup).length > 0) || (matchObj?.away_lineup ? { away_lineup: matchObj.away_lineup } : null);
 
-        const title = withVideo.title || (matchObj ? `Análisis ${matchObj.home_team} vs ${matchObj.away_team}` : group[0].title);
+        const title = ('title' in withVideo && withVideo.title) || (matchObj ? `Análisis ${matchObj.home_team} vs ${matchObj.away_team}` : group[0].title);
+
+        const resolvedVideoUrl = (withVideo.video_url && withVideo.video_url.trim()) || (matchObj?.video_url && matchObj.video_url.trim()) || null;
+        const resolvedVideoType = withVideo.video_type || matchObj?.video_type || (resolvedVideoUrl ? (resolvedVideoUrl.includes('http') ? 'link' : 'local') : null);
+        const resolvedVideoSourceName = withVideo.video_source_name || matchObj?.video_source_name || null;
+        const resolvedP1 = group.find((a) => a.p1_video_start_time != null)?.p1_video_start_time ?? matchObj?.p1_video_start_time ?? null;
+        const resolvedP2 = group.find((a) => a.p2_video_start_time != null)?.p2_video_start_time ?? matchObj?.p2_video_start_time ?? null;
+        const resolvedTemplateId = group.find((a) => a.botonera_template_id)?.botonera_template_id ?? matchObj?.botonera_template_id ?? null;
 
         const masterAnalysis: MatchAnalysis = {
           id: `analysis_${mId}`,
@@ -900,11 +966,12 @@ export const dbStore = {
           title: title,
           analyst_name: analystNames,
           status: group.some((a) => a.status === 'completed') ? 'completed' : 'in_progress',
-          video_type: withVideo.video_type,
-          video_url: withVideo.video_url,
-          video_source_name: withVideo.video_source_name,
-          p1_video_start_time: group.find((a) => a.p1_video_start_time != null)?.p1_video_start_time ?? null,
-          p2_video_start_time: group.find((a) => a.p2_video_start_time != null)?.p2_video_start_time ?? null,
+          video_type: resolvedVideoType,
+          video_url: resolvedVideoUrl,
+          video_source_name: resolvedVideoSourceName,
+          p1_video_start_time: resolvedP1,
+          p2_video_start_time: resolvedP2,
+          botonera_template_id: resolvedTemplateId,
           home_lineup: withHomeLineup?.home_lineup || group[0].home_lineup || null,
           away_lineup: withAwayLineup?.away_lineup || group[0].away_lineup || null,
           events: cleanEvents,
@@ -913,6 +980,19 @@ export const dbStore = {
         };
 
         consolidated.push(masterAnalysis);
+      }
+
+      // Guarantee matchObj in matches table reflects analysis video & offsets
+      if (matchObj) {
+        const an = consolidated[consolidated.length - 1];
+        if (an && ((an.video_url && !matchObj.video_url) || (an.p1_video_start_time != null && matchObj.p1_video_start_time == null))) {
+          matchObj.video_url = an.video_url || matchObj.video_url;
+          matchObj.video_type = an.video_type || matchObj.video_type;
+          matchObj.video_source_name = an.video_source_name || matchObj.video_source_name;
+          matchObj.p1_video_start_time = an.p1_video_start_time ?? matchObj.p1_video_start_time;
+          matchObj.p2_video_start_time = an.p2_video_start_time ?? matchObj.p2_video_start_time;
+          matchObj.botonera_template_id = an.botonera_template_id || matchObj.botonera_template_id;
+        }
       }
     });
 
@@ -1050,19 +1130,47 @@ export const dbStore = {
 
     const all = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
     const idx = all.findIndex(a => a.id === targetId || a.match_id === normalizedAnalysis.match_id);
+    const existing = idx >= 0 ? all[idx] : undefined;
+    const matchObj = this.getMatchById(normalizedAnalysis.match_id);
+
+    const resolvedVideoUrl = (normalizedAnalysis.video_url && normalizedAnalysis.video_url.trim()) || existing?.video_url || matchObj?.video_url || null;
+    const resolvedVideoType = normalizedAnalysis.video_type || existing?.video_type || matchObj?.video_type || (resolvedVideoUrl ? (resolvedVideoUrl.includes('http') ? 'link' : 'local') : null);
+    const resolvedVideoSourceName = normalizedAnalysis.video_source_name || existing?.video_source_name || matchObj?.video_source_name || null;
+    const resolvedP1 = normalizedAnalysis.p1_video_start_time != null ? normalizedAnalysis.p1_video_start_time : (existing?.p1_video_start_time ?? matchObj?.p1_video_start_time ?? null);
+    const resolvedP2 = normalizedAnalysis.p2_video_start_time != null ? normalizedAnalysis.p2_video_start_time : (existing?.p2_video_start_time ?? matchObj?.p2_video_start_time ?? null);
+    const resolvedTemplateId = normalizedAnalysis.botonera_template_id || existing?.botonera_template_id || matchObj?.botonera_template_id || null;
+    const resolvedHomeLineup = normalizedAnalysis.home_lineup || existing?.home_lineup || matchObj?.home_lineup || null;
+    const resolvedAwayLineup = normalizedAnalysis.away_lineup || existing?.away_lineup || matchObj?.away_lineup || null;
+
     let updated: MatchAnalysis;
 
-    if (idx >= 0) {
-      const existing = all[idx];
+    if (idx >= 0 && existing) {
       const combinedAnalystNames = this.sanitizeAnalystNames([existing.analyst_name, normalizedAnalysis.analyst_name]);
-      const combinedEvents = this.deduplicateEventsByTime([...(existing.events || []), ...(normalizedAnalysis.events || [])]);
+      // CRITICAL DATA PROTECTION: Never overwrite existing events with an empty array.
+      // If incoming events has items, use them. If incoming is empty [] but existing has events (>0), preserve existing!
+      let targetEvents: NormalizedEvent[];
+      if (normalizedAnalysis.events && normalizedAnalysis.events.length > 0) {
+        targetEvents = normalizedAnalysis.events;
+      } else if (existing.events && existing.events.length > 0) {
+        targetEvents = existing.events;
+      } else {
+        targetEvents = normalizedAnalysis.events || [];
+      }
 
       updated = {
         ...existing,
         ...normalizedAnalysis,
         id: targetId,
         analyst_name: combinedAnalystNames,
-        events: combinedEvents,
+        events: targetEvents,
+        video_type: resolvedVideoType,
+        video_url: resolvedVideoUrl,
+        video_source_name: resolvedVideoSourceName,
+        p1_video_start_time: resolvedP1,
+        p2_video_start_time: resolvedP2,
+        botonera_template_id: resolvedTemplateId,
+        home_lineup: resolvedHomeLineup,
+        away_lineup: resolvedAwayLineup,
         created_at: existing.created_at || normalizedAnalysis.created_at || new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
@@ -1072,6 +1180,14 @@ export const dbStore = {
         ...normalizedAnalysis,
         id: targetId,
         analyst_name: this.sanitizeAnalystNames([normalizedAnalysis.analyst_name]),
+        video_type: resolvedVideoType,
+        video_url: resolvedVideoUrl,
+        video_source_name: resolvedVideoSourceName,
+        p1_video_start_time: resolvedP1,
+        p2_video_start_time: resolvedP2,
+        botonera_template_id: resolvedTemplateId,
+        home_lineup: resolvedHomeLineup,
+        away_lineup: resolvedAwayLineup,
         created_at: normalizedAnalysis.created_at || new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
@@ -1096,15 +1212,21 @@ export const dbStore = {
       console.warn("Could not sync analysis to Supabase:", err);
     });
 
-    // Also update home_lineup and away_lineup in associated match
-    if (updated.match_id && (updated.home_lineup || updated.away_lineup)) {
+    // Also synchronize video, period offsets, and lineups to associated match permanently
+    if (updated.match_id) {
       const matches = getFromStorage<Match[]>(STORAGE_KEYS.MATCHES, []);
       const mIdx = matches.findIndex((m) => m.id === updated.match_id);
       if (mIdx >= 0) {
-        const updatedM = {
+        const updatedM: Match = {
           ...matches[mIdx],
-          home_lineup: updated.home_lineup || matches[mIdx].home_lineup,
-          away_lineup: updated.away_lineup || matches[mIdx].away_lineup,
+          video_url: resolvedVideoUrl || matches[mIdx].video_url,
+          video_type: resolvedVideoType || matches[mIdx].video_type,
+          video_source_name: resolvedVideoSourceName || matches[mIdx].video_source_name,
+          p1_video_start_time: resolvedP1 != null ? resolvedP1 : matches[mIdx].p1_video_start_time,
+          p2_video_start_time: resolvedP2 != null ? resolvedP2 : matches[mIdx].p2_video_start_time,
+          botonera_template_id: resolvedTemplateId || matches[mIdx].botonera_template_id,
+          home_lineup: resolvedHomeLineup || matches[mIdx].home_lineup,
+          away_lineup: resolvedAwayLineup || matches[mIdx].away_lineup,
         };
         matches[mIdx] = updatedM;
         setToStorage(STORAGE_KEYS.MATCHES, matches);

@@ -99,7 +99,7 @@ export const BotoneraStopwatch: React.FC<BotoneraStopwatchProps> = ({
 
   const handleConfirmEditTime = () => {
     const parsed = parseTimeInput(editTimeValue);
-    if (parsed !== null) onTimerChange(Math.max(0, parsed));
+    if (parsed !== null) onTimerChange(Math.max(0, parsed), false);
     setIsEditingTime(false);
   };
 

@@ -54,34 +54,75 @@ export async function saveMatchesToSupabase(matches: Match[]): Promise<boolean> 
       supabase = createClient();
     }
 
-    const rows = matches.map(m => ({
-      id: m.id,
-      date: m.date,
-      time: m.time || '17:00',
-      competition: m.competition || 'Jordan Pro League',
-      round: m.round || '',
-      season: m.season || '2026/2027',
-      home_team: m.home_team,
-      home_team_logo: m.home_team_logo || null,
-      away_team: m.away_team,
-      away_team_logo: m.away_team_logo || null,
-      home_score: m.home_score ?? 0,
-      away_score: m.away_score ?? 0,
-      status: m.status || 'Programado',
-      event_count: m.event_count || 0,
-      import_status: m.import_status || 'Pendiente',
-      flashscore_url: m.flashscore_url || null,
-      flashscore_mid: m.flashscore_mid || null,
-      video_type: m.video_type || null,
-      video_url: m.video_url || null,
-      video_source_name: m.video_source_name || null,
-      p1_video_start_time: m.p1_video_start_time ?? null,
-      p2_video_start_time: m.p2_video_start_time ?? null,
-      botonera_template_id: m.botonera_template_id || null,
-      home_lineup: m.home_lineup || null,
-      away_lineup: m.away_lineup || null,
-      updated_at: new Date().toISOString()
-    }));
+    // "A Fuego" protection: fetch existing matches and analyses to ensure existing
+    // video_url, video_type, video_source_name, p1_video_start_time, p2_video_start_time
+    // are never overwritten with null/empty values by scrapers, crons or partial updates.
+    const matchIds = matches.map((m) => m.id);
+    let existingMap = new Map<string, any>();
+    let analysisMap = new Map<string, any>();
+
+    try {
+      const { data: exMatches } = await supabase
+        .from('matches')
+        .select('id, video_type, video_url, video_source_name, p1_video_start_time, p2_video_start_time, botonera_template_id, home_lineup, away_lineup')
+        .in('id', matchIds);
+      if (exMatches) {
+        exMatches.forEach((row: any) => existingMap.set(row.id, row));
+      }
+
+      const { data: exAnalyses } = await supabase
+        .from('match_analyses')
+        .select('match_id, video_type, video_url, video_source_name, p1_video_start_time, p2_video_start_time, botonera_template_id, home_lineup, away_lineup')
+        .in('match_id', matchIds);
+      if (exAnalyses) {
+        exAnalyses.forEach((row: any) => analysisMap.set(row.match_id, row));
+      }
+    } catch (err) {
+      console.warn('Could not query existing matches/analyses for video preservation:', err);
+    }
+
+    const rows = matches.map(m => {
+      const ex = existingMap.get(m.id);
+      const an = analysisMap.get(m.id);
+
+      const resolvedVideoUrl = (m.video_url && m.video_url.trim()) || ex?.video_url || an?.video_url || null;
+      const resolvedVideoType = m.video_type || ex?.video_type || an?.video_type || (resolvedVideoUrl ? (resolvedVideoUrl.includes('http') ? 'link' : 'local') : null);
+      const resolvedVideoSourceName = m.video_source_name || ex?.video_source_name || an?.video_source_name || null;
+      const resolvedP1 = m.p1_video_start_time != null ? m.p1_video_start_time : (ex?.p1_video_start_time ?? an?.p1_video_start_time ?? null);
+      const resolvedP2 = m.p2_video_start_time != null ? m.p2_video_start_time : (ex?.p2_video_start_time ?? an?.p2_video_start_time ?? null);
+      const resolvedTemplateId = m.botonera_template_id || ex?.botonera_template_id || an?.botonera_template_id || null;
+      const resolvedHomeLineup = m.home_lineup || ex?.home_lineup || an?.home_lineup || null;
+      const resolvedAwayLineup = m.away_lineup || ex?.away_lineup || an?.away_lineup || null;
+
+      return {
+        id: m.id,
+        date: m.date,
+        time: m.time || '17:00',
+        competition: m.competition || 'Jordan Pro League',
+        round: m.round || '',
+        season: m.season || '2026/2027',
+        home_team: m.home_team,
+        home_team_logo: m.home_team_logo || null,
+        away_team: m.away_team,
+        away_team_logo: m.away_team_logo || null,
+        home_score: m.home_score ?? (ex?.home_score ?? 0),
+        away_score: m.away_score ?? (ex?.away_score ?? 0),
+        status: m.status || (ex?.status ?? 'Programado'),
+        event_count: m.event_count || (ex?.event_count ?? 0),
+        import_status: m.import_status || (ex?.import_status ?? 'Pendiente'),
+        flashscore_url: m.flashscore_url || null,
+        flashscore_mid: m.flashscore_mid || null,
+        video_type: resolvedVideoType,
+        video_url: resolvedVideoUrl,
+        video_source_name: resolvedVideoSourceName,
+        p1_video_start_time: resolvedP1,
+        p2_video_start_time: resolvedP2,
+        botonera_template_id: resolvedTemplateId,
+        home_lineup: resolvedHomeLineup,
+        away_lineup: resolvedAwayLineup,
+        updated_at: new Date().toISOString()
+      };
+    });
 
     let { error } = await supabase
       .from('matches')

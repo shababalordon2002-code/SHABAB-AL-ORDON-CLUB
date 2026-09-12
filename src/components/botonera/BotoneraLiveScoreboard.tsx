@@ -9,13 +9,67 @@ import { TeamLineupModal, TeamCircleIcon, getFormationPositions } from './TeamLi
 
 export function MiniCampogramaWidget({
   config,
+  teamName,
+  isHomeTeam,
+  matchEvents = [],
   onClick,
 }: {
   config: TeamLineupConfig;
+  teamName?: string;
+  isHomeTeam?: boolean;
+  matchEvents?: NormalizedEvent[];
   onClick: () => void;
 }) {
   const positions = getFormationPositions(config.formation || '4-3-3');
   const starters = config.starters || [];
+
+  // Extract team substitutions to reflect active players on micro campograma
+  const activeStarters = React.useMemo(() => {
+    const list = starters.slice(0, 11).map((s) => ({ ...s }));
+    if (!matchEvents || matchEvents.length === 0 || !teamName) return list;
+
+    const normTarget = teamName.toLowerCase().trim();
+    const isSao = normTarget.includes('shabab') || normTarget.includes('ordon') || normTarget.includes('sao');
+
+    const subs = matchEvents.filter((evt) => {
+      const isSub =
+        evt.event_type === 'Sustitución' ||
+        evt.category === 'Cambio' ||
+        Boolean(evt.metadata?.player_in);
+      if (!isSub) return false;
+
+      const tName = evt.team_name || (isHomeTeam ? teamName : '');
+      const subTeamNorm = (tName || '').toLowerCase().trim();
+      return (
+        subTeamNorm === normTarget ||
+        (isSao && (subTeamNorm.includes('shabab') || subTeamNorm.includes('ordon') || subTeamNorm.includes('sao'))) ||
+        (isHomeTeam && evt.team_id === 'home_team') ||
+        (!isHomeTeam && evt.team_id === 'away_team')
+      );
+    });
+
+    subs.forEach((evt) => {
+      const outName = (evt.metadata?.player_out || evt.player_name || '').toLowerCase().trim();
+      const inName = (evt.metadata?.player_in || '').trim();
+      const inNum = evt.metadata?.player_in_number ?? evt.metadata?.dorsal;
+
+      if (outName && inName) {
+        const idx = list.findIndex((p) => {
+          const pNorm = (p.name || '').toLowerCase().trim();
+          return pNorm === outName || pNorm.includes(outName) || outName.includes(pNorm);
+        });
+        if (idx !== -1) {
+          list[idx] = {
+            ...list[idx],
+            name: inName,
+            number: inNum !== undefined && inNum !== null ? Number(inNum) : list[idx].number,
+          };
+        }
+      }
+    });
+
+    return list;
+  }, [starters, matchEvents, teamName, isHomeTeam]);
 
   return (
     <button
@@ -41,9 +95,10 @@ export function MiniCampogramaWidget({
       <div className="absolute top-1/2 left-1/2 w-5 h-5 border border-emerald-400/40 rounded-full -translate-x-1/2 -translate-y-1/2 pointer-events-none" />
 
       {/* 11 Micro Circle Tokens with Dorsals */}
-      {starters.slice(0, 11).map((player, idx) => {
+      {activeStarters.map((player, idx) => {
+        const origId = starters[idx]?.id || player.id;
         const presetPos = positions[idx] || { x: 50, y: 50, role: 'JUG' };
-        const activePos = (config.customPositions && config.customPositions[player.id]) || {
+        const activePos = (config.customPositions && (config.customPositions[origId] || config.customPositions[player.id])) || {
           x: player.x ?? presetPos.x,
           y: player.y ?? presetPos.y,
         };
@@ -270,6 +325,9 @@ export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
           {/* Mini Campograma Widget (Local) */}
           <MiniCampogramaWidget
             config={homeLineup}
+            teamName={homeTeamName}
+            isHomeTeam={true}
+            matchEvents={events}
             onClick={() => setEditingLineupTeam('home')}
           />
 
@@ -415,6 +473,9 @@ export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
           {/* Mini Campograma Widget (Visitante) */}
           <MiniCampogramaWidget
             config={awayLineup}
+            teamName={awayTeamName}
+            isHomeTeam={false}
+            matchEvents={events}
             onClick={() => setEditingLineupTeam('away')}
           />
 
@@ -436,6 +497,17 @@ export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
           teamLogo={homeLogo}
           isHomeTeam={true}
           initialConfig={homeLineup}
+          matchEvents={events}
+          matchId={match?.id}
+          timerSeconds={timerSeconds}
+          period={period}
+          onAddSubstitution={(newEvt) => {
+            dbStore.saveNormalizedEvents([newEvt], false);
+            if (onAddEvent) onAddEvent(newEvt);
+          }}
+          onDeleteSubstitution={(evtId) => {
+            dbStore.deleteNormalizedEvent(evtId);
+          }}
           onSave={(cfg) => {
             setHomeLineup(cfg);
             setEditingLineupTeam(null);
@@ -459,6 +531,17 @@ export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
           teamLogo={awayLogo}
           isHomeTeam={false}
           initialConfig={awayLineup}
+          matchEvents={events}
+          matchId={match?.id}
+          timerSeconds={timerSeconds}
+          period={period}
+          onAddSubstitution={(newEvt) => {
+            dbStore.saveNormalizedEvents([newEvt], false);
+            if (onAddEvent) onAddEvent(newEvt);
+          }}
+          onDeleteSubstitution={(evtId) => {
+            dbStore.deleteNormalizedEvent(evtId);
+          }}
           onSave={(cfg) => {
             setAwayLineup(cfg);
             setEditingLineupTeam(null);

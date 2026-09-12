@@ -23,11 +23,12 @@ import {
   RotateCcw,
   RefreshCw,
 } from 'lucide-react';
-import { NormalizedEvent, BotoneraButton, Player } from '@/types';
+import { NormalizedEvent, BotoneraButton, Player, Match } from '@/types';
 import { getButtonColorHex } from './BotoneraPanelEditor';
 import { FullEventFormModal } from '@/components/analysis/FullEventFormModal';
 import { TeamLogo } from '@/components/player/PlayerBadge';
 import { dbStore } from '@/lib/store/db-store';
+import { calculateEventVideoTime, formatVideoTime } from '@/lib/analytics/video-utils';
 
 interface BotoneraEventLogProps {
   events: NormalizedEvent[];
@@ -37,7 +38,7 @@ interface BotoneraEventLogProps {
   onRestoreDeletedEvents?: () => void;
   onExportXml?: () => void;
   onExportJson?: () => void;
-  /** Called when the user clicks the ▶ button to seek the video to 12s before this event */
+  /** Called when the user clicks the ▶ button to reproduce the event cut in a pop-up window */
   onSeekToEvent?: (event: NormalizedEvent) => void;
   /** Buttons of the active botonera, used to paint each row with its button colour */
   buttons?: BotoneraButton[];
@@ -46,6 +47,10 @@ interface BotoneraEventLogProps {
   readOnly?: boolean;
   /** Optional custom CSS max height class for the scrollable table container */
   maxHeightClass?: string;
+  /** Match object with period video start offsets */
+  match?: Match | null;
+  /** Period video offsets recorded or edited in live session */
+  periodVideoOffsets?: Record<number, number>;
 }
 
 export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
@@ -61,6 +66,8 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
   players = [],
   readOnly = false,
   maxHeightClass,
+  match = null,
+  periodVideoOffsets,
 }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -349,6 +356,13 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
                 const color = getEventColor(evt);
                 const descriptors = getDescriptors(evt);
                 const isExpanded = expandedEventId === evt.event_id;
+                const vidSec = calculateEventVideoTime(evt, match, periodVideoOffsets, 0);
+                const vidTimeStr = formatVideoTime(vidSec);
+                const hasVideoTiming = Boolean(
+                  (periodVideoOffsets && Object.keys(periodVideoOffsets).length > 0) ||
+                  (match && (match.p1_video_start_time != null || match.p2_video_start_time != null)) ||
+                  vidSec > 0
+                );
 
                 return (
                   <React.Fragment key={evt.event_id}>
@@ -362,7 +376,18 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
                         className="p-2.5 font-mono font-bold text-slate-100"
                         style={{ borderLeft: `4px solid ${color}` }}
                       >
-                        {formatMinSec(evt.timestamp)}
+                        <div className="flex flex-col">
+                          <span className="text-white text-xs font-bold leading-tight">{formatMinSec(evt.timestamp)}</span>
+                          {hasVideoTiming && (
+                            <span
+                              className="inline-flex items-center gap-0.5 text-[10px] font-bold text-emerald-400 font-mono tracking-tight mt-0.5"
+                              title={`Minuto exacto en el archivo de vídeo: ${vidTimeStr}`}
+                            >
+                              <span className="text-slate-500 font-medium text-[9px]">Vid:</span>
+                              <span>{vidTimeStr}</span>
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="p-2.5">
                         <span className="px-2 py-0.5 rounded text-[10px] bg-slate-950/60 text-slate-300 font-bold">
@@ -437,8 +462,8 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
                           {onSeekToEvent && (
                             <button
                               onClick={() => onSeekToEvent(evt)}
-                              className="p-1 rounded bg-slate-950/50 hover:bg-emerald-600/50 text-emerald-400 hover:text-emerald-200 border border-emerald-700/40 hover:border-emerald-500/60 transition"
-                              title={`▶ Ir al vídeo (-12s del evento en t=${formatMinSec(evt.timestamp)})`}
+                              className="p-1 rounded bg-slate-950/50 hover:bg-emerald-600/50 text-emerald-400 hover:text-emerald-200 border border-emerald-700/40 hover:border-emerald-500/60 transition cursor-pointer"
+                              title={`▶ Reproducir corte en ventana emergente (Vídeo: ${vidTimeStr} | Partido: ${formatMinSec(evt.timestamp)})`}
                             >
                               <PlayCircle className="w-3.5 h-3.5" />
                             </button>
@@ -495,6 +520,28 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
                               </span>
                             </span>
 
+                            {Boolean(
+                              (evt.goal_x !== null && evt.goal_x !== undefined) ||
+                              (evt.metadata?.goal_x !== null && evt.metadata?.goal_x !== undefined) ||
+                              evt.goal_zone ||
+                              evt.metadata?.goal_zone
+                            ) && (
+                              <span className="flex items-center gap-1.5">
+                                <span className="text-amber-400 font-bold">🥅 Portería:</span>
+                                <span className="text-amber-200 font-mono font-bold">
+                                  {(evt.goal_zone || evt.metadata?.goal_zone) ? (
+                                    <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] border border-amber-500/40">
+                                      {evt.goal_zone || evt.metadata?.goal_zone}
+                                      {(evt.goal_x ?? evt.metadata?.goal_x) !== null && (evt.goal_x ?? evt.metadata?.goal_x) !== undefined &&
+                                        ` (${evt.goal_x ?? evt.metadata?.goal_x}%, ${evt.goal_y ?? evt.metadata?.goal_y}%)`}
+                                    </span>
+                                  ) : (
+                                    `(${evt.goal_x ?? evt.metadata?.goal_x}%, ${evt.goal_y ?? evt.metadata?.goal_y}%)`
+                                  )}
+                                </span>
+                              </span>
+                            )}
+
                             <span className="flex items-center gap-1.5">
                               <User className="w-3 h-3 text-slate-500" />
                               <span className="text-slate-500 font-bold uppercase tracking-wide">Equipo:</span>
@@ -517,6 +564,14 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
                                 })()}
                               </span>
                             </span>
+
+                            {hasVideoTiming && (
+                              <span className="flex items-center gap-1.5">
+                                <Clock className="w-3 h-3 text-emerald-500" />
+                                <span className="text-slate-500 font-bold uppercase tracking-wide">Minutaje Vídeo:</span>
+                                <span className="text-emerald-400 font-mono font-bold">{vidTimeStr}</span>
+                              </span>
+                            )}
 
                             {evt.outcome && (
                               <span className="flex items-center gap-1.5">

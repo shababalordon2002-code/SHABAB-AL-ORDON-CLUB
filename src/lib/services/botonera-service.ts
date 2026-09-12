@@ -196,6 +196,35 @@ export async function saveAnalysisSessionToSupabase(session: ActiveBotoneraSessi
       supabase = createClient();
     }
 
+    // "A Fuego" protection: fetch existing session and match in Supabase so empty/null values
+    // do not wipe existing video_url or period offsets.
+    let existingSess: any = null;
+    let existingMatch: any = null;
+    try {
+      const { data: exS } = await supabase
+        .from('analysis_sessions')
+        .select('*')
+        .eq('match_id', session.selectedMatchId);
+      if (exS && exS.length > 0) existingSess = exS[0];
+
+      const { data: exM } = await supabase
+        .from('matches')
+        .select('*')
+        .eq('id', session.selectedMatchId);
+      if (exM && exM.length > 0) existingMatch = exM[0];
+    } catch (err) {
+      console.warn('Could not query existing session/match for video preservation:', err);
+    }
+
+    const resolvedVideoUrl = (session.videoUrl && session.videoUrl.trim()) || existingSess?.video_url || existingMatch?.video_url || null;
+    const resolvedVideoType = session.videoType || existingSess?.video_type || existingMatch?.video_type || (resolvedVideoUrl ? (resolvedVideoUrl.includes('http') ? 'link' : 'local') : null);
+    const resolvedVideoSourceName = session.videoSourceName || existingSess?.video_source_name || existingMatch?.video_source_name || null;
+    const resolvedP1 = session.p1VideoStartSeconds != null ? session.p1VideoStartSeconds : (existingSess?.p1_video_start_seconds ?? existingMatch?.p1_video_start_time ?? null);
+    const resolvedP2 = session.p2VideoStartSeconds != null ? session.p2VideoStartSeconds : (existingSess?.p2_video_start_seconds ?? existingMatch?.p2_video_start_time ?? null);
+    const resolvedTemplateId = session.botoneraTemplateId || existingSess?.botonera_template_id || existingMatch?.botonera_template_id || null;
+    const resolvedHomeLineup = session.home_lineup || existingSess?.home_lineup || existingMatch?.home_lineup || null;
+    const resolvedAwayLineup = session.away_lineup || existingSess?.away_lineup || existingMatch?.away_lineup || null;
+
     const row: Record<string, any> = {
       match_id: session.selectedMatchId,
       period: session.period,
@@ -205,14 +234,14 @@ export async function saveAnalysisSessionToSupabase(session: ActiveBotoneraSessi
       last_updated_timestamp: session.lastUpdatedTimestamp || Date.now(),
       events: session.events || [],
       is_configured: session.isConfigured ?? true,
-      video_type: session.videoType || null,
-      video_source_name: session.videoSourceName || null,
-      video_url: session.videoUrl || null,
-      p1_video_start_seconds: session.p1VideoStartSeconds ?? null,
-      p2_video_start_seconds: session.p2VideoStartSeconds ?? null,
-      botonera_template_id: session.botoneraTemplateId || null,
-      home_lineup: session.home_lineup || null,
-      away_lineup: session.away_lineup || null,
+      video_type: resolvedVideoType,
+      video_source_name: resolvedVideoSourceName,
+      video_url: resolvedVideoUrl,
+      p1_video_start_seconds: resolvedP1,
+      p2_video_start_seconds: resolvedP2,
+      botonera_template_id: resolvedTemplateId,
+      home_lineup: resolvedHomeLineup,
+      away_lineup: resolvedAwayLineup,
       updated_at: new Date().toISOString(),
     };
 
@@ -229,6 +258,28 @@ export async function saveAnalysisSessionToSupabase(session: ActiveBotoneraSessi
       delete fallbackRow.home_lineup;
       delete fallbackRow.away_lineup;
       ({ error } = await supabase.from('analysis_sessions').upsert([fallbackRow], { onConflict: 'match_id' }));
+    }
+
+    // Also update matches table in Supabase so match records permanently hold video & offset
+    if (resolvedVideoUrl || resolvedP1 != null || resolvedP2 != null) {
+      try {
+        await supabase
+          .from('matches')
+          .update({
+            video_url: resolvedVideoUrl,
+            video_type: resolvedVideoType,
+            video_source_name: resolvedVideoSourceName,
+            p1_video_start_time: resolvedP1,
+            p2_video_start_time: resolvedP2,
+            botonera_template_id: resolvedTemplateId,
+            home_lineup: resolvedHomeLineup,
+            away_lineup: resolvedAwayLineup,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', session.selectedMatchId);
+      } catch (mErr) {
+        console.warn('Could not sync session video settings to matches table in Supabase:', mErr);
+      }
     }
 
     if (error) {
@@ -249,38 +300,53 @@ export async function saveAnalysisSessionToSupabase(session: ActiveBotoneraSessi
 // One row per event (instead of a single overwritten jsonb array) so multiple analysts can
 // register events on the same match at the same time without clobbering each other's work.
 
-function rowToNormalizedEvent(row: any): NormalizedEvent {
-  return {
-    event_id: row.event_id,
-    source_event_id: row.source_event_id ?? null,
-    match_id: row.match_id,
-    team_id: row.team_id ?? null,
-    team_name: row.team_name ?? null,
-    player_id: row.player_id ?? null,
-    player_name: row.player_name,
-    event_type: row.event_type,
-    category: row.category,
-    subcategory: row.subcategory ?? null,
-    timestamp: row.timestamp ?? null,
-    minute: row.minute ?? null,
-    second: row.second ?? null,
-    duration: row.duration ?? null,
-    period: row.period ?? null,
-    x: row.x ?? null,
-    y: row.y ?? null,
-    end_x: row.end_x ?? null,
-    end_y: row.end_y ?? null,
-    outcome: row.outcome ?? null,
-    metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata) : (row.metadata || {}),
-    source: row.source,
-    created_by: row.created_by ?? null,
-    created_by_name: row.created_by_name ?? null,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-  };
+export function rowToNormalizedEvent(row: any): NormalizedEvent {
+  try {
+    const metaObj = typeof row.metadata === 'string' ? JSON.parse(row.metadata) : (row.metadata || {});
+    return {
+      event_id: row.event_id,
+      source_event_id: row.source_event_id ?? null,
+      match_id: row.match_id,
+      team_id: row.team_id ?? null,
+      team_name: row.team_name ?? null,
+      player_id: row.player_id ?? null,
+      player_name: row.player_name,
+      event_type: row.event_type,
+      category: row.category,
+      subcategory: row.subcategory ?? null,
+      timestamp: row.timestamp ?? null,
+      minute: row.minute ?? null,
+      second: row.second ?? null,
+      duration: row.duration ?? null,
+      period: row.period ?? null,
+      x: row.x ?? null,
+      y: row.y ?? null,
+      end_x: row.end_x ?? null,
+      end_y: row.end_y ?? null,
+      goal_x: row.goal_x ?? metaObj.goal_x ?? null,
+      goal_y: row.goal_y ?? metaObj.goal_y ?? null,
+      goal_zone: row.goal_zone ?? metaObj.goal_zone ?? null,
+      outcome: row.outcome ?? null,
+      metadata: metaObj,
+      source: row.source,
+      created_by: row.created_by ?? null,
+      created_by_name: row.created_by_name ?? null,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    };
+  } catch {
+    return null as any;
+  }
 }
 
-function normalizedEventToRow(matchId: string, event: NormalizedEvent) {
+export function normalizedEventToRow(matchId: string, event: NormalizedEvent) {
+  const meta = {
+    ...(event.metadata || {}),
+    goal_x: event.goal_x ?? event.metadata?.goal_x ?? null,
+    goal_y: event.goal_y ?? event.metadata?.goal_y ?? null,
+    goal_zone: event.goal_zone ?? event.metadata?.goal_zone ?? null,
+  };
+
   return {
     event_id: event.event_id,
     match_id: matchId,
@@ -302,7 +368,7 @@ function normalizedEventToRow(matchId: string, event: NormalizedEvent) {
     end_x: event.end_x ?? null,
     end_y: event.end_y ?? null,
     outcome: event.outcome ?? null,
-    metadata: event.metadata || {},
+    metadata: meta,
     source: event.source,
     created_by: event.created_by ?? null,
     created_by_name: event.created_by_name ?? null,
@@ -384,8 +450,8 @@ export async function updateAnalysisEventInSupabase(matchId: string, event: Norm
   }
 }
 
-// Delete a single event
-export async function deleteAnalysisEventFromSupabase(eventId: string): Promise<boolean> {
+// Delete a single event with safety backup (never lost in oblivion)
+export async function deleteAnalysisEventFromSupabase(eventId: string, deletedByName?: string): Promise<boolean> {
   try {
     let supabase: any;
     try {
@@ -393,6 +459,31 @@ export async function deleteAnalysisEventFromSupabase(eventId: string): Promise<
     } catch {
       supabase = createClient();
     }
+
+    // Safety backup to analysis_events_trash before deleting
+    try {
+      const { data: eventRow } = await supabase
+        .from('analysis_events')
+        .select('*')
+        .eq('event_id', eventId)
+        .single();
+
+      if (eventRow) {
+        await supabase
+          .from('analysis_events_trash')
+          .insert([{
+            event_id: eventId,
+            match_id: eventRow.match_id,
+            event_data: eventRow,
+            deleted_by: deletedByName || eventRow.created_by_name || 'Analista',
+            deleted_at: new Date().toISOString()
+          }])
+          .catch(() => {});
+      }
+    } catch {
+      // Non-blocking
+    }
+
     const { error } = await supabase.from('analysis_events').delete().eq('event_id', eventId);
     if (error) {
       console.error('Error deleting analysis_event from Supabase:', error.message);

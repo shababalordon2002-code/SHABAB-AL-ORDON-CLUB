@@ -23,6 +23,9 @@ export interface NormalizedEvent {
   end_x: number | null;     // pitch end x (0-100)
   end_y: number | null;     // pitch end y (0-100)
   outcome: string | null;   // "éxito", "fallido", etc.
+  goal_x?: number | null;   // coordenadas X en portería (0-100%)
+  goal_y?: number | null;   // coordenadas Y en portería (0-100%)
+  goal_zone?: string | null; // e.g. "Escuadra Izq", "Raso Der", "Larguero", etc.
   metadata: Record<string, any>; // información adicional
   source: 'longomatch' | 'manual' | string;
   created_by?: string | null;      // auth.users id del analista que registró el evento
@@ -218,7 +221,9 @@ export type PitchRequiredType =
   | 'zone_3_hitos'
   | 'zone_4_zonas'
   | 'zone_remate'
-  | 'zone_counter';
+  | 'zone_counter'
+  | 'goal_mouth'
+  | 'pitch_and_goal';
 
 export interface DescriptorGroup {
   id: string;
@@ -247,6 +252,11 @@ export interface BotoneraButton {
   h?: number; // Freeform Canvas Height in % (e.g. 15%)
   fontSize?: 'sm' | 'md' | 'lg' | 'xl' | '2xl';
   pitchRequired?: PitchRequiredType;
+  secondaryPitchRequired?: PitchRequiredType; // Campograma adicional (ej: 'goal_mouth')
+  pitchModes?: PitchRequiredType[]; // Lista de campogramas activos si hay múltiples
+  goalRequired?: boolean; // Habilitar campograma de portería simultáneo
+  pitchDisplayCount?: 1 | 2; // 1 campograma o 2 campogramas
+  dualPitchLayout?: 'simultaneous' | 'tabs'; // Mostrar ambos a la vez o por pestañas
   pitchViewMode?: 'full' | 'half'; // Campo entero vs Medio campo
   playerRequiredMode?: 'none' | 'optional' | 'required'; // 'none' (Desactivado), 'optional' (Opcional), 'required' (Obligatorio)
   teamRequiredMode?: 'none' | 'optional' | 'required'; // 'none' (Desactivado), 'optional' (Opcional), 'required' (Obligatorio)

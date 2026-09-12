@@ -1,10 +1,10 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { TeamLineupConfig, TeamCircleStyle, LineupPlayerItem } from '@/types';
+import { TeamLineupConfig, TeamCircleStyle, LineupPlayerItem, NormalizedEvent } from '@/types';
 import { dbStore } from '@/lib/store/db-store';
-import { X, Check, Shield, Users, Palette, Sparkles, Plus, Trash2, Layout, User } from 'lucide-react';
+import { X, Check, Shield, Users, Palette, Sparkles, Plus, Trash2, Layout, User, RefreshCw, ArrowRightLeft } from 'lucide-react';
 
 export const FORMATION_PRESETS = [
   '4-3-3',
@@ -238,8 +238,21 @@ interface TeamLineupModalProps {
   teamLogo?: string;
   isHomeTeam: boolean;
   initialConfig?: TeamLineupConfig;
+  matchEvents?: NormalizedEvent[];
+  matchId?: string;
+  timerSeconds?: number;
+  period?: number;
+  onAddSubstitution?: (evt: NormalizedEvent) => void;
+  onDeleteSubstitution?: (evtId: string) => void;
   onSave: (config: TeamLineupConfig) => void;
   onCancel: () => void;
+}
+
+export interface ActiveLineupPlayerItem extends LineupPlayerItem {
+  isSubstitutedIn?: boolean;
+  subMinute?: number;
+  subReplaces?: string;
+  originalStarter?: LineupPlayerItem;
 }
 
 export const TeamLineupModal: React.FC<TeamLineupModalProps> = ({
@@ -247,6 +260,12 @@ export const TeamLineupModal: React.FC<TeamLineupModalProps> = ({
   teamLogo,
   isHomeTeam,
   initialConfig,
+  matchEvents = [],
+  matchId,
+  timerSeconds = 0,
+  period = 1,
+  onAddSubstitution,
+  onDeleteSubstitution,
   onSave,
   onCancel,
 }) => {
@@ -284,6 +303,124 @@ export const TeamLineupModal: React.FC<TeamLineupModalProps> = ({
 
   // Active tab: 'campograma' | 'list' | 'kit'
   const [activeTab, setActiveTab] = useState<'campograma' | 'list' | 'kit'>('campograma');
+
+  // Pitch view mode: 'active' (with match substitutions applied) vs 'initial' (initial 11 starters)
+  const [pitchViewMode, setPitchViewMode] = useState<'active' | 'initial'>('active');
+
+  // Add substitution inline modal
+  const [showAddSubModal, setShowAddSubModal] = useState(false);
+  const [newSubPlayerOut, setNewSubPlayerOut] = useState('');
+  const [newSubPlayerIn, setNewSubPlayerIn] = useState('');
+  const [newSubPlayerInNum, setNewSubPlayerInNum] = useState<number | ''>('');
+  const [newSubMinute, setNewSubMinute] = useState<number | ''>(Math.floor(timerSeconds / 60) || 1);
+  const [newSubPeriod, setNewSubPeriod] = useState<number>(period || 1);
+
+  // Extract substitutions for this team
+  const teamSubstitutions = useMemo(() => {
+    const list: Array<{
+      id: string;
+      teamName: string;
+      playerOutName: string;
+      playerInName: string;
+      playerInNumber?: number;
+      minute?: number;
+      timestamp?: number;
+      period?: number;
+    }> = [];
+
+    const normTarget = teamName.toLowerCase().trim();
+    const isSao = normTarget.includes('shabab') || normTarget.includes('ordon') || normTarget.includes('sao');
+
+    (matchEvents || []).forEach((evt) => {
+      const isSub =
+        evt.event_type === 'Sustitución' ||
+        evt.category === 'Cambio' ||
+        Boolean(evt.metadata?.player_in);
+
+      if (isSub) {
+        const outName = evt.metadata?.player_out || evt.player_name || '';
+        const inName = evt.metadata?.player_in || '';
+        const inNum = evt.metadata?.player_in_number ?? evt.metadata?.dorsal;
+        const tName = evt.team_name || (isHomeTeam ? teamName : '');
+
+        const subTeamNorm = (tName || '').toLowerCase().trim();
+        const teamMatch =
+          subTeamNorm === normTarget ||
+          (isSao && (subTeamNorm.includes('shabab') || subTeamNorm.includes('ordon') || subTeamNorm.includes('sao'))) ||
+          (isHomeTeam && evt.team_id === 'home_team') ||
+          (!isHomeTeam && evt.team_id === 'away_team');
+
+        if (teamMatch && outName && inName) {
+          list.push({
+            id: evt.event_id || `sub_${Math.random()}`,
+            teamName: tName || teamName,
+            playerOutName: outName.trim(),
+            playerInName: inName.trim(),
+            playerInNumber: inNum !== undefined && inNum !== null ? Number(inNum) : undefined,
+            minute: evt.minute ?? (evt.timestamp ? Math.floor(evt.timestamp / 60) : undefined),
+            timestamp: evt.timestamp ?? undefined,
+            period: evt.period ?? 1,
+          });
+        }
+      }
+    });
+
+    return list.sort((a, b) => (a.minute || 0) - (b.minute || 0));
+  }, [matchEvents, teamName, isHomeTeam]);
+
+  // Compute active starters by applying substitutions onto initial starters
+  const { activeStarters, subbedOutPlayers } = useMemo(() => {
+    const active: ActiveLineupPlayerItem[] = starters.slice(0, 11).map((s) => ({ ...s }));
+    const subbedOut: ActiveLineupPlayerItem[] = [];
+
+    teamSubstitutions.forEach((sub) => {
+      const outNorm = sub.playerOutName.toLowerCase().trim();
+      const idx = active.findIndex((p) => {
+        const pNorm = (p.name || '').toLowerCase().trim();
+        return pNorm === outNorm || pNorm.includes(outNorm) || outNorm.includes(pNorm);
+      });
+
+      if (idx !== -1) {
+        const oldPlayer = active[idx];
+        subbedOut.push({
+          ...oldPlayer,
+          subMinute: sub.minute,
+          subReplaces: sub.playerInName,
+        });
+
+        // Find match in substitutes or DB
+        const benchMatch = substitutes.find(
+          (s) =>
+            (s.name || '').toLowerCase().trim() === sub.playerInName.toLowerCase().trim() ||
+            (s.name || '').toLowerCase().includes(sub.playerInName.toLowerCase()) ||
+            sub.playerInName.toLowerCase().includes((s.name || '').toLowerCase())
+        );
+
+        active[idx] = {
+          id: benchMatch?.id || `sub_in_${sub.id}_${idx}`,
+          name: sub.playerInName,
+          number:
+            sub.playerInNumber !== undefined
+              ? sub.playerInNumber
+              : benchMatch?.number !== undefined
+              ? benchMatch.number
+              : 99,
+          position: oldPlayer.position || 'JUG',
+          isStarter: false,
+          isSubstitutedIn: true,
+          subMinute: sub.minute,
+          subReplaces: oldPlayer.name || `Jugador #${oldPlayer.number}`,
+          originalStarter: oldPlayer,
+        };
+      }
+    });
+
+    return { activeStarters: active, subbedOutPlayers: subbedOut };
+  }, [starters, substitutes, teamSubstitutions]);
+
+  // Decides which players to display on the pitch
+  const displayedPitchStarters = pitchViewMode === 'active' && teamSubstitutions.length > 0 ? activeStarters : starters.slice(0, 11);
+
 
   // Custom position coordinates per player ID for drag and drop
   const [customPositions, setCustomPositions] = useState<Record<string, { x: number; y: number }>>(() => {
@@ -611,7 +748,7 @@ export const TeamLineupModal: React.FC<TeamLineupModalProps> = ({
               {/* Pitch Canvas (8 cols on LG) */}
               <div className="lg:col-span-8 flex flex-col items-center">
                 
-                {/* Selector de Sistema / Formación en el Campograma */}
+                {/* Selector de Sistema / Formación y Controles en el Campograma */}
                 <div className="w-full flex flex-wrap items-center justify-between gap-2 mb-3 px-3 py-2 rounded-xl bg-slate-950 border border-slate-800">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-bold text-slate-300">Sistema Táctico:</span>
@@ -633,17 +770,65 @@ export const TeamLineupModal: React.FC<TeamLineupModalProps> = ({
                     </div>
                   </div>
 
-                  {starters.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    {/* View mode toggle: En Campo (con cambios) vs 11 Inicial */}
+                    {teamSubstitutions.length > 0 && (
+                      <div className="flex items-center bg-slate-900 rounded-lg p-0.5 border border-slate-800">
+                        <button
+                          type="button"
+                          onClick={() => setPitchViewMode('active')}
+                          className={`px-2 py-1 rounded-md text-[11px] font-bold transition flex items-center gap-1 ${
+                            pitchViewMode === 'active'
+                              ? 'bg-emerald-500 text-slate-950 shadow'
+                              : 'text-slate-400 hover:text-slate-200'
+                          }`}
+                          title="Mostrar los 11 jugadores que están en campo ahora (incluyendo cambios)"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                          <span>En Campo ({teamSubstitutions.length})</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPitchViewMode('initial')}
+                          className={`px-2 py-1 rounded-md text-[11px] font-bold transition ${
+                            pitchViewMode === 'initial'
+                              ? 'bg-amber-500 text-slate-950 shadow'
+                              : 'text-slate-400 hover:text-slate-200'
+                          }`}
+                          title="Mostrar el 11 titular inicial sin sustituciones"
+                        >
+                          <span>11 Inicial</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Botón registrar sustitución rápida */}
                     <button
                       type="button"
-                      onClick={handleClearPitch}
-                      className="px-2 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 text-[11px] font-bold transition flex items-center gap-1"
-                      title="Vaciar los círculos del campo"
+                      onClick={() => {
+                        setNewSubMinute(Math.floor(timerSeconds / 60) || 1);
+                        setNewSubPeriod(period || 1);
+                        setShowAddSubModal(true);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-[11px] font-bold transition flex items-center gap-1 shadow-sm cursor-pointer"
+                      title="Registrar una sustitución durante el partido"
                     >
-                      <Trash2 className="w-3 h-3" />
-                      <span>Vaciar Campo</span>
+                      <ArrowRightLeft className="w-3 h-3 text-amber-400" />
+                      <span>+ Cambio</span>
                     </button>
-                  )}
+
+                    {starters.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleClearPitch}
+                        className="px-2 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 text-[11px] font-bold transition flex items-center gap-1"
+                        title="Vaciar los círculos del campo"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>Vaciar Campo</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* THE SOCCER FIELD (CAMPOGRAMA VERTICAL CUADRICULADO) */}
@@ -712,12 +897,15 @@ export const TeamLineupModal: React.FC<TeamLineupModalProps> = ({
                     </div>
                   )}
 
-                  {/* 11 Starter Circle Tokens */}
-                  {starters.slice(0, 11).map((player, idx) => {
+                  {/* 11 Circle Tokens on Pitch (reflecting substitutions if active) */}
+                  {displayedPitchStarters.map((player, idx) => {
+                    const originalId = (player as ActiveLineupPlayerItem).originalStarter?.id || starters[idx]?.id || player.id;
                     const presetPos = positions[idx] || { x: 50, y: 50, role: 'JUG' };
-                    const activePos = customPositions[player.id] || presetPos;
-                    const isSelected = selectedPlayerId === player.id;
-                    const isDragging = draggingPlayerId === player.id;
+                    const activePos = customPositions[originalId] || customPositions[player.id] || presetPos;
+                    const isSelected = selectedPlayerId === player.id || selectedPlayerId === originalId;
+                    const isDragging = draggingPlayerId === player.id || draggingPlayerId === originalId;
+                    const isSubIn = (player as ActiveLineupPlayerItem).isSubstitutedIn;
+                    const subMinute = (player as ActiveLineupPlayerItem).subMinute;
 
                     return (
                       <div
@@ -726,25 +914,40 @@ export const TeamLineupModal: React.FC<TeamLineupModalProps> = ({
                           left: `${activePos.x}%`,
                           top: `${activePos.y}%`,
                         }}
-                        onPointerDown={(e) => handlePointerDown(e, player.id)}
+                        onPointerDown={(e) => handlePointerDown(e, originalId)}
                         className={`absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center cursor-grab active:cursor-grabbing z-10 group ${
                           isDragging ? 'scale-125 z-40' : isSelected ? 'scale-120 z-30' : 'hover:scale-110'
                         }`}
                       >
                         {/* Token Circle with Dorsal */}
-                        <div className={`p-0.5 rounded-full transition ${isSelected ? 'ring-4 ring-amber-400 shadow-xl scale-105' : 'hover:ring-2 hover:ring-white/60'}`}>
-                          <TeamCircleIcon style={circleStyle} number={player.number || idx + 1} size={36} />
+                        <div className="relative">
+                          <div className={`p-0.5 rounded-full transition ${isSelected ? 'ring-4 ring-amber-400 shadow-xl scale-105' : 'hover:ring-2 hover:ring-white/60'}`}>
+                            <TeamCircleIcon style={circleStyle} number={player.number || idx + 1} size={36} />
+                          </div>
+
+                          {/* Substitution badge indicator on top right */}
+                          {isSubIn && (
+                            <div
+                              className="absolute -top-1 -right-2 bg-emerald-500 text-slate-950 font-black text-[9px] px-1 py-0.2 rounded-full shadow-md flex items-center gap-0.5 border border-white animate-pulse"
+                              title={`Entró al campo en el minuto ${subMinute || '?'}' reemplazando a ${(player as ActiveLineupPlayerItem).subReplaces || 'titular'}`}
+                            >
+                              <RefreshCw className="w-2 h-2 shrink-0" />
+                              <span>{subMinute ? `${subMinute}'` : ''}</span>
+                            </div>
+                          )}
                         </div>
 
                         {/* Player Name / Position Tag on Pitch */}
                         <div
-                          className={`mt-0.5 px-2 py-0.5 rounded-md text-[10px] font-bold text-center whitespace-nowrap shadow-md max-w-[105px] truncate transition ${
+                          className={`mt-0.5 px-2 py-0.5 rounded-md text-[10px] font-bold text-center whitespace-nowrap shadow-md max-w-[110px] truncate transition ${
                             isSelected
                               ? 'bg-amber-400 text-slate-950 font-black ring-1 ring-amber-300'
+                              : isSubIn
+                              ? 'bg-emerald-950/95 text-emerald-200 border border-emerald-500/80'
                               : 'bg-slate-950/90 text-slate-100 border border-slate-700/80 group-hover:bg-slate-900'
                           }`}
                         >
-                          {player.name || `Jugador #${player.number || idx + 1}`}
+                          {isSubIn ? `🔄 ${player.name || `Jugador #${player.number}`}` : (player.name || `Jugador #${player.number || idx + 1}`)}
                         </div>
                       </div>
                     );
@@ -767,27 +970,48 @@ export const TeamLineupModal: React.FC<TeamLineupModalProps> = ({
                   const activePlayer = starters[activeIdx] || starters[0];
                   const allDbPlayers = dbStore.getPlayers();
 
+                  // Check if this position has an active substitution
+                  const currentFieldPlayer = displayedPitchStarters[activeIdx >= 0 ? activeIdx : 0];
+                  const isSubbed = (currentFieldPlayer as ActiveLineupPlayerItem)?.isSubstitutedIn;
+
                   if (!activePlayer) return null;
 
                   return (
                     <div className="space-y-3 bg-slate-900/90 p-3 rounded-xl border border-slate-800">
                       <div className="flex items-center gap-3 border-b border-slate-800/80 pb-2">
-                        <TeamCircleIcon style={circleStyle} number={activePlayer.number || 1} size={34} />
+                        <TeamCircleIcon style={circleStyle} number={currentFieldPlayer?.number || activePlayer.number || 1} size={34} />
                         <div>
                           <span className="text-[10px] text-amber-400 font-bold uppercase">
                             Posición: {positions[activeIdx]?.role || 'Titular'}
                           </span>
                           <h5 className="text-xs font-bold text-white truncate max-w-[170px]">
-                            {activePlayer.name || `Jugador #${activePlayer.number}`}
+                            {currentFieldPlayer?.name || activePlayer.name || `Jugador #${activePlayer.number}`}
                           </h5>
+                          {isSubbed && (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded mt-0.5">
+                              <RefreshCw className="w-2.5 h-2.5" /> Entró al min {(currentFieldPlayer as ActiveLineupPlayerItem).subMinute}'
+                            </span>
+                          )}
                         </div>
                       </div>
+
+                      {/* Info banner if player was substituted */}
+                      {isSubbed && (
+                        <div className="p-2 rounded-lg bg-emerald-950/60 border border-emerald-500/40 text-[11px] text-emerald-300">
+                          <p className="font-bold flex items-center gap-1">
+                            <span>🔄 Cambio activo:</span>
+                          </p>
+                          <p className="text-[10px] text-emerald-400 mt-0.5">
+                            <strong>{currentFieldPlayer.name} (#{currentFieldPlayer.number})</strong> sustituyó al titular <strong>{activePlayer.name || `Jugador #${activePlayer.number}`}</strong> en el min {(currentFieldPlayer as ActiveLineupPlayerItem).subMinute}'.
+                          </p>
+                        </div>
+                      )}
 
                       <div className="space-y-2.5 pt-1">
                         {/* Selector desde la BD */}
                         <div>
                           <label className="block text-[11px] font-bold text-emerald-400 mb-1 flex items-center gap-1">
-                            <Sparkles className="w-3 h-3" /> Elegir de la BD (Jugadores):
+                            <Sparkles className="w-3 h-3" /> Elegir Titular de BD:
                           </label>
                           <select
                             value=""
@@ -835,7 +1059,7 @@ export const TeamLineupModal: React.FC<TeamLineupModalProps> = ({
                           </div>
 
                           <div className="col-span-2">
-                            <label className="block text-[10px] font-bold text-slate-300 mb-1">Nombre Manual:</label>
+                            <label className="block text-[10px] font-bold text-slate-300 mb-1">Nombre Titular:</label>
                             <input
                               type="text"
                               placeholder="Nombre opcional"
@@ -855,25 +1079,80 @@ export const TeamLineupModal: React.FC<TeamLineupModalProps> = ({
                   );
                 })()}
 
-                {/* Quick List of 11 Starters */}
-                <div className="space-y-1.5 max-h-[200px] overflow-y-auto pr-1">
-                  <span className="text-[11px] font-bold text-slate-400 block">Lista de Titulares:</span>
-                  {starters.slice(0, 11).map((p, idx) => (
-                    <div
-                      key={p.id || idx}
-                      onClick={() => setSelectedPlayerId(p.id)}
-                      className={`flex items-center gap-2 p-1.5 rounded-lg text-xs cursor-pointer transition ${
-                        selectedPlayerId === p.id
-                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold'
-                          : 'bg-slate-900/60 hover:bg-slate-900 text-slate-300 border border-transparent'
-                      }`}
-                    >
-                      <TeamCircleIcon style={circleStyle} number={p.number || idx + 1} size={20} />
-                      <span className="w-8 font-mono text-[10px] text-slate-400">#{p.number || idx + 1}</span>
-                      <span className="flex-1 truncate">{p.name || `Jugador #${p.number || idx + 1}`}</span>
-                    </div>
-                  ))}
+                {/* Quick List of 11 Players Currently on Pitch */}
+                <div className="space-y-1.5 max-h-[190px] overflow-y-auto pr-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-400 block">
+                      {pitchViewMode === 'active' && teamSubstitutions.length > 0 ? 'En Campo (11 Jugadores Activos):' : 'Lista de Titulares (11):'}
+                    </span>
+                    {teamSubstitutions.length > 0 && (
+                      <span className="text-[10px] text-emerald-400 font-bold">{teamSubstitutions.length} cambio(s)</span>
+                    )}
+                  </div>
+                  {displayedPitchStarters.map((p, idx) => {
+                    const origStarter = (p as ActiveLineupPlayerItem).originalStarter || starters[idx] || p;
+                    const isSub = (p as ActiveLineupPlayerItem).isSubstitutedIn;
+                    return (
+                      <div
+                        key={p.id || idx}
+                        onClick={() => setSelectedPlayerId(origStarter.id)}
+                        className={`flex items-center gap-2 p-1.5 rounded-lg text-xs cursor-pointer transition ${
+                          selectedPlayerId === origStarter.id
+                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold'
+                            : 'bg-slate-900/60 hover:bg-slate-900 text-slate-300 border border-transparent'
+                        }`}
+                      >
+                        <TeamCircleIcon style={circleStyle} number={p.number || idx + 1} size={20} />
+                        <span className="w-8 font-mono text-[10px] text-slate-400">#{p.number || idx + 1}</span>
+                        <span className="flex-1 truncate">
+                          {p.name || `Jugador #${p.number || idx + 1}`}
+                          {isSub && <span className="ml-1 text-[10px] text-emerald-400 font-bold">(🔄 {(p as ActiveLineupPlayerItem).subMinute}')</span>}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
+
+                {/* List of Registered Match Substitutions */}
+                {teamSubstitutions.length > 0 && (
+                  <div className="space-y-1.5 pt-2 border-t border-slate-800">
+                    <span className="text-[11px] font-bold text-emerald-400 flex items-center gap-1">
+                      <RefreshCw className="w-3 h-3" /> Cambios Realizados ({teamSubstitutions.length}):
+                    </span>
+                    <div className="space-y-1 max-h-[130px] overflow-y-auto pr-1">
+                      {teamSubstitutions.map((sub) => (
+                        <div
+                          key={sub.id}
+                          className="flex items-center justify-between p-1.5 rounded-lg bg-emerald-950/40 border border-emerald-500/30 text-[11px]"
+                        >
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="font-mono font-black text-amber-400 text-[10px] shrink-0">
+                              {sub.minute ? `${sub.minute}'` : ''}
+                            </span>
+                            <span className="text-red-300 truncate text-[10px]">🔻 {sub.playerOutName}</span>
+                            <span className="text-slate-500">➔</span>
+                            <span className="text-emerald-300 font-bold truncate text-[10px]">🟢 {sub.playerInName} {sub.playerInNumber ? `(#${sub.playerInNumber})` : ''}</span>
+                          </div>
+                          {onDeleteSubstitution && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (confirm(`¿Eliminar la sustitución de ${sub.playerInName}?`)) {
+                                  onDeleteSubstitution(sub.id);
+                                }
+                              }}
+                              className="p-1 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded transition shrink-0 ml-1 cursor-pointer"
+                              title="Eliminar este cambio"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
               </div>
 
@@ -1156,6 +1435,231 @@ export const TeamLineupModal: React.FC<TeamLineupModalProps> = ({
             </button>
           </div>
         </div>
+
+        {/* MODAL INLINE: REGISTRAR SUSTITUCIÓN DIRECTA */}
+        {showAddSubModal && (
+          <div className="fixed inset-0 z-[1000000] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden animate-fade-in">
+              <div className="flex items-center justify-between p-4 border-b border-slate-800 bg-slate-950/80">
+                <div className="flex items-center gap-2">
+                  <RefreshCw className="w-5 h-5 text-amber-400" />
+                  <h3 className="font-black text-sm text-white">
+                    Registrar Cambio / Sustitución: <span className="text-amber-300">{teamName}</span>
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowAddSubModal(false)}
+                  className="text-slate-400 hover:text-white p-1 rounded-lg"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!newSubPlayerOut || !newSubPlayerIn) {
+                    alert('Debes indicar el jugador que sale y el que entra.');
+                    return;
+                  }
+
+                  const numVal = newSubPlayerInNum === '' ? undefined : Number(newSubPlayerInNum);
+                  const minVal = newSubMinute === '' ? 1 : Number(newSubMinute);
+
+                  const newEvt: NormalizedEvent = {
+                    event_id: `sub_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+                    source_event_id: null,
+                    match_id: matchId || 'current_match',
+                    team_id: isHomeTeam ? 'home_team' : 'away_team',
+                    team_name: teamName,
+                    player_id: null,
+                    player_name: newSubPlayerIn,
+                    event_type: 'Sustitución',
+                    category: 'Cambio',
+                    subcategory: 'Sustitución Jugador',
+                    minute: minVal,
+                    second: 0,
+                    duration: null,
+                    period: newSubPeriod,
+                    timestamp: minVal * 60,
+                    x: null,
+                    y: null,
+                    end_x: null,
+                    end_y: null,
+                    outcome: 'éxito',
+                    source: 'manual',
+                    metadata: {
+                      player_out: newSubPlayerOut,
+                      player_in: newSubPlayerIn,
+                      player_in_number: numVal,
+                      descriptors: [`Sale: ${newSubPlayerOut}`, `Entra: ${newSubPlayerIn}`],
+                    },
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString(),
+                  };
+
+                  if (onAddSubstitution) {
+                    onAddSubstitution(newEvt);
+                  }
+
+                  // Also ensure player entered is added to substitutes list if not already there
+                  const benchExists = substitutes.some(
+                    (s) => s.name.toLowerCase().trim() === newSubPlayerIn.toLowerCase().trim()
+                  );
+                  if (!benchExists) {
+                    setSubstitutes((prev) => [
+                      ...prev,
+                      {
+                        id: `sub_${Date.now()}`,
+                        number: numVal || prev.length + 12,
+                        name: newSubPlayerIn,
+                        position: 'SUPL',
+                        isStarter: false,
+                      },
+                    ]);
+                  }
+
+                  setShowAddSubModal(false);
+                  setNewSubPlayerOut('');
+                  setNewSubPlayerIn('');
+                  setNewSubPlayerInNum('');
+                }}
+                className="p-4 space-y-3.5 text-xs"
+              >
+                <div>
+                  <label className="block font-bold text-slate-300 mb-1">
+                    🔻 Jugador que SALE del campo:
+                  </label>
+                  <select
+                    required
+                    value={newSubPlayerOut}
+                    onChange={(e) => setNewSubPlayerOut(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 text-slate-200 rounded-lg p-2 text-xs font-semibold focus:outline-none focus:border-amber-400 cursor-pointer"
+                  >
+                    <option value="">-- Selecciona jugador en campo --</option>
+                    {displayedPitchStarters.map((p, idx) => (
+                      <option key={p.id || idx} value={p.name || `Jugador #${p.number || idx + 1}`}>
+                        #{p.number || idx + 1} - {p.name || `Jugador #${p.number || idx + 1}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-300 mb-1">
+                    🟢 Elegir del banquillo / BD (opcional):
+                  </label>
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      const selectedVal = e.target.value;
+                      if (!selectedVal) return;
+                      const [numStr, ...nameParts] = selectedVal.split('::');
+                      setNewSubPlayerInNum(numStr ? Number(numStr) : '');
+                      setNewSubPlayerIn(nameParts.join('::'));
+                    }}
+                    className="w-full bg-slate-950 border border-slate-700 text-slate-200 rounded-lg p-2 text-xs font-semibold focus:outline-none focus:border-amber-400 cursor-pointer"
+                  >
+                    <option value="">-- Seleccionar suplente registrado --</option>
+                    {substitutes.map((s, idx) => (
+                      <option key={s.id || idx} value={`${s.number}::${s.name}`}>
+                        Banquillo: #{s.number} - {s.name}
+                      </option>
+                    ))}
+                    {dbStore
+                      .getPlayers()
+                      .filter(
+                        (p) =>
+                          p.team_name?.toLowerCase().includes(teamName.toLowerCase()) ||
+                          teamName.toLowerCase().includes(p.team_name?.toLowerCase() || '')
+                      )
+                      .map((p) => (
+                        <option key={p.id} value={`${p.number}::${p.name}`}>
+                          BD: #{p.number} - {p.name} ({p.position || 'Jugador'})
+                        </option>
+                      ))}
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="col-span-1">
+                    <label className="block font-bold text-slate-300 mb-1">Dorsal Entra:</label>
+                    <input
+                      type="number"
+                      placeholder="Ej: 19"
+                      value={newSubPlayerInNum}
+                      onChange={(e) =>
+                        setNewSubPlayerInNum(e.target.value === '' ? '' : Number(e.target.value))
+                      }
+                      className="w-full bg-slate-950 border border-slate-700 text-slate-200 rounded-lg p-2 text-xs font-mono font-bold text-center focus:outline-none focus:border-amber-400"
+                    />
+                  </div>
+
+                  <div className="col-span-2">
+                    <label className="block font-bold text-slate-300 mb-1">Nombre que Entra:</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Nombre del jugador..."
+                      value={newSubPlayerIn}
+                      onChange={(e) => setNewSubPlayerIn(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-700 text-slate-200 rounded-lg p-2 text-xs font-semibold focus:outline-none focus:border-amber-400"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block font-bold text-slate-300 mb-1">Minuto del cambio:</label>
+                    <input
+                      type="number"
+                      required
+                      min="1"
+                      max="130"
+                      placeholder="Ej: 65"
+                      value={newSubMinute}
+                      onChange={(e) =>
+                        setNewSubMinute(e.target.value === '' ? '' : Number(e.target.value))
+                      }
+                      className="w-full bg-slate-950 border border-slate-700 text-slate-200 rounded-lg p-2 text-xs font-mono font-bold text-center focus:outline-none focus:border-amber-400"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-slate-300 mb-1">Periodo:</label>
+                    <select
+                      value={newSubPeriod}
+                      onChange={(e) => setNewSubPeriod(Number(e.target.value))}
+                      className="w-full bg-slate-950 border border-slate-700 text-slate-200 rounded-lg p-2 text-xs font-semibold focus:outline-none focus:border-amber-400 cursor-pointer"
+                    >
+                      <option value={1}>1ª Parte</option>
+                      <option value={2}>2ª Parte</option>
+                      <option value={3}>1ª Prórroga (ET1)</option>
+                      <option value={4}>2ª Prórroga (ET2)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddSubModal(false)}
+                    className="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-black shadow-lg cursor-pointer"
+                  >
+                    Guardar Cambio
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
 
       </div>
     </div>,

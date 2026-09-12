@@ -20,9 +20,10 @@ import {
   Plus
 } from 'lucide-react';
 import { dbStore } from '@/lib/store/db-store';
-import { Match, MatchAnalysis, ActiveBotoneraSession } from '@/types';
+import { Match, MatchAnalysis, ActiveBotoneraSession, NormalizedEvent } from '@/types';
 import { MatchAnalysisSelectorModal } from '@/components/analysis/MatchAnalysisSelectorModal';
 import { AnalysisVisor } from '@/components/analysis/AnalysisVisor';
+import { calculateMatchScoresFromEvents } from '@/lib/analytics/dashboard-engine';
 
 export default function PartidosPage() {
   const [matches, setMatches] = useState<Match[]>([]);

@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { Edit3, Plus, Target, X, RotateCcw, CheckCircle2 } from 'lucide-react';
 import { Match, NormalizedEvent, Player, BotoneraButton } from '@/types';
 import { BotoneraPitchCanvas } from '@/components/botonera/BotoneraPitchCanvas';
+import { BotoneraGoalCanvas } from '@/components/botonera/BotoneraGoalCanvas';
 import { getButtonColorHex } from '@/components/botonera/BotoneraPanelEditor';
 import { PlayerAvatar, NumberBadge, TeamLogo } from '@/components/player/PlayerBadge';
 
@@ -150,6 +151,18 @@ export const FullEventFormModal: React.FC<FullEventFormModalProps> = ({
     (initialEvent?.metadata?.zone as string) || null
   );
 
+  // Goal Coordinates
+  const [goalX, setGoalX] = useState<number | null>(
+    initialEvent?.goal_x ?? (initialEvent?.metadata?.goal_x as number) ?? null
+  );
+  const [goalY, setGoalY] = useState<number | null>(
+    initialEvent?.goal_y ?? (initialEvent?.metadata?.goal_y as number) ?? null
+  );
+  const [goalZone, setGoalZone] = useState<string | null>(
+    initialEvent?.goal_zone || (initialEvent?.metadata?.goal_zone as string) || null
+  );
+  const [pitchTab, setPitchTab] = useState<'field' | 'goal'>('field');
+
   // Keep state synchronized whenever initialEvent changes
   useEffect(() => {
     if (initialEvent) {
@@ -170,6 +183,9 @@ export const FullEventFormModal: React.FC<FullEventFormModalProps> = ({
       setEndX(initialEvent.end_x ?? null);
       setEndY(initialEvent.end_y ?? null);
       setSelectedZone((initialEvent.metadata?.zone as string) || null);
+      setGoalX(initialEvent.goal_x ?? (initialEvent.metadata?.goal_x as number) ?? null);
+      setGoalY(initialEvent.goal_y ?? (initialEvent.metadata?.goal_y as number) ?? null);
+      setGoalZone(initialEvent.goal_zone || (initialEvent.metadata?.goal_zone as string) || null);
     }
   }, [initialEvent, homeTeam]);
 
@@ -263,12 +279,18 @@ export const FullEventFormModal: React.FC<FullEventFormModalProps> = ({
       y: y !== null && !isNaN(Number(y)) ? Number(y) : null,
       end_x: endX !== null && !isNaN(Number(endX)) ? Number(endX) : null,
       end_y: endY !== null && !isNaN(Number(endY)) ? Number(endY) : null,
+      goal_x: goalX !== null && !isNaN(Number(goalX)) ? Number(goalX) : null,
+      goal_y: goalY !== null && !isNaN(Number(goalY)) ? Number(goalY) : null,
+      goal_zone: goalZone || null,
       outcome: outcome || null,
       metadata: {
         ...(initialEvent?.metadata || {}),
         descriptors: cleanedDescriptors,
         tags: cleanedDescriptors,
         zone: selectedZone || null,
+        goal_x: goalX !== null && !isNaN(Number(goalX)) ? Number(goalX) : null,
+        goal_y: goalY !== null && !isNaN(Number(goalY)) ? Number(goalY) : null,
+        goal_zone: goalZone || null,
         buttonColor: matchedButton?.color || initialEvent?.metadata?.buttonColor,
         buttonName: matchedButton?.name || initialEvent?.metadata?.buttonName || eventType,
       },
@@ -436,38 +458,83 @@ export const FullEventFormModal: React.FC<FullEventFormModalProps> = ({
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5 text-amber-400 font-bold uppercase tracking-wider text-[10px]">
                 <Target className="w-4 h-4" />
-                <span>Campograma Táctico</span>
+                <span>Campogramas Tácticos</span>
               </div>
-              {selectedZone && (
-                <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold border border-emerald-500/40">
-                  {selectedZone}
-                </span>
-              )}
+
+              {/* Tabs Campo vs Portería */}
+              <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-800 text-[10px]">
+                <button
+                  type="button"
+                  onClick={() => setPitchTab('field')}
+                  className={`px-2.5 py-1 rounded-md font-bold transition flex items-center gap-1 cursor-pointer ${
+                    pitchTab === 'field'
+                      ? 'bg-emerald-600/30 text-emerald-200 border border-emerald-500/40'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <span>🏟️ Campo</span>
+                  {x !== null && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPitchTab('goal')}
+                  className={`px-2.5 py-1 rounded-md font-bold transition flex items-center gap-1 cursor-pointer ${
+                    pitchTab === 'goal'
+                      ? 'bg-amber-600/30 text-amber-200 border border-amber-500/40'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <span>🥅 Portería</span>
+                  {goalX !== null && <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>}
+                </button>
+              </div>
             </div>
 
-            <p className="text-[11px] text-slate-400">
-              Haz clic en el campo para fijar el origen (X, Y) y opcionalmente el destino (Vector).
-            </p>
+            {pitchTab === 'field' ? (
+              <>
+                <p className="text-[11px] text-slate-400">
+                  Haz clic en el campo para fijar el origen (X, Y) y opcionalmente el destino (Vector).
+                </p>
 
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-2 flex justify-center items-center overflow-hidden min-h-[280px]">
-              <BotoneraPitchCanvas
-                startX={x}
-                startY={y}
-                endX={endX}
-                endY={endY}
-                onSetCoords={(start, end) => {
-                  setX(start ? start.x : null);
-                  setY(start ? start.y : null);
-                  setEndX(end ? end.x : null);
-                  setEndY(end ? end.y : null);
-                }}
-                selectedZone={selectedZone}
-                onSelectZone={(zone) => setSelectedZone(zone)}
-                initialMode={isOriginalVector ? 'vector_arrow' : endX !== null ? 'vector_arrow' : 'point'}
-                lockMode={isOriginalVector}
-                pitchViewMode="full"
-              />
-            </div>
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-2 flex justify-center items-center overflow-hidden min-h-[280px]">
+                  <BotoneraPitchCanvas
+                    startX={x}
+                    startY={y}
+                    endX={endX}
+                    endY={endY}
+                    onSetCoords={(start, end) => {
+                      setX(start ? start.x : null);
+                      setY(start ? start.y : null);
+                      setEndX(end ? end.x : null);
+                      setEndY(end ? end.y : null);
+                    }}
+                    selectedZone={selectedZone}
+                    onSelectZone={(zone) => setSelectedZone(zone)}
+                    initialMode={isOriginalVector ? 'vector_arrow' : endX !== null ? 'vector_arrow' : 'point'}
+                    lockMode={isOriginalVector}
+                    pitchViewMode="full"
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-[11px] text-slate-400">
+                  Haz clic en la portería o selecciona una zona rápida para registrar a dónde fue el disparo.
+                </p>
+                <BotoneraGoalCanvas
+                  goalX={goalX}
+                  goalY={goalY}
+                  goalZone={goalZone}
+                  onSetGoalCoords={(coords, zone) => {
+                    setGoalX(coords ? coords.x : null);
+                    setGoalY(coords ? coords.y : null);
+                    setGoalZone(zone);
+                  }}
+                  hideHeader={false}
+                  className="w-full"
+                />
+              </>
+            )}
 
             <div className="space-y-2 pt-1">
               <div className="p-2 rounded-lg bg-slate-900 border border-slate-800 text-[11px] font-mono flex items-center justify-between text-slate-300">
