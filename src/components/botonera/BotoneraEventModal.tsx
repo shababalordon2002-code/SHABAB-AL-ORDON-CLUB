@@ -670,9 +670,86 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
     }
   };
 
-  const toggleDescriptor = (desc: string) => {
-    if (selectedDescriptors.includes(desc)) {
-      setSelectedDescriptors(selectedDescriptors.filter((d) => d !== desc));
+  const normalizeDescText = (txt: string): string => {
+    return (txt || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[:_\-\s]+/g, ' ')
+      .trim();
+  };
+
+  const isOptionSelected = (grpType: string, opt: string): boolean => {
+    const normOpt = normalizeDescText(opt);
+    const normGrp = normalizeDescText(grpType);
+    const normCombined = `${normGrp} ${normOpt}`;
+
+    return selectedDescriptors.some((d) => {
+      if (!d) return false;
+      const normD = normalizeDescText(d);
+      if (normD === normOpt || normD === normCombined) return true;
+
+      const colonIdx = d.indexOf(':');
+      if (colonIdx !== -1) {
+        const dGrp = normalizeDescText(d.slice(0, colonIdx));
+        const dVal = normalizeDescText(d.slice(colonIdx + 1));
+        if (dVal === normOpt) {
+          if (dGrp === normGrp || !dGrp || !normGrp || dGrp.includes(normGrp) || normGrp.includes(dGrp)) {
+            return true;
+          }
+          return true;
+        }
+      }
+      return false;
+    });
+  };
+
+  const handleToggleGroupOption = (grpType: string, opt: string) => {
+    const descKey = `${grpType}: ${opt}`;
+    const isCurrentlySelected = isOptionSelected(grpType, opt);
+    const grp = button.descriptorGroups?.find((g) => normalizeDescText(g.type) === normalizeDescText(grpType));
+    const allowMultiple = grp?.allowMultiple ?? false;
+
+    if (isCurrentlySelected) {
+      const normOpt = normalizeDescText(opt);
+      const normGrp = normalizeDescText(grpType);
+      setSelectedDescriptors(
+        selectedDescriptors.filter((d) => {
+          const normD = normalizeDescText(d);
+          if (normD === normOpt || normD === `${normGrp} ${normOpt}`) return false;
+          const colonIdx = d.indexOf(':');
+          if (colonIdx !== -1) {
+            const dVal = normalizeDescText(d.slice(colonIdx + 1));
+            if (dVal === normOpt) return false;
+          }
+          return true;
+        })
+      );
+    } else {
+      let nextDescriptors = selectedDescriptors;
+      if (!allowMultiple && grp) {
+        const allGrpOptsNorm = grp.options.map(normalizeDescText);
+        const normGrp = normalizeDescText(grpType);
+        nextDescriptors = selectedDescriptors.filter((d) => {
+          const colonIdx = d.indexOf(':');
+          if (colonIdx !== -1) {
+            const dGrp = normalizeDescText(d.slice(0, colonIdx));
+            const dVal = normalizeDescText(d.slice(colonIdx + 1));
+            if (dGrp === normGrp || allGrpOptsNorm.includes(dVal)) return false;
+          } else {
+            if (allGrpOptsNorm.includes(normalizeDescText(d))) return false;
+          }
+          return true;
+        });
+      }
+      setSelectedDescriptors([...nextDescriptors, descKey]);
+    }
+  };
+
+  const toggleFlatDescriptor = (desc: string) => {
+    const normDesc = normalizeDescText(desc);
+    if (selectedDescriptors.some((d) => normalizeDescText(d) === normDesc)) {
+      setSelectedDescriptors(selectedDescriptors.filter((d) => normalizeDescText(d) !== normDesc));
     } else {
       setSelectedDescriptors([...selectedDescriptors, desc]);
     }
@@ -718,10 +795,7 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
     const missing: string[] = [];
     button.descriptorGroups!.forEach((grp) => {
       if (grp.required) {
-        const hasSelection = grp.options.some((opt) => {
-          const descKey = `${grp.type}: ${opt}`;
-          return selectedDescriptors.includes(descKey) || selectedDescriptors.includes(opt);
-        });
+        const hasSelection = grp.options.some((opt) => isOptionSelected(grp.type, opt));
         if (!hasSelection) {
           missing.push(grp.type || 'Tipo Descriptor');
         }
@@ -1343,12 +1417,7 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
                   {button.descriptorGroups!.map((grp) => {
                     const isGrpMissing =
                       grp.required &&
-                      !grp.options.some((opt) => {
-                        const descKey = `${grp.type}: ${opt}`;
-                        return (
-                          selectedDescriptors.includes(descKey) || selectedDescriptors.includes(opt)
-                        );
-                      });
+                      !grp.options.some((opt) => isOptionSelected(grp.type, opt));
 
                     return (
                       <div
@@ -1372,19 +1441,16 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
 
                         <div className="flex flex-wrap gap-1.5">
                           {grp.options.map((opt) => {
-                            const descKey = `${grp.type}: ${opt}`;
-                            const isSelected =
-                              selectedDescriptors.includes(descKey) ||
-                              selectedDescriptors.includes(opt);
+                            const isSelected = isOptionSelected(grp.type, opt);
 
                             return (
                               <button
                                 key={opt}
                                 type="button"
-                                onClick={() => toggleDescriptor(descKey)}
+                                onClick={() => handleToggleGroupOption(grp.type, opt)}
                                 className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all text-left cursor-pointer ${
                                   isSelected
-                                    ? 'bg-amber-500/20 border-amber-400 text-amber-300 font-extrabold shadow-sm shadow-amber-950/40'
+                                    ? 'bg-amber-500/20 border-amber-400 text-amber-300 font-extrabold shadow-sm shadow-amber-950/40 ring-1 ring-amber-400/50'
                                     : 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800 hover:text-white'
                                 }`}
                               >
@@ -1407,12 +1473,14 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
                   </span>
                   <div className="flex flex-wrap gap-1.5">
                     {button.descriptors!.map((desc) => {
-                      const isSelected = selectedDescriptors.includes(desc);
+                      const isSelected = selectedDescriptors.some(
+                        (d) => normalizeDescText(d) === normalizeDescText(desc)
+                      );
                       return (
                         <button
                           key={desc}
                           type="button"
-                          onClick={() => toggleDescriptor(desc)}
+                          onClick={() => toggleFlatDescriptor(desc)}
                           className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
                             isSelected
                               ? 'bg-emerald-600/20 border-emerald-400 text-emerald-300 font-bold'

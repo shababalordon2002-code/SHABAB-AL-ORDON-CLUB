@@ -581,25 +581,97 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
 
       {/* ── MODAL DE EDICIÓN: MISMA VENTANA (BOTONERA EVENT MODAL) ── */}
       {editingEvent && (() => {
-        const matchedButton: BotoneraButton = buttons.find(
-          (b) =>
-            b.name.toLowerCase().trim() === (editingEvent.event_type || '').toLowerCase().trim() ||
-            b.name.toLowerCase().trim() === (editingEvent.category || '').toLowerCase().trim() ||
-            b.category.toLowerCase().trim() === (editingEvent.category || '').toLowerCase().trim()
-        ) || {
-          id: `btn_edit_${editingEvent.event_id}`,
-          name: editingEvent.event_type || editingEvent.category || 'Acción Registrada',
-          category: editingEvent.category || 'General',
-          type: 'category',
-          color: (editingEvent.metadata?.buttonColor as any) || 'emerald',
-          leadTime: (editingEvent.metadata?.leadTime as number) ?? 5,
-          lagTime: (editingEvent.metadata?.lagTime as number) ?? 5,
-          pitchRequired: editingEvent.end_x !== null ? 'vector_arrow' : (editingEvent.metadata?.zone || editingEvent.metadata?.zone_name) ? 'zone_remate' : editingEvent.x !== null ? 'point_full' : undefined,
-          playerRequiredMode: 'optional',
-          teamRequiredMode: 'optional',
-          descriptors: [],
-          descriptorGroups: [],
-        };
+        const allTemplates = typeof dbStore !== 'undefined' ? dbStore.getBotoneraTemplates() : [];
+        const allTemplateButtons = allTemplates.flatMap((t) => t.buttons || []);
+
+        const foundButton =
+          buttons.find((b) => b.id === editingEvent.metadata?.buttonId) ||
+          buttons.find(
+            (b) =>
+              b.name.toLowerCase().trim() === (editingEvent.event_type || '').toLowerCase().trim() ||
+              b.name.toLowerCase().trim() === (editingEvent.category || '').toLowerCase().trim()
+          ) ||
+          allTemplateButtons.find((b) => b.id === editingEvent.metadata?.buttonId) ||
+          allTemplateButtons.find(
+            (b) =>
+              b.name.toLowerCase().trim() === (editingEvent.event_type || '').toLowerCase().trim() ||
+              b.name.toLowerCase().trim() === (editingEvent.category || '').toLowerCase().trim()
+          ) ||
+          buttons.find(
+            (b) =>
+              b.category.toLowerCase().trim() === (editingEvent.category || '').toLowerCase().trim()
+          ) ||
+          allTemplateButtons.find(
+            (b) =>
+              b.category.toLowerCase().trim() === (editingEvent.category || '').toLowerCase().trim()
+          );
+
+        const isShotEvent =
+          (editingEvent.event_type || '').toLowerCase().includes('remate') ||
+          (editingEvent.event_type || '').toLowerCase().includes('tiro') ||
+          (editingEvent.category || '').toLowerCase().includes('remate') ||
+          (editingEvent.category || '').toLowerCase().includes('tiro') ||
+          (editingEvent.event_type || '').toLowerCase().includes('gol') ||
+          editingEvent.goal_x !== null;
+
+        const defaultShotGroups = [
+          { id: 'grp_res', type: 'Resultado', required: true, options: ['Fuera', 'GOL', 'Parada', 'Atajado'] },
+          { id: 'grp_sup', type: 'Superficie Contacto', options: ['Pie Derecho', 'Pie Izquierdo', 'Cabeza', 'Volea'] },
+          { id: 'grp_pres', type: 'Presión Rival', options: ['Sin Marca', 'Presion Media', 'Presion Alta'] },
+          { id: 'grp_ocas', type: 'Ocasión', options: ['Muy clara', 'Clara', 'Sin importancia'] },
+        ];
+
+        let matchedButton: BotoneraButton;
+        if (foundButton) {
+          const hasGroups = foundButton.descriptorGroups && foundButton.descriptorGroups.length > 0;
+          matchedButton = {
+            ...foundButton,
+            descriptorGroups: hasGroups
+              ? foundButton.descriptorGroups
+              : isShotEvent
+              ? defaultShotGroups
+              : foundButton.descriptorGroups || [],
+            pitchRequired:
+              foundButton.pitchRequired ||
+              (isShotEvent
+                ? 'pitch_and_goal'
+                : editingEvent.end_x !== null
+                ? 'vector_arrow'
+                : editingEvent.x !== null
+                ? 'point_full'
+                : 'vector_arrow'),
+            secondaryPitchRequired:
+              foundButton.secondaryPitchRequired || (isShotEvent ? 'goal_mouth' : undefined),
+            pitchDisplayCount: foundButton.pitchDisplayCount || (isShotEvent ? 2 : 1),
+            playerRequiredMode: foundButton.playerRequiredMode || 'optional',
+            teamRequiredMode: foundButton.teamRequiredMode || 'optional',
+          };
+        } else {
+          matchedButton = {
+            id: `btn_edit_${editingEvent.event_id}`,
+            name: editingEvent.event_type || editingEvent.category || 'Acción Registrada',
+            category: editingEvent.category || 'General',
+            type: 'category',
+            color: (editingEvent.metadata?.buttonColor as any) || 'emerald',
+            leadTime: (editingEvent.metadata?.leadTime as number) ?? 5,
+            lagTime: (editingEvent.metadata?.lagTime as number) ?? 5,
+            pitchRequired: isShotEvent
+              ? 'pitch_and_goal'
+              : editingEvent.end_x !== null
+              ? 'vector_arrow'
+              : editingEvent.metadata?.zone || editingEvent.metadata?.zone_name
+              ? 'zone_remate'
+              : editingEvent.x !== null
+              ? 'point_full'
+              : 'vector_arrow',
+            secondaryPitchRequired: isShotEvent ? 'goal_mouth' : undefined,
+            pitchDisplayCount: isShotEvent ? 2 : 1,
+            playerRequiredMode: 'optional',
+            teamRequiredMode: 'optional',
+            descriptors: [],
+            descriptorGroups: isShotEvent ? defaultShotGroups : [],
+          };
+        }
 
         const existingDescriptors: string[] = (() => {
           const list: string[] = [];
@@ -617,6 +689,34 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
           }
           return Array.from(new Set(list));
         })();
+
+        // If there are key: value descriptors not present in descriptorGroups, add them dynamically
+        if (matchedButton.descriptorGroups) {
+          existingDescriptors.forEach((desc) => {
+            const colonIdx = desc.indexOf(':');
+            if (colonIdx !== -1) {
+              const grpName = desc.slice(0, colonIdx).trim();
+              const optVal = desc.slice(colonIdx + 1).trim();
+              const grpExists = matchedButton.descriptorGroups!.some(
+                (g) => g.type.toLowerCase().trim() === grpName.toLowerCase().trim()
+              );
+              if (!grpExists && grpName && optVal) {
+                matchedButton.descriptorGroups!.push({
+                  id: `grp_dyn_${grpName.toLowerCase().replace(/\s+/g, '_')}`,
+                  type: grpName,
+                  options: [optVal],
+                });
+              } else if (grpExists) {
+                const grp = matchedButton.descriptorGroups!.find(
+                  (g) => g.type.toLowerCase().trim() === grpName.toLowerCase().trim()
+                );
+                if (grp && !grp.options.some((o) => o.toLowerCase().trim() === optVal.toLowerCase().trim())) {
+                  grp.options.push(optVal);
+                }
+              }
+            }
+          });
+        }
 
         const existingPlayerId =
           editingEvent.player_id ||
@@ -659,10 +759,17 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
                 players.find((p) => p.id === modalPlayerId) ||
                 (modalPlayerId ? dbStore.getPlayers().find((p) => p.id === modalPlayerId) : null);
 
-              let outcomeVal =
-                finalDescriptors.find((d) => ['Éxito', 'Fallido', 'Gol', 'A puerta', 'Fuera'].includes(d)) ||
-                editingEvent.outcome ||
-                null;
+              let outcomeVal: string | null = editingEvent.outcome || null;
+              for (const d of finalDescriptors) {
+                const normD = d.toLowerCase().trim();
+                if (normD.startsWith('resultado:')) {
+                  outcomeVal = d.slice(d.indexOf(':') + 1).trim();
+                  break;
+                }
+                if (['gol', 'parada', 'atajado', 'fuera', 'poste', 'éxito', 'exito', 'fallido', 'a puerta'].includes(normD)) {
+                  outcomeVal = d;
+                }
+              }
 
               const chosenTeamName =
                 modalTeamName ||
