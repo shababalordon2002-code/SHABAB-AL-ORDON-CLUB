@@ -1162,14 +1162,19 @@ export const BotoneraLiveStats: React.FC<BotoneraLiveStatsProps> = ({
                           <span>Descriptores:</span>
                         </div>
                         <div className="flex flex-wrap gap-1">
-                          {getEventDescriptorsList(hoveredEvent).map((desc, i) => (
-                            <span
-                              key={i}
-                              className="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-[10px] font-bold text-slate-200"
-                            >
-                              {desc}
-                            </span>
-                          ))}
+                          {getEventDescriptorsList(hoveredEvent).map((desc, i) => {
+                            const colonIdx = desc.indexOf(':');
+                            const displayVal = colonIdx !== -1 ? desc.slice(colonIdx + 1).trim() : desc.trim();
+                            return (
+                              <span
+                                key={i}
+                                title={desc}
+                                className="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-[10px] font-bold text-slate-200"
+                              >
+                                {displayVal}
+                              </span>
+                            );
+                          })}
                         </div>
                       </div>
                     )}
@@ -1304,14 +1309,19 @@ export const BotoneraLiveStats: React.FC<BotoneraLiveStatsProps> = ({
                         <span>Descriptores de la Acción:</span>
                       </span>
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        {activeDescriptors.map((d, i) => (
-                          <span
-                            key={i}
-                            className="px-2 py-0.5 rounded-lg bg-slate-950 border border-slate-800 text-[11px] font-semibold text-slate-200"
-                          >
-                            {d}
-                          </span>
-                        ))}
+                        {activeDescriptors.map((d, i) => {
+                          const colonIdx = d.indexOf(':');
+                          const displayVal = colonIdx !== -1 ? d.slice(colonIdx + 1).trim() : d.trim();
+                          return (
+                            <span
+                              key={i}
+                              title={d}
+                              className="px-2 py-0.5 rounded-lg bg-slate-950 border border-slate-800 text-[11px] font-semibold text-slate-200"
+                            >
+                              {displayVal}
+                            </span>
+                          );
+                        })}
                       </div>
                     </div>
                   )}

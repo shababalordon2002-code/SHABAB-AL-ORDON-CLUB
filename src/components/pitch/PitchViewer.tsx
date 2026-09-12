@@ -364,11 +364,15 @@ export const PitchViewer: React.FC<PitchViewerProps> = ({
                 <div className="pt-1 border-t border-slate-800/80 space-y-1">
                   <span className="text-[10px] font-bold text-amber-400 uppercase">Descriptores:</span>
                   <div className="flex flex-wrap gap-1">
-                    {uniqueDescs.map((d, i) => (
-                      <span key={i} className="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-[10px] text-slate-200 font-bold">
-                        {d}
-                      </span>
-                    ))}
+                    {uniqueDescs.map((d, i) => {
+                      const colonIdx = d.indexOf(':');
+                      const displayVal = colonIdx !== -1 ? d.slice(colonIdx + 1).trim() : d.trim();
+                      return (
+                        <span key={i} title={d} className="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-[10px] text-slate-200 font-bold">
+                          {displayVal}
+                        </span>
+                      );
+                    })}
                   </div>
                 </div>
               );

@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import { NormalizedEvent, BotoneraButton, Player, Match } from '@/types';
 import { getButtonColorHex } from './BotoneraPanelEditor';
-import { FullEventFormModal } from '@/components/analysis/FullEventFormModal';
+import { BotoneraEventModal } from './BotoneraEventModal';
 import { TeamLogo } from '@/components/player/PlayerBadge';
 import { dbStore } from '@/lib/store/db-store';
 import { calculateEventVideoTime, formatVideoTime } from '@/lib/analytics/video-utils';
@@ -106,21 +106,17 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
 
   // Edit Event State
   const [editingEvent, setEditingEvent] = useState<NormalizedEvent | null>(null);
-  const [editPlayerName, setEditPlayerName] = useState<string>('');
-  const [editCategory, setEditCategory] = useState<string>('');
-  const [editPeriod, setEditPeriod] = useState<number>(1);
-  const [editMin, setEditMin] = useState<number>(0);
-  const [editSec, setEditSec] = useState<number>(0);
-  const [editOutcome, setEditOutcome] = useState<string>('');
 
   // Filter events
   const filteredEvents = events.filter((e) => {
     const q = searchQuery.toLowerCase();
+    const metaDescs = Array.isArray(e.metadata?.descriptors) ? e.metadata.descriptors.join(' ').toLowerCase() : '';
     const matchesSearch =
       e.category.toLowerCase().includes(q) ||
       (e.event_type || '').toLowerCase().includes(q) ||
       e.player_name.toLowerCase().includes(q) ||
       (e.subcategory || '').toLowerCase().includes(q) ||
+      metaDescs.includes(q) ||
       (e.outcome && e.outcome.toLowerCase().includes(q));
 
     const matchesCategory = selectedCategory === 'all' || e.category === selectedCategory;
@@ -150,9 +146,24 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
   /** Descriptores marcados en el evento (los nuevos van en metadata, los viejos en subcategory) */
   const getDescriptors = (evt: NormalizedEvent): string[] => {
     const fromMeta = evt.metadata?.descriptors;
-    if (Array.isArray(fromMeta) && fromMeta.length > 0) return fromMeta;
+    if (Array.isArray(fromMeta) && fromMeta.length > 0) {
+      return fromMeta
+        .flatMap((d) => (typeof d === 'string' ? d.split(',') : [d]))
+        .map((d) => String(d).trim())
+        .filter(Boolean);
+    }
     if (evt.subcategory) return evt.subcategory.split(',').map((d) => d.trim()).filter(Boolean);
     return [];
+  };
+
+  /** Extrae solo el valor/resultado del descriptor omitiendo el título (ej: "Resultado: Parada" -> "Parada") */
+  const formatDescriptorDisplay = (desc: string): string => {
+    if (!desc) return '';
+    const colonIdx = desc.indexOf(':');
+    if (colonIdx !== -1) {
+      return desc.slice(colonIdx + 1).trim();
+    }
+    return desc.trim();
   };
 
   /** Color del botón que generó el evento, para pintar la fila igual que la botonera */
@@ -177,34 +188,6 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
   // Start Editing an Event
   const handleStartEdit = (evt: NormalizedEvent) => {
     setEditingEvent(evt);
-    setEditPlayerName(evt.player_name || '');
-    setEditCategory(evt.category || '');
-    setEditPeriod(evt.period || 1);
-    const totalSec = evt.timestamp || 0;
-    setEditMin(Math.floor(totalSec / 60));
-    setEditSec(Math.floor(totalSec % 60));
-    setEditOutcome(evt.outcome || '');
-  };
-
-  // Save Edited Event
-  const handleSaveEdit = () => {
-    if (!editingEvent || !onUpdateEvent) return;
-
-    const totalSeconds = editMin * 60 + editSec;
-    const updated: NormalizedEvent = {
-      ...editingEvent,
-      player_name: editPlayerName.trim() || 'Sin asignar',
-      category: editCategory.trim() || 'Acción',
-      period: editPeriod,
-      timestamp: totalSeconds,
-      minute: editMin,
-      second: editSec,
-      outcome: editOutcome.trim() || null,
-      updated_at: new Date().toISOString(),
-    };
-
-    onUpdateEvent(updated);
-    setEditingEvent(null);
   };
 
   return (
@@ -431,23 +414,27 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
                       <td className="p-2.5">
                         {descriptors.length > 0 ? (
                           <span className="flex flex-wrap gap-1">
-                            {descriptors.map((d, i) => (
-                              <span
-                                key={`${evt.event_id}_d${i}`}
-                                className="px-1.5 py-0.5 rounded text-[10px] font-bold border"
-                                style={{
-                                  backgroundColor: `${color}26`,
-                                  borderColor: `${color}80`,
-                                  color: '#e2e8f0',
-                                }}
-                              >
-                                {d}
-                              </span>
-                            ))}
+                            {descriptors.map((d, i) => {
+                              const displayVal = formatDescriptorDisplay(d);
+                              return (
+                                <span
+                                  key={`${evt.event_id}_d${i}`}
+                                  title={d}
+                                  className="px-1.5 py-0.5 rounded text-[10px] font-bold border inline-block"
+                                  style={{
+                                    backgroundColor: `${color}26`,
+                                    borderColor: `${color}80`,
+                                    color: '#e2e8f0',
+                                  }}
+                                >
+                                  {displayVal}
+                                </span>
+                              );
+                            })}
                           </span>
                         ) : evt.outcome ? (
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                            {evt.outcome}
+                            {formatDescriptorDisplay(evt.outcome)}
                           </span>
                         ) : (
                           <span className="text-slate-500 text-[10px]">-</span>
@@ -592,21 +579,132 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
         </table>
       </div>
 
-      {/* Edit Event Modal with full campograma pitch canvas, vector arrow, zone, and descriptors */}
-      {editingEvent && (
-        <FullEventFormModal
-          key={editingEvent.event_id}
-          initialEvent={editingEvent}
-          players={players}
-          buttons={buttons}
-          onSave={(updated) => {
-            if (onUpdateEvent) onUpdateEvent(updated);
-            setEditingEvent(null);
-          }}
-          onClose={() => setEditingEvent(null)}
-          title="Editar Evento Registrado (Campograma & Descriptores)"
-        />
-      )}
+      {/* ── MODAL DE EDICIÓN: MISMA VENTANA (BOTONERA EVENT MODAL) ── */}
+      {editingEvent && (() => {
+        const matchedButton: BotoneraButton = buttons.find(
+          (b) =>
+            b.name.toLowerCase().trim() === (editingEvent.event_type || '').toLowerCase().trim() ||
+            b.name.toLowerCase().trim() === (editingEvent.category || '').toLowerCase().trim() ||
+            b.category.toLowerCase().trim() === (editingEvent.category || '').toLowerCase().trim()
+        ) || {
+          id: `btn_edit_${editingEvent.event_id}`,
+          name: editingEvent.event_type || editingEvent.category || 'Acción Registrada',
+          category: editingEvent.category || 'General',
+          type: 'category',
+          color: (editingEvent.metadata?.buttonColor as any) || 'emerald',
+          leadTime: (editingEvent.metadata?.leadTime as number) ?? 5,
+          lagTime: (editingEvent.metadata?.lagTime as number) ?? 5,
+          pitchRequired: editingEvent.end_x !== null ? 'vector_arrow' : (editingEvent.metadata?.zone || editingEvent.metadata?.zone_name) ? 'zone_remate' : editingEvent.x !== null ? 'point_full' : undefined,
+          playerRequiredMode: 'optional',
+          teamRequiredMode: 'optional',
+          descriptors: [],
+          descriptorGroups: [],
+        };
+
+        const existingDescriptors: string[] = (() => {
+          const list: string[] = [];
+          if (Array.isArray(editingEvent.metadata?.descriptors)) {
+            list.push(...editingEvent.metadata.descriptors);
+          }
+          if (editingEvent.subcategory) {
+            editingEvent.subcategory.split(',').map((s) => s.trim()).filter(Boolean).forEach((d) => list.push(d));
+          }
+          if (editingEvent.outcome) {
+            list.push(editingEvent.outcome);
+            if (!editingEvent.outcome.includes(':')) {
+              list.push(`Resultado: ${editingEvent.outcome}`);
+            }
+          }
+          return Array.from(new Set(list));
+        })();
+
+        const existingPlayerId =
+          editingEvent.player_id ||
+          players.find((p) => p.name.toLowerCase().trim() === (editingEvent.player_name || '').toLowerCase().trim())?.id ||
+          null;
+
+        const initialPitchData = {
+          startX: editingEvent.x ?? null,
+          startY: editingEvent.y ?? null,
+          endX: editingEvent.end_x ?? null,
+          endY: editingEvent.end_y ?? null,
+          selectedZone: (editingEvent.metadata?.zone as string) ?? (editingEvent.metadata?.zone_name as string) ?? null,
+          goalX: editingEvent.goal_x ?? (editingEvent.metadata?.goal_x as number) ?? null,
+          goalY: editingEvent.goal_y ?? (editingEvent.metadata?.goal_y as number) ?? null,
+          goalZone: editingEvent.goal_zone ?? (editingEvent.metadata?.goal_zone as string) ?? null,
+        };
+
+        return (
+          <BotoneraEventModal
+            key={editingEvent.event_id}
+            button={matchedButton}
+            initialGlobalDescriptors={existingDescriptors}
+            players={players}
+            selectedPlayerId={existingPlayerId}
+            currentMatch={match}
+            clickTimestamp={editingEvent.timestamp ?? undefined}
+            clickPeriod={editingEvent.period ?? undefined}
+            matchEvents={events}
+            initialPitchData={initialPitchData}
+            initialTeamName={editingEvent.team_name}
+            isEditing={true}
+            onSave={(finalDescriptors, pitchData, modalPlayerId, modalTeamName, modalPlayerObj) => {
+              if (!onUpdateEvent) {
+                setEditingEvent(null);
+                return;
+              }
+
+              const activePlayer =
+                modalPlayerObj ||
+                players.find((p) => p.id === modalPlayerId) ||
+                (modalPlayerId ? dbStore.getPlayers().find((p) => p.id === modalPlayerId) : null);
+
+              let outcomeVal =
+                finalDescriptors.find((d) => ['Éxito', 'Fallido', 'Gol', 'A puerta', 'Fuera'].includes(d)) ||
+                editingEvent.outcome ||
+                null;
+
+              const chosenTeamName =
+                modalTeamName ||
+                (activePlayer ? activePlayer.team_name : editingEvent.team_name) ||
+                'Shabab Al Ordon';
+
+              const updated: NormalizedEvent = {
+                ...editingEvent,
+                team_id: activePlayer?.team_id || editingEvent.team_id || 'team_shabab_al_ordon',
+                team_name: chosenTeamName,
+                player_id: activePlayer ? activePlayer.id : modalPlayerId !== undefined ? modalPlayerId : editingEvent.player_id,
+                player_name: activePlayer ? activePlayer.name : modalPlayerId === null ? 'Jugador Sin Asignar' : editingEvent.player_name || 'Jugador Sin Asignar',
+                subcategory: finalDescriptors.join(', ') || null,
+                x: pitchData ? pitchData.startX ?? null : editingEvent.x,
+                y: pitchData ? pitchData.startY ?? null : editingEvent.y,
+                end_x: pitchData ? pitchData.endX ?? null : editingEvent.end_x,
+                end_y: pitchData ? pitchData.endY ?? null : editingEvent.end_y,
+                goal_x: pitchData ? pitchData.goalX ?? null : editingEvent.goal_x,
+                goal_y: pitchData ? pitchData.goalY ?? null : editingEvent.goal_y,
+                goal_zone: pitchData ? pitchData.goalZone ?? null : editingEvent.goal_zone,
+                outcome: outcomeVal,
+                metadata: {
+                  ...(editingEvent.metadata || {}),
+                  descriptors: finalDescriptors,
+                  zone: pitchData ? pitchData.selectedZone ?? null : (editingEvent.metadata?.zone ?? null),
+                  goal_x: pitchData ? pitchData.goalX ?? null : (editingEvent.metadata?.goal_x ?? null),
+                  goal_y: pitchData ? pitchData.goalY ?? null : (editingEvent.metadata?.goal_y ?? null),
+                  goal_zone: pitchData ? pitchData.goalZone ?? null : (editingEvent.metadata?.goal_zone ?? null),
+                  buttonId: matchedButton.id,
+                  buttonName: matchedButton.name,
+                  buttonColor: matchedButton.color,
+                },
+                updated_at: new Date().toISOString(),
+              };
+
+              onUpdateEvent(updated);
+              setEditingEvent(null);
+            }}
+            onCancel={() => setEditingEvent(null)}
+          />
+        );
+      })()}
 
       {/* ── MODAL CONFIRMACIÓN ALTA SEGURIDAD: BORRAR UN EVENTO SELECCIONADO ── */}
       {deletingEventTarget && (

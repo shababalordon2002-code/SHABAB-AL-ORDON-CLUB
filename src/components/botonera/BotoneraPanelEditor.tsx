@@ -1410,7 +1410,7 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                           e.stopPropagation();
                           handleDuplicateSelected([btn.id]);
                         }}
-                        className="absolute -top-2 -left-2 p-1 rounded-full bg-slate-800 text-amber-300 font-bold border border-amber-400/50 shadow-lg hover:bg-amber-500 hover:text-slate-950 hover:scale-110 transition z-50 cursor-pointer"
+                        className="absolute -top-2.5 -left-2.5 w-6 h-6 rounded-full bg-slate-900 text-amber-300 font-bold border border-amber-400/80 shadow-xl hover:bg-amber-500 hover:text-slate-950 hover:scale-110 transition z-50 cursor-pointer flex items-center justify-center"
                         title="Duplicar este título al instante"
                       >
                         <Files className="w-3 h-3" />
@@ -1421,7 +1421,7 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                           e.stopPropagation();
                           setEditingButton(btn);
                         }}
-                        className="absolute -top-2 -right-2 p-1 rounded-full bg-amber-500 text-slate-950 font-bold shadow-lg hover:scale-110 transition z-50 cursor-pointer"
+                        className="absolute -top-2.5 -right-2.5 w-6 h-6 rounded-full bg-amber-500 text-slate-950 font-bold border border-amber-300 shadow-xl hover:scale-110 transition z-50 cursor-pointer flex items-center justify-center"
                         title="Editar Formato y Color de Texto"
                       >
                         <Pencil className="w-3 h-3" />
@@ -1429,7 +1429,7 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
 
                       <div
                         onMouseDown={(e) => handleStartResize(e, btn)}
-                        className="absolute -bottom-2 -right-2 w-5 h-5 rounded-full bg-amber-400 border-2 border-slate-950 cursor-se-resize flex items-center justify-center text-[10px] text-slate-950 font-bold shadow-lg hover:scale-125 transition z-50"
+                        className="absolute -bottom-2.5 -right-2.5 w-6 h-6 rounded-full bg-amber-400 border-2 border-slate-950 cursor-se-resize flex items-center justify-center text-[11px] text-slate-950 font-black shadow-xl hover:scale-125 transition z-50 select-none"
                         title="Estirar Área de Texto"
                       >
                         ↘
@@ -1463,13 +1463,15 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                 }}
                 className={`absolute ${
                   widthPct < 11 || heightPct < 9 ? 'p-1 rounded-lg' : widthPct < 16 || heightPct < 12 ? 'p-1.5 rounded-xl' : 'p-2 sm:p-2.5 rounded-2xl'
-                } border flex flex-col items-center justify-center text-center transition-shadow duration-75 select-none shadow-xl overflow-hidden ${
+                } border flex flex-col items-center justify-center text-center transition-shadow duration-75 select-none shadow-xl ${
+                  isEditMode ? 'overflow-visible' : 'overflow-hidden'
+                } ${
                   isTagActive
                     ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-amber-950/50 ring-4 ring-amber-400 z-30'
                     : styles.className
                 } ${isClicking ? 'scale-95 ring-4 ring-emerald-400' : ''} ${
                   isEditMode ? 'cursor-grab active:cursor-grabbing hover:border-amber-400' : 'cursor-pointer'
-                } ${isSelected && isEditMode ? 'ring-2 ring-amber-400 ring-offset-2 ring-offset-slate-950 border-amber-400 z-20' : ''}`}
+                } ${isSelected && isEditMode ? 'ring-2 ring-amber-400 ring-offset-2 ring-offset-slate-950 border-amber-400 z-30' : ''}`}
               >
                 {/* Optional Key Shortcut Pill (Top Right) */}
                 {btn.keyShortcut && (
@@ -1501,7 +1503,7 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                         e.stopPropagation();
                         handleDuplicateSelected([btn.id]);
                       }}
-                      className="absolute -top-2 -left-2 p-1 rounded-full bg-slate-800 text-amber-300 font-bold border border-amber-400/50 shadow-lg hover:bg-amber-500 hover:text-slate-950 hover:scale-110 transition z-50 cursor-pointer"
+                      className="absolute -top-2.5 -left-2.5 w-6 h-6 rounded-full bg-slate-900 text-amber-300 font-bold border border-amber-400/80 shadow-xl hover:bg-amber-500 hover:text-slate-950 hover:scale-110 transition z-50 cursor-pointer flex items-center justify-center"
                       title="Duplicar este elemento al instante"
                     >
                       <Files className="w-3 h-3" />
@@ -1513,7 +1515,7 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                         e.stopPropagation();
                         setEditingButton(btn);
                       }}
-                      className="absolute -top-2 -right-2 p-1 rounded-full bg-amber-500 text-slate-950 font-bold shadow-lg hover:scale-110 transition z-50 cursor-pointer"
+                      className="absolute -top-2.5 -right-2.5 w-6 h-6 rounded-full bg-amber-500 text-slate-950 font-bold border border-amber-300 shadow-xl hover:scale-110 transition z-50 cursor-pointer flex items-center justify-center"
                       title="Editar Propiedades"
                     >
                       <Pencil className="w-3 h-3" />
@@ -1522,7 +1524,7 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                     {/* Bottom Right PowerPoint Resize Handle (Estirar objeto en grande) */}
                     <div
                       onMouseDown={(e) => handleStartResize(e, btn)}
-                      className="absolute -bottom-2 -right-2 w-5 h-5 rounded-full bg-amber-400 border-2 border-slate-950 cursor-se-resize flex items-center justify-center text-[10px] text-slate-950 font-bold shadow-lg hover:scale-125 transition z-50"
+                      className="absolute -bottom-2.5 -right-2.5 w-6 h-6 rounded-full bg-amber-400 border-2 border-slate-950 cursor-se-resize flex items-center justify-center text-[11px] text-slate-950 font-black shadow-xl hover:scale-125 transition z-50 select-none"
                       title="Haz clic y arrastra para redimensionar el objeto"
                     >
                       ↘

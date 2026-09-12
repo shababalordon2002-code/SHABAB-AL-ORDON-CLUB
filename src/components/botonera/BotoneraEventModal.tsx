@@ -38,6 +38,18 @@ interface BotoneraEventModalProps {
   clickTimestamp?: number;
   clickPeriod?: number;
   matchEvents?: NormalizedEvent[];
+  initialPitchData?: {
+    startX?: number | null;
+    startY?: number | null;
+    endX?: number | null;
+    endY?: number | null;
+    selectedZone?: string | null;
+    goalX?: number | null;
+    goalY?: number | null;
+    goalZone?: string | null;
+  };
+  initialTeamName?: string | null;
+  isEditing?: boolean;
   onSave: (
     finalDescriptors: string[],
     pitchData?: any,
@@ -161,6 +173,9 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
   clickTimestamp,
   clickPeriod,
   matchEvents = [],
+  initialPitchData,
+  initialTeamName,
+  isEditing = false,
   onSave,
   onCancel,
 }) => {
@@ -511,6 +526,7 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
 
   // Team selection state
   const [modalTeamName, setModalTeamName] = useState<string | null>(() => {
+    if (initialTeamName) return initialTeamName;
     if (initialPlayerId) {
       const initialP =
         squadData.homeAll.find((p) => p.id === initialPlayerId) ||
@@ -539,16 +555,16 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
   const [selectedDescriptors, setSelectedDescriptors] = useState<string[]>([...initialGlobalDescriptors]);
 
   // Pitch canvas state
-  const [startX, setStartX] = useState<number | null>(null);
-  const [startY, setStartY] = useState<number | null>(null);
-  const [endX, setEndX] = useState<number | null>(null);
-  const [endY, setEndY] = useState<number | null>(null);
-  const [selectedZone, setSelectedZone] = useState<string | null>(null);
+  const [startX, setStartX] = useState<number | null>(initialPitchData?.startX ?? null);
+  const [startY, setStartY] = useState<number | null>(initialPitchData?.startY ?? null);
+  const [endX, setEndX] = useState<number | null>(initialPitchData?.endX ?? null);
+  const [endY, setEndY] = useState<number | null>(initialPitchData?.endY ?? null);
+  const [selectedZone, setSelectedZone] = useState<string | null>(initialPitchData?.selectedZone ?? null);
 
   // Goal canvas state
-  const [goalX, setGoalX] = useState<number | null>(null);
-  const [goalY, setGoalY] = useState<number | null>(null);
-  const [goalZone, setGoalZone] = useState<string | null>(null);
+  const [goalX, setGoalX] = useState<number | null>(initialPitchData?.goalX ?? null);
+  const [goalY, setGoalY] = useState<number | null>(initialPitchData?.goalY ?? null);
+  const [goalZone, setGoalZone] = useState<string | null>(initialPitchData?.goalZone ?? null);
 
   const hasFlatDescriptors = button.descriptors && button.descriptors.length > 0;
   const hasGroupDescriptors = button.descriptorGroups && button.descriptorGroups.length > 0;
@@ -763,8 +779,13 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
               className="w-3.5 h-3.5 rounded-full shrink-0 shadow"
               style={{ backgroundColor: button.color.startsWith('#') ? button.color : '#10b981' }}
             />
-            <h3 className="font-black text-sm sm:text-base text-white truncate">
-              {button.name}
+            <h3 className="font-black text-sm sm:text-base text-white truncate flex items-center gap-2">
+              {isEditing && (
+                <span className="text-amber-300 bg-amber-500/20 border border-amber-500/40 text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">
+                  Editar
+                </span>
+              )}
+              <span>{button.name}</span>
             </h3>
             {clickTimestamp !== undefined && (
               <span className="text-[11px] font-mono text-amber-300 font-bold bg-amber-500/10 px-2 py-0.5 rounded-lg border border-amber-500/30 flex items-center gap-1 shrink-0">
@@ -1468,7 +1489,7 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
               }`}
             >
               <Check className="w-4 h-4" />
-              Guardar Evento
+              <span>{isEditing ? 'Guardar Cambios' : 'Guardar Evento'}</span>
             </button>
           </div>
         </div>
