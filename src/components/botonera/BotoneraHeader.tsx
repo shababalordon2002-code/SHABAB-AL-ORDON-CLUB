@@ -22,6 +22,7 @@ import {
   Check
 } from 'lucide-react';
 import { Match } from '@/types';
+import { PERIOD_BASE_SECONDS } from './BotoneraStopwatch';
 
 interface BotoneraHeaderProps {
   matches: Match[];
@@ -75,16 +76,18 @@ export const BotoneraHeader: React.FC<BotoneraHeaderProps> = ({
   };
 
   const parseTimeInput = (value: string): number | null => {
-    const trimmed = value.trim();
+    const trimmed = value.trim().replace(',', '.');
+    if (!trimmed) return null;
+
+    const hms = trimmed.match(/^(\d{1,2}):([0-5]?\d):([0-5]?\d)$/);
+    if (hms) return parseInt(hms[1], 10) * 3600 + parseInt(hms[2], 10) * 60 + parseInt(hms[3], 10);
+
+    const ms = trimmed.match(/^(\d{1,4})[:.]([0-5]?\d)$/);
+    if (ms) return parseInt(ms[1], 10) * 60 + parseInt(ms[2], 10);
+
     if (/^\d+$/.test(trimmed)) {
-      // Plain seconds
-      return parseInt(trimmed, 10);
-    }
-    const match = trimmed.match(/^(\d{1,3}):([0-5]?\d)$/);
-    if (match) {
-      const mins = parseInt(match[1], 10);
-      const secs = parseInt(match[2], 10);
-      return mins * 60 + secs;
+      const num = parseInt(trimmed, 10);
+      return num <= 180 ? num * 60 : num;
     }
     return null;
   };
@@ -123,17 +126,17 @@ export const BotoneraHeader: React.FC<BotoneraHeaderProps> = ({
     setIsPausePeriodModalOpen(false);
 
     if (period === 1) {
-      // Advance to 2nd half, set clock to 45:00 (2700s) and wait for PLAY
+      // Advance to 2nd half, set clock to 00:00 (0s) and wait for PLAY
       onPeriodChange(2);
-      onTimerChange(2700);
+      onTimerChange(0);
     } else if (period === 2) {
       // Advance to Extra Time 1
       onPeriodChange(3);
-      onTimerChange(5400);
+      onTimerChange(0);
     } else if (period === 3) {
       // Advance to Extra Time 2
       onPeriodChange(4);
-      onTimerChange(6300);
+      onTimerChange(0);
     }
   };
 

@@ -16,6 +16,10 @@ interface BotoneraVideoPlayerProps {
   onIframeRef?: (el: HTMLIFrameElement | null) => void;
   /** Map of period → video start time (seconds). Shown above the video as sync markers. */
   periodVideoOffsets?: Record<number, number>;
+  /** Map of period → manual chrono adjustment info */
+  periodAdjustments?: Record<number, { matchTimeSec: number; videoTimeSec: number }>;
+  /** Called when user clears a manual chrono adjustment */
+  onClearAdjustment?: (period: number) => void;
   /** Called when the user wants to reset a period's sync offset so it can be re-recorded */
   onClearPeriodOffset?: (period: number) => void;
   /** Called when the user manually edits a period's video start offset (in seconds) */
@@ -62,9 +66,13 @@ export function toEmbedUrl(rawUrl: string): string {
       }
     }
 
-    // Add enablejsapi=1 so postMessage commands (seekTo, playVideo) work
+    // Add enablejsapi=1, origin, and widget_referrer so postMessage commands & telemetry work
     const embedUrlObj = new URL(embedUrl);
     embedUrlObj.searchParams.set('enablejsapi', '1');
+    if (typeof window !== 'undefined' && window.location.origin) {
+      embedUrlObj.searchParams.set('origin', window.location.origin);
+      embedUrlObj.searchParams.set('widget_referrer', window.location.href);
+    }
     return embedUrlObj.toString();
   } catch {
     return rawUrl;
@@ -108,6 +116,8 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
   onVideoRef,
   onIframeRef,
   periodVideoOffsets = {},
+  periodAdjustments = {},
+  onClearAdjustment,
   onClearPeriodOffset,
   onUpdatePeriodOffset,
   onEditVideoSettings,
@@ -344,6 +354,25 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
                     >
                       <RotateCcw className="w-3 h-3" />
                     </button>
+                  )}
+
+                  {periodAdjustments && periodAdjustments[p] && (
+                    <div
+                      title={`Ajuste activo desde el minuto de vídeo ${fmtVideoTime(periodAdjustments[p].videoTimeSec)} hasta finalizar la parte`}
+                      className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-300 font-mono text-[11px] font-bold"
+                    >
+                      <span className="uppercase text-[9px] font-black bg-amber-500/30 px-1.5 py-0.5 rounded text-amber-200 tracking-wider">Ajuste</span>
+                      <span>{fmtVideoTime(periodAdjustments[p].matchTimeSec)}</span>
+                      {onClearAdjustment && (
+                        <button
+                          onClick={() => onClearAdjustment(p)}
+                          title="Quitar ajuste manual"
+                          className="p-0.5 rounded text-amber-400 hover:text-red-400 hover:bg-slate-800 transition cursor-pointer"
+                        >
+                          <X className="w-2.5 h-2.5" />
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
               )}

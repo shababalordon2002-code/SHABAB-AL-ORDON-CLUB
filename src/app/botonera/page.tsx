@@ -11,6 +11,7 @@ import {
   clearAnalysisEventsFromSupabase,
   subscribeToAnalysisEvents,
   subscribeToAnalysisPresence,
+  subscribeToAnalysisSession,
 } from '@/lib/services/botonera-service';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { Match, Player, NormalizedEvent, BotoneraTemplate, BotoneraButton, BotoneraProjectVideoType, MatchAnalysis } from '@/types';
@@ -114,11 +115,14 @@ export default function BotoneraPage() {
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [isVideoPoppedOut, setIsVideoPoppedOut] = useState<boolean>(false);
   const [isEditPanelOpen, setIsEditPanelOpen] = useState<boolean>(false);
+  const [isSyncingToSupabase, setIsSyncingToSupabase] = useState<boolean>(false);
 
   // --- Video-to-Match Sync ---
   // Stores the video currentTime (seconds) at the moment PLAY is first pressed for each period.
   // Key = period number (1, 2, 3, 4), Value = video time in seconds when that period started.
   const [periodVideoOffsets, setPeriodVideoOffsets] = useState<Record<number, number>>({});
+  // Registra ajustes manuales realizados con el lápiz en cada periodo para mostrarlos en la tabla superior del vídeo
+  const [periodAdjustments, setPeriodAdjustments] = useState<Record<number, { matchTimeSec: number; videoTimeSec: number }>>({});
   // Ref to the HTML <video> element exposed by BotoneraVideoPlayer (null for YouTube iframes)
   const videoElementRef = useRef<HTMLVideoElement | null>(null);
   // Ref to the YouTube <iframe> element (null for local video)
@@ -173,10 +177,12 @@ export default function BotoneraPage() {
   // second monitor, so the coupling survives "Sacar Ventana".
   // La ventana externa cuenta como reproductor: con el vídeo en otro monitor el
   // crono sigue proyectando su playhead.
-  const isVideoDriven = hasVideoSync && (!!videoEl || (!!iframeEl && hasYouTubeSignal) || popoutHasSignal);
+  const isVideoDriven = hasVideoSync && (!!videoEl || !!iframeEl || popoutHasSignal);
 
   // YouTube IFrame Player API instance (null for local video / until it is ready)
   const ytPlayerRef = useRef<any>(null);
+  // Última lectura del playhead aceptada como buena, usada para detectar ruido y sincronía robusta
+  const lastGoodVideoTimeRef = useRef(0);
 
   const determinePeriodFromVideoTime = (videoTime: number): number | null => {
     const p4 = periodVideoOffsets[4];
@@ -196,12 +202,20 @@ export default function BotoneraPage() {
     const offset = periodVideoOffsets[activeP];
     if (offset === undefined) return null;
     const base = PERIOD_BASE_SECONDS[activeP] ?? 0;
+    const adj = periodAdjustmentsRef.current[activeP];
+    if (adj && adj.videoTimeSec > offset && videoTime >= adj.videoTimeSec) {
+      return Math.max(0, Math.floor(adj.matchTimeSec + (videoTime - adj.videoTimeSec)));
+    }
     return Math.max(0, Math.floor(videoTime - offset + base));
   };
 
   const videoTimeFromMatchTime = (matchSeconds: number): number | null => {
     const offset = periodVideoOffsets[period];
     if (offset === undefined) return null;
+    const adj = periodAdjustmentsRef.current[period];
+    if (adj && matchSeconds >= adj.matchTimeSec) {
+      return Math.max(0, adj.videoTimeSec + (matchSeconds - adj.matchTimeSec));
+    }
     return Math.max(0, offset + (matchSeconds - periodBase));
   };
 
@@ -212,19 +226,25 @@ export default function BotoneraPage() {
     if (popoutIframeWinRef.current) return popoutStateRef.current.time;
     const apiTime = ytPlayerRef.current?.getCurrentTime?.();
     const streamTime = youtubeCurrentTimeRef.current;
-    // Un 0 de la API mientras el flujo de mensajes reporta otro minuto significa
-    // que la API no está enganchada del todo: ese 0 abría la ventana emergente
-    // al principio del vídeo en vez de por donde iba.
-    if (typeof apiTime === 'number' && Number.isFinite(apiTime) && (apiTime > 0 || streamTime <= 0)) {
+    const lastGood = lastGoodVideoTimeRef.current;
+
+    if (typeof apiTime === 'number' && Number.isFinite(apiTime) && apiTime > 0) {
       return apiTime;
     }
-    // Último recurso: con el crono ligado al vídeo, el minutaje que se ve en pantalla
-    // ya es una proyección fiel del playhead, así que sirve para volver a él.
-    if (streamTime <= 0 && isVideoDriven) {
+    if (typeof streamTime === 'number' && Number.isFinite(streamTime) && streamTime > 0) {
+      return streamTime;
+    }
+    if (typeof lastGood === 'number' && Number.isFinite(lastGood) && lastGood > 0) {
+      return lastGood;
+    }
+    if (typeof apiTime === 'number' && Number.isFinite(apiTime)) {
+      return apiTime;
+    }
+    if (isVideoDriven) {
       const fromChrono = videoTimeFromMatchTime(timerSeconds);
       if (fromChrono !== null) return fromChrono;
     }
-    return streamTime;
+    return 0;
   };
 
   /** True/false if we can read the player, null when there is no player attached. */
@@ -282,16 +302,17 @@ export default function BotoneraPage() {
   const videoDrivenRef = useRef(false);
   const periodRef = useRef(period);
   const periodVideoOffsetsRef = useRef(periodVideoOffsets);
+  const periodAdjustmentsRef = useRef(periodAdjustments);
   const isTimerRunningRef = useRef(isTimerRunning);
   useEffect(() => {
     videoDrivenRef.current = isVideoDriven;
     periodRef.current = period;
     periodVideoOffsetsRef.current = periodVideoOffsets;
+    periodAdjustmentsRef.current = periodAdjustments;
     isTimerRunningRef.current = isTimerRunning;
-  }, [isVideoDriven, period, periodVideoOffsets, isTimerRunning]);
+  }, [isVideoDriven, period, periodVideoOffsets, isTimerRunning, periodAdjustments]);
 
-  // Última lectura del playhead aceptada como buena, usada para detectar ruido.
-  const lastGoodVideoTimeRef = useRef(0);
+  // Detección de ruido y estabilidad del playhead
   const zeroSampleStreakRef = useRef(0);
   // La API del iframe manda mientras dé lecturas creíbles; si se queda clavada
   // en 0 (aún no está lista) conduce el stream de infoDelivery.
@@ -299,9 +320,9 @@ export default function BotoneraPage() {
 
   /**
    * Único punto que proyecta el playhead del vídeo sobre el crono de partido.
-   * Calcula el tiempo transcurrido en la parte activa: (videoTime - periodVideoOffset).
-   *
-   * `trusted` salta el filtro de ruido (playhead de un <video> local, exacto).
+   * Calcula el tiempo transcurrido en la parte activa:
+   * - Detecta automáticamente si el vídeo retrocede a una parte anterior.
+   * - Respeta los inicios de parte ("Empieza en") y cualquier ajuste manual intermedio.
    */
   const applyVideoTime = useCallback((videoTime: number, trusted = false) => {
     if (typeof videoTime !== 'number' || !Number.isFinite(videoTime) || videoTime < 0) return;
@@ -317,26 +338,40 @@ export default function BotoneraPage() {
     lastGoodVideoTimeRef.current = videoTime;
 
     const offsets = periodVideoOffsetsRef.current;
+    const adjustments = periodAdjustmentsRef.current;
     const currentP = periodRef.current;
-    let detectedP: number | null = null;
 
+    // 1. Detectar periodo automáticamente según la posición del vídeo
+    // Si retrocedemos a antes del inicio de la 2ª parte, volvemos a la 1ª parte
+    let detectedP: number = currentP;
     if (offsets[4] != null && videoTime >= offsets[4]) detectedP = 4;
     else if (offsets[3] != null && videoTime >= offsets[3]) detectedP = 3;
     else if (offsets[2] != null && videoTime >= offsets[2]) detectedP = 2;
-    else if (offsets[1] != null && videoTime >= offsets[1]) detectedP = 1;
     else if (offsets[1] != null) detectedP = 1;
 
-    const activeP = detectedP ?? currentP;
-    if (detectedP !== null && detectedP !== currentP) {
+    if (detectedP !== currentP) {
       periodRef.current = detectedP;
       setPeriod(detectedP);
     }
 
-    const offset = offsets[activeP];
-    if (offset === undefined) return;
+    const activeP = detectedP;
+    const periodStart = offsets[activeP];
+    if (periodStart === undefined) return;
 
-    const base = PERIOD_BASE_SECONDS[activeP] ?? 0;
-    const matchTime = Math.max(0, Math.floor(videoTime - offset + base));
+    // 2. Calcular minutaje:
+    // Segmento 1: Antes del momento del ajuste (videoTime < adj.videoTimeSec):
+    //   avanza normal desde el saque inicial del periodo (periodStart).
+    // Segmento 2: A partir del momento del ajuste (videoTime >= adj.videoTimeSec):
+    //   avanza desde el minutaje ajustado hasta finalizar la parte.
+    const adj = adjustments[activeP];
+    let matchTime = 0;
+    if (adj && adj.videoTimeSec > periodStart && videoTime >= adj.videoTimeSec) {
+      matchTime = Math.max(0, Math.floor(adj.matchTimeSec + (videoTime - adj.videoTimeSec)));
+    } else {
+      const base = PERIOD_BASE_SECONDS[activeP] ?? 0;
+      matchTime = Math.max(0, Math.floor(videoTime - periodStart + base));
+    }
+
     setTimerSeconds((prev) => (prev === matchTime ? prev : matchTime));
   }, []);
 
@@ -440,6 +475,10 @@ export default function BotoneraPage() {
         if (p1 != null) offsets[1] = p1;
         if (p2 != null) offsets[2] = p2;
         setPeriodVideoOffsets(offsets);
+
+        const loadedAdjustments = activeSession.periodAdjustments || analysisFallback?.period_adjustments || matchFallback?.period_adjustments || {};
+        setPeriodAdjustments(loadedAdjustments);
+        periodAdjustmentsRef.current = loadedAdjustments;
 
         if (activeSession.isTimerRunning && activeSession.startTimestamp) {
           const elapsed = Math.max(0, Math.floor((Date.now() - activeSession.startTimestamp) / 1000));
@@ -563,10 +602,26 @@ export default function BotoneraPage() {
         )
       : () => {};
 
+    const unsubscribeSession = subscribeToAnalysisSession(selectedMatchId, (update) => {
+      if (update.p1VideoStartSeconds != null || update.p2VideoStartSeconds != null) {
+        setPeriodVideoOffsets((prev) => {
+          const next = { ...prev };
+          if (update.p1VideoStartSeconds != null) next[1] = update.p1VideoStartSeconds;
+          if (update.p2VideoStartSeconds != null) next[2] = update.p2VideoStartSeconds;
+          return next;
+        });
+      }
+      if (update.periodAdjustments !== undefined) {
+        setPeriodAdjustments(update.periodAdjustments || {});
+        periodAdjustmentsRef.current = update.periodAdjustments || {};
+      }
+    });
+
     return () => {
       cancelled = true;
       unsubscribeEvents();
       unsubscribePresence();
+      unsubscribeSession();
     };
   }, [selectedMatchId, user, profile]);
 
@@ -741,6 +796,7 @@ export default function BotoneraPage() {
       videoUrl: resolvedVideoUrl,
       p1VideoStartSeconds: resolvedP1,
       p2VideoStartSeconds: resolvedP2,
+      periodAdjustments: periodAdjustments,
       botoneraTemplateId: template?.id || null,
       home_lineup: targetMatch?.home_lineup || selectedMatch?.home_lineup || (selectedMatchId ? dbStore.getMatchById(selectedMatchId)?.home_lineup : null) || null,
       away_lineup: targetMatch?.away_lineup || selectedMatch?.away_lineup || (selectedMatchId ? dbStore.getMatchById(selectedMatchId)?.away_lineup : null) || null,
@@ -756,6 +812,7 @@ export default function BotoneraPage() {
     videoSourceName,
     videoUrl,
     periodVideoOffsets,
+    periodAdjustments,
     template,
     matches,
   ]);
@@ -800,6 +857,9 @@ export default function BotoneraPage() {
       const resolvedVideoSourceName = videoSourceName || existingObj?.video_source_name || targetMatch?.video_source_name || (resolvedVideoUrl ? 'Vídeo del Partido' : null);
       const resolvedP1 = periodVideoOffsets[1] ?? existingObj?.p1_video_start_time ?? targetMatch?.p1_video_start_time ?? null;
       const resolvedP2 = periodVideoOffsets[2] ?? existingObj?.p2_video_start_time ?? targetMatch?.p2_video_start_time ?? null;
+      const resolvedAdjustments = Object.keys(periodAdjustments).length > 0
+        ? periodAdjustments
+        : (existingObj?.period_adjustments ?? targetMatch?.period_adjustments ?? null);
       const resolvedTemplateId = template?.id || existingObj?.botonera_template_id || targetMatch?.botonera_template_id || null;
 
       const newAnalysis: MatchAnalysis = {
@@ -813,6 +873,7 @@ export default function BotoneraPage() {
         video_source_name: resolvedVideoSourceName,
         p1_video_start_time: resolvedP1,
         p2_video_start_time: resolvedP2,
+        period_adjustments: resolvedAdjustments,
         botonera_template_id: resolvedTemplateId,
         home_lineup: targetMatch?.home_lineup || existingObj?.home_lineup || null,
         away_lineup: targetMatch?.away_lineup || existingObj?.away_lineup || null,
@@ -831,6 +892,7 @@ export default function BotoneraPage() {
           video_source_name: resolvedVideoSourceName || undefined,
           p1_video_start_time: resolvedP1,
           p2_video_start_time: resolvedP2,
+          period_adjustments: resolvedAdjustments,
           botonera_template_id: resolvedTemplateId || undefined,
         });
         setMatches(dbStore.getMatches());
@@ -852,6 +914,7 @@ export default function BotoneraPage() {
       videoType,
       videoSourceName,
       periodVideoOffsets,
+      periodAdjustments,
       template,
     ]
   );
@@ -864,7 +927,7 @@ export default function BotoneraPage() {
       return;
     }
     if (!isSessionConfigured) return;
-    if (events.length === 0) return; // Never auto-save when events is empty
+    if (events.length === 0 && !hasVideoSync && Object.keys(periodAdjustments).length === 0) return;
 
     const timer = setTimeout(() => {
       autoSaveToMatch(true);
@@ -874,6 +937,7 @@ export default function BotoneraPage() {
   }, [
     events,
     periodVideoOffsets,
+    periodAdjustments,
     videoUrl,
     videoType,
     videoSourceName,
@@ -963,17 +1027,84 @@ export default function BotoneraPage() {
     setIsSessionConfigured(true);
   };
 
-  const handleEndSession = () => {
-    // Ensure all changes are flushed to DB & Supabase
-    autoSaveToMatch(true);
+  const flushSessionToSupabase = async (): Promise<boolean> => {
+    if (!isSessionConfigured) return true;
+    setIsSyncingToSupabase(true);
+    try {
+      const targetId = (!selectedMatchId || selectedMatchId === 'free_session') ? 'match_demo_1' : selectedMatchId;
+      const targetMatch = dbStore.getMatchById(targetId) || matches.find((m) => m.id === targetId);
 
+      const masterAnalysisId = `analysis_${targetId}`;
+      const existingAnalyses = dbStore.getAnalyses(targetId);
+      const existingObj = existingAnalyses.find((a) => a.match_id === targetId || a.id === masterAnalysisId);
+
+      const normalizedEvts = events.map((e) => ({ ...e, match_id: targetId }));
+      if (normalizedEvts.length > 0) {
+        dbStore.saveNormalizedEvents(normalizedEvts, true, targetId);
+      }
+
+      const currentAnalyst = profile?.full_name || user?.email || 'Analista Principal (SAO)';
+      const combinedAnalystNames = dbStore.sanitizeAnalystNames([
+        ...(existingObj?.analyst_name ? [existingObj.analyst_name] : []),
+        currentAnalyst,
+      ]);
+
+      const resolvedVideoUrl = (videoUrl && videoUrl.trim()) || existingObj?.video_url || targetMatch?.video_url || null;
+      const resolvedVideoType = videoType || existingObj?.video_type || targetMatch?.video_type || (resolvedVideoUrl ? (resolvedVideoUrl.includes('http') ? 'link' : 'local') : null);
+      const resolvedVideoSourceName = videoSourceName || existingObj?.video_source_name || targetMatch?.video_source_name || (resolvedVideoUrl ? 'Vídeo del Partido' : null);
+      const resolvedP1 = periodVideoOffsets[1] ?? existingObj?.p1_video_start_time ?? targetMatch?.p1_video_start_time ?? null;
+      const resolvedP2 = periodVideoOffsets[2] ?? existingObj?.p2_video_start_time ?? targetMatch?.p2_video_start_time ?? null;
+      const resolvedTemplateId = template?.id || existingObj?.botonera_template_id || targetMatch?.botonera_template_id || null;
+
+      const newAnalysis: MatchAnalysis = {
+        id: masterAnalysisId,
+        match_id: targetId,
+        title: `Análisis ${targetMatch ? targetMatch.home_team + ' vs ' + targetMatch.away_team : 'Etiquetado en Vivo'}`,
+        analyst_name: combinedAnalystNames,
+        status: (existingObj?.status || 'in_progress') as 'completed' | 'in_progress',
+        video_type: resolvedVideoType,
+        video_url: resolvedVideoUrl,
+        video_source_name: resolvedVideoSourceName,
+        p1_video_start_time: resolvedP1,
+        p2_video_start_time: resolvedP2,
+        botonera_template_id: resolvedTemplateId,
+        home_lineup: targetMatch?.home_lineup || existingObj?.home_lineup || null,
+        away_lineup: targetMatch?.away_lineup || existingObj?.away_lineup || null,
+        events: normalizedEvts.length > 0 ? normalizedEvts : (existingObj?.events || []),
+        created_at: existingObj?.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      // Guaranteed awaited save to Supabase
+      const ok = await dbStore.saveAnalysisAsync(newAnalysis);
+
+      // Ensure each row in analysis_events is also synced
+      if (selectedMatchId && selectedMatchId !== 'free_session' && normalizedEvts.length > 0) {
+        await Promise.allSettled(
+          normalizedEvts.map((evt) => insertAnalysisEventToSupabase(targetId, evt))
+        );
+      }
+      return ok;
+    } catch (err) {
+      console.error('Error during flushSessionToSupabase:', err);
+      return false;
+    } finally {
+      setIsSyncingToSupabase(false);
+    }
+  };
+
+  const handleEndSession = async () => {
     const ok = confirm(
-      '¿Deseas cerrar la sesión de análisis? Todos tus cortes, datos y ajustes ya están guardados automáticamente.'
+      '¿Deseas cerrar la sesión de análisis? Se volcarán y confirmarán todos tus datos y cortes en Supabase antes de salir.'
     );
     if (!ok) return;
 
+    // Await complete flush to Supabase before changing screen mode or resetting state!
+    await flushSessionToSupabase();
+
     // Refresh list of saved analyses from DB
-    setSavedAnalyses(dbStore.getAnalyses());
+    const freshAnalyses = await dbStore.syncAnalysesFromSupabase();
+    setSavedAnalyses(freshAnalyses);
 
     // Reset session states & transition back to Botonera Landing Dashboard
     setIsTimerRunning(false);
@@ -1023,7 +1154,7 @@ export default function BotoneraPage() {
           // La API del iframe es la fuente principal del crono: aquí solo se
           // conduce cuando esa API no está dando lecturas válidas, para que no
           // haya dos escritores del minutaje a la vez (era la causa del parpadeo).
-          if (videoDrivenRef.current && !isYouTubeApiHealthyRef.current) {
+          if (videoDrivenRef.current) {
             applyVideoTime(data.info.currentTime);
           }
         }
@@ -1061,13 +1192,17 @@ export default function BotoneraPage() {
     if (!el) {
       hasYouTubeSignalRef.current = false;
       setHasYouTubeSignal(false);
+      return;
     }
-    if (el?.contentWindow) {
-      // Small delay to let the iframe finish its initial handshake
-      setTimeout(() => {
+    const sendListening = () => {
+      try {
         el.contentWindow?.postMessage(JSON.stringify({ event: 'listening' }), '*');
-      }, 500);
-    }
+      } catch {}
+    };
+    sendListening();
+    setTimeout(sendListening, 300);
+    setTimeout(sendListening, 1000);
+    setTimeout(sendListening, 2500);
   }, []);
 
   const formatTime = (totalSec: number) => {
@@ -1117,6 +1252,10 @@ export default function BotoneraPage() {
       if (p2 != null) offsets[2] = p2;
       setPeriodVideoOffsets(offsets);
 
+      const loadedAdjustments = targetAnalysis?.period_adjustments || targetMatch?.period_adjustments || {};
+      setPeriodAdjustments(loadedAdjustments);
+      periodAdjustmentsRef.current = loadedAdjustments;
+
       const templateId = targetAnalysis?.botonera_template_id || targetMatch?.botonera_template_id;
       if (templateId) {
         const t = dbStore.getBotoneraTemplates().find((x) => x.id === templateId);
@@ -1158,6 +1297,10 @@ export default function BotoneraPage() {
     if (p1 != null) offsets[1] = p1;
     if (p2 != null) offsets[2] = p2;
     setPeriodVideoOffsets(offsets);
+
+    const loadedAdjustments = an.period_adjustments || targetMatch?.period_adjustments || {};
+    setPeriodAdjustments(loadedAdjustments);
+    periodAdjustmentsRef.current = loadedAdjustments;
 
     // Resolve Botonera Template (analysis template -> match template -> first template in DB -> SEED_BOTONERA_TEMPLATES[0])
     const allTemplates = dbStore.getBotoneraTemplates();
@@ -1425,27 +1568,109 @@ export default function BotoneraPage() {
   const handleTimerChange = (seconds: number, seekVideo = true) => {
     const target = Math.max(0, seconds);
     const base = PERIOD_BASE_SECONDS[period] ?? 0;
+    const offset = periodVideoOffsets[period];
 
     if (!seekVideo) {
-      // Edición manual con el lápiz:
-      // "el video debe continuar sin cambiar por donde estaba"
-      // Re-sincronizamos el offset de la parte actual con el minutaje indicado,
-      // SIN mover el vídeo y manteniendo intactos todos los eventos registrados antes.
+      // Edición manual con el lápiz en el cronómetro:
       const curVideoTime = getCurrentVideoTime();
-      if (curVideoTime > 0) {
-        const elapsedInPeriod = Math.max(0, target - base);
+      const elapsedInPeriod = Math.max(0, target - base);
+
+      if (offset === undefined) {
+        // No había inicio de parte registrado: esta primera edición fija el inicio de la parte
         const newOffset = Math.max(0, curVideoTime - elapsedInPeriod);
         handleUpdatePeriodOffset(period, newOffset);
+        setTimerSeconds(target);
+        return;
       }
+
+      // Ya hay un inicio de parte registrado ("Empieza en", ej. 6:52):
+      // ¡NO TOCAMOS el inicio de parte! El inicio 6:52 permanece intacto para todo el metraje previo al corte.
+      // Registramos este cambio como un AJUSTE manual a partir del momento actual de vídeo:
+      const updatedAdjustments = {
+        ...periodAdjustmentsRef.current,
+        [period]: { matchTimeSec: target, videoTimeSec: curVideoTime },
+      };
+      setPeriodAdjustments(updatedAdjustments);
+      periodAdjustmentsRef.current = updatedAdjustments;
       setTimerSeconds(target);
+
+      // Persistir inmediatamente a Supabase y dbStore
+      if (selectedMatchId && selectedMatchId !== 'free_session') {
+        const m = dbStore.getMatchById(selectedMatchId);
+        if (m) {
+          dbStore.saveMatch({
+            ...m,
+            period_adjustments: updatedAdjustments,
+          });
+        }
+        const existingAns = dbStore.getAnalyses(selectedMatchId);
+        const masterAn = existingAns.length > 0 ? existingAns[0] : null;
+        if (masterAn) {
+          dbStore.saveAnalysis({
+            ...masterAn,
+            period_adjustments: updatedAdjustments,
+          });
+        }
+      }
       return;
     }
 
-    // Salto relativo (+10s / -10s):
-    const curVideoTime = getCurrentVideoTime();
-    const delta = seconds - timerSeconds;
-    seekVideoTo(Math.max(0, curVideoTime + delta), isTimerRunning);
+    if (offset !== undefined) {
+      const adj = periodAdjustmentsRef.current[period];
+      let targetVideoTime: number;
+      if (adj && target >= adj.matchTimeSec) {
+        targetVideoTime = adj.videoTimeSec + (target - adj.matchTimeSec);
+      } else {
+        const elapsedInPeriod = Math.max(0, target - base);
+        targetVideoTime = offset + elapsedInPeriod;
+      }
+      seekVideoTo(Math.max(0, targetVideoTime), isTimerRunning);
+    } else {
+      // Salto relativo (+10s / -10s):
+      const curVideoTime = getCurrentVideoTime();
+      const delta = seconds - timerSeconds;
+      seekVideoTo(Math.max(0, curVideoTime + delta), isTimerRunning);
+    }
     setTimerSeconds(target);
+  };
+
+  const handleClearAdjustment = (p: number) => {
+    const next = { ...periodAdjustmentsRef.current };
+    delete next[p];
+    setPeriodAdjustments(next);
+    periodAdjustmentsRef.current = next;
+
+    // Persistir eliminación inmediatamente a Supabase y dbStore
+    if (selectedMatchId && selectedMatchId !== 'free_session') {
+      const m = dbStore.getMatchById(selectedMatchId);
+      if (m) {
+        dbStore.saveMatch({
+          ...m,
+          period_adjustments: next,
+        });
+      }
+      const existingAns = dbStore.getAnalyses(selectedMatchId);
+      const masterAn = existingAns.length > 0 ? existingAns[0] : null;
+      if (masterAn) {
+        dbStore.saveAnalysis({
+          ...masterAn,
+          period_adjustments: next,
+        });
+      }
+    }
+    // Re-aplicar inmediatamente al crono para reflejar el inicio sin ajuste
+    applyVideoTime(getCurrentVideoTime(), true);
+  };
+
+  const handleFinalizePeriod = () => {
+    setVideoPlaying(false);
+    setIsTimerRunning(false);
+    if (period === 1) {
+      setPeriod(2);
+      setTimerSeconds(0);
+    } else {
+      setTimerSeconds(0);
+    }
   };
 
   const handleResetTimer = () => {
@@ -1454,6 +1679,8 @@ export default function BotoneraPage() {
     lastGoodVideoTimeRef.current = 0;
     zeroSampleStreakRef.current = 0;
     setPeriodVideoOffsets({}); // also clear video offsets on reset
+    setPeriodAdjustments({});
+    periodAdjustmentsRef.current = {};
     dbStore.clearActiveBotoneraSession();
   };
 
@@ -1468,6 +1695,7 @@ export default function BotoneraPage() {
             ...m,
             p1_video_start_time: updatedOffsets[1] ?? m.p1_video_start_time ?? null,
             p2_video_start_time: updatedOffsets[2] ?? m.p2_video_start_time ?? null,
+            period_adjustments: periodAdjustmentsRef.current,
             video_type: videoType || m.video_type,
             video_url: videoUrl || m.video_url,
             video_source_name: videoSourceName || m.video_source_name,
@@ -1481,10 +1709,32 @@ export default function BotoneraPage() {
             ...masterAn,
             p1_video_start_time: updatedOffsets[1] ?? masterAn.p1_video_start_time ?? null,
             p2_video_start_time: updatedOffsets[2] ?? masterAn.p2_video_start_time ?? null,
+            period_adjustments: periodAdjustmentsRef.current,
             video_type: videoType || masterAn.video_type,
             video_url: videoUrl || masterAn.video_url,
             video_source_name: videoSourceName || masterAn.video_source_name,
             botonera_template_id: template?.id || masterAn.botonera_template_id,
+          });
+        } else if (m) {
+          const currentAnalyst = profile?.full_name || user?.email || 'Analista SAO';
+          dbStore.saveAnalysis({
+            id: `analysis_${selectedMatchId}`,
+            match_id: selectedMatchId,
+            title: `Análisis ${m.home_team} vs ${m.away_team}`,
+            analyst_name: currentAnalyst,
+            status: 'in_progress',
+            video_type: videoType || m.video_type || 'link',
+            video_url: videoUrl || m.video_url || null,
+            video_source_name: videoSourceName || m.video_source_name || null,
+            p1_video_start_time: updatedOffsets[1] ?? null,
+            p2_video_start_time: updatedOffsets[2] ?? null,
+            period_adjustments: periodAdjustmentsRef.current,
+            botonera_template_id: template?.id || m.botonera_template_id || null,
+            home_lineup: m.home_lineup || null,
+            away_lineup: m.away_lineup || null,
+            events: [],
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
           });
         }
       }
@@ -1493,12 +1743,9 @@ export default function BotoneraPage() {
 
     // Editing the start of the period being tagged re-bases the chrono right away
     if (p === period && (videoEl || iframeEl || popoutWinRef.current)) {
-      const base = PERIOD_BASE_SECONDS[p] ?? 0;
-      setTimerSeconds(Math.max(0, Math.floor(getCurrentVideoTime() - newTimeSec + base)));
+      applyVideoTime(getCurrentVideoTime(), true);
     }
   };
-
-
 
   /** Removes a period start marker (chrono falls back to its own clock for that period). */
   const handleClearPeriodOffset = (p: number) => {
@@ -1513,6 +1760,7 @@ export default function BotoneraPage() {
             ...m,
             p1_video_start_time: updatedOffsets[1] ?? null,
             p2_video_start_time: updatedOffsets[2] ?? null,
+            period_adjustments: periodAdjustmentsRef.current,
           });
         }
         const existingAns = dbStore.getAnalyses(selectedMatchId);
@@ -1522,6 +1770,7 @@ export default function BotoneraPage() {
             ...masterAn,
             p1_video_start_time: updatedOffsets[1] ?? null,
             p2_video_start_time: updatedOffsets[2] ?? null,
+            period_adjustments: periodAdjustmentsRef.current,
           });
         }
       }
@@ -1529,16 +1778,19 @@ export default function BotoneraPage() {
     });
   };
 
-  /** Al pulsar uno de los 4 botones de parte en el crono:
-   * 1. Registra el segundo del vídeo como inicio de esa parte.
+  /** Al pulsar uno de los 4 botones [ ▶ 1ª Parte ], [ ▶ 2ª Parte ], etc.:
+   * 1. Registra el segundo actual del vídeo como saque inicial ("Empieza en") de esa parte.
    * 2. Activa el periodo (poniendo el botón verde).
-   * 3. Inicia el cronómetro desde el minutaje base de esa parte (ej: 45:00 para 2ª parte).
+   * 3. Inicia el cronómetro desde el minutaje base de esa parte (ej: 00:00 para 1ª parte, 45:00 para 2ª parte).
    * 4. Enciende el cronómetro (isTimerRunning = true).
    */
   const handlePeriodSelect = (p: number) => {
     setPeriod(p);
     const videoTime = getCurrentVideoTime();
     handleUpdatePeriodOffset(p, videoTime);
+    if (periodAdjustmentsRef.current[p] && periodAdjustmentsRef.current[p].videoTimeSec <= videoTime) {
+      handleClearAdjustment(p);
+    }
     const base = PERIOD_BASE_SECONDS[p] ?? 0;
     setTimerSeconds(base);
     setIsTimerRunning(true);
@@ -1549,24 +1801,30 @@ export default function BotoneraPage() {
     setPeriod(p);
     const videoTime = getCurrentVideoTime();
     handleUpdatePeriodOffset(p, videoTime);
+    if (periodAdjustmentsRef.current[p] && periodAdjustmentsRef.current[p].videoTimeSec <= videoTime) {
+      handleClearAdjustment(p);
+    }
     const base = PERIOD_BASE_SECONDS[p] ?? 0;
     setTimerSeconds(base);
   };
 
   /**
    * Called by BotoneraStopwatch when the user presses PLAY (not pause).
-   * Records the video's currentTime as the start offset for the current period.
-   * Only records ONCE per period — pausing and resuming does NOT overwrite the offset.
+   * Records the video's currentTime as the start offset for the current period if not recorded yet.
    */
   const handleTimerStarted = () => {
     setPeriodVideoOffsets((prev) => {
-      if (period in prev) return prev;
+      if (period in prev && prev[period] !== undefined) return prev;
 
       const videoTime =
         videoElementRef.current?.currentTime   // local video: exact
         ?? youtubeCurrentTimeRef.current;      // YouTube: last postMessage update
 
-      const updatedOffsets = { ...prev, [period]: videoTime };
+      const base = PERIOD_BASE_SECONDS[period] ?? 0;
+      const elapsedInPeriod = Math.max(0, timerSeconds - base);
+      const videoOffset = videoTime - elapsedInPeriod;
+
+      const updatedOffsets = { ...prev, [period]: videoOffset };
 
       if (selectedMatchId && selectedMatchId !== 'free_session') {
         const m = dbStore.getMatchById(selectedMatchId);
@@ -1575,6 +1833,7 @@ export default function BotoneraPage() {
             ...m,
             p1_video_start_time: updatedOffsets[1] ?? m.p1_video_start_time ?? null,
             p2_video_start_time: updatedOffsets[2] ?? m.p2_video_start_time ?? null,
+            period_adjustments: periodAdjustmentsRef.current,
             video_type: videoType || m.video_type,
             video_url: videoUrl || m.video_url,
             video_source_name: videoSourceName || m.video_source_name,
@@ -1588,6 +1847,7 @@ export default function BotoneraPage() {
             ...masterAn,
             p1_video_start_time: updatedOffsets[1] ?? masterAn.p1_video_start_time ?? null,
             p2_video_start_time: updatedOffsets[2] ?? masterAn.p2_video_start_time ?? null,
+            period_adjustments: periodAdjustmentsRef.current,
             video_type: videoType || masterAn.video_type,
             video_url: videoUrl || masterAn.video_url,
             video_source_name: videoSourceName || masterAn.video_source_name,
@@ -1636,6 +1896,7 @@ export default function BotoneraPage() {
           video_source_name: resolvedNewSource || m.video_source_name,
           p1_video_start_time: periodVideoOffsets[1] ?? m.p1_video_start_time,
           p2_video_start_time: periodVideoOffsets[2] ?? m.p2_video_start_time,
+          period_adjustments: periodAdjustmentsRef.current,
           botonera_template_id: template?.id || m.botonera_template_id,
         });
       }
@@ -1649,6 +1910,7 @@ export default function BotoneraPage() {
           video_source_name: resolvedNewSource || masterAn.video_source_name,
           p1_video_start_time: periodVideoOffsets[1] ?? masterAn.p1_video_start_time,
           p2_video_start_time: periodVideoOffsets[2] ?? masterAn.p2_video_start_time,
+          period_adjustments: periodAdjustmentsRef.current,
           botonera_template_id: template?.id || masterAn.botonera_template_id,
         });
       }
@@ -1730,7 +1992,16 @@ export default function BotoneraPage() {
       (targetPlayerId ? dbStore.getPlayers().find((p) => p.id === targetPlayerId) : null);
     let outcomeVal = descriptorsToSave.find((d) => ['Éxito', 'Fallido', 'Gol', 'A puerta', 'Fuera'].includes(d)) || null;
 
-    const chosenTeamName = overrideTeamName || (activePlayer ? activePlayer.team_name : 'Shabab Al Ordon Club');
+    const targetMatchObj = selectedMatchId && selectedMatchId !== 'free_session' ? (dbStore.getMatchById(selectedMatchId) || matches.find((m) => m.id === selectedMatchId)) : null;
+    const defaultHome = targetMatchObj?.home_team || 'Shabab Al Ordon Club';
+    const defaultAway = targetMatchObj?.away_team || 'Al Ramtha';
+
+    const isRivalContext = (btn.name || '').toLowerCase().includes('rival') ||
+                           (btn.category || '').toLowerCase().includes('rival') ||
+                           descriptorsToSave.some((d) => d.toLowerCase().includes('rival') || d.toLowerCase().includes('visitante'));
+
+    const chosenTeamName = overrideTeamName || (activePlayer ? activePlayer.team_name : (isRivalContext ? defaultAway : defaultHome));
+    const chosenTeamId = activePlayer ? (activePlayer.team_id || 'home_team') : (isRivalContext || chosenTeamName === defaultAway ? 'away_team' : 'home_team');
 
     // Use frozen click timestamp or current timer if absent
     const exactTimestamp = eventTimestamp !== undefined ? eventTimestamp : timerSeconds;
@@ -1740,7 +2011,7 @@ export default function BotoneraPage() {
       event_id: `evt_tag_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
       source_event_id: `src_${Date.now()}`,
       match_id: selectedMatchId === 'free_session' ? 'free_session' : selectedMatchId,
-      team_id: activePlayer ? activePlayer.team_id : 'team_shabab_al_ordon',
+      team_id: chosenTeamId,
       team_name: chosenTeamName,
       player_id: activePlayer ? activePlayer.id : null,
       player_name: activePlayer ? activePlayer.name : 'Jugador Sin Asignar',
@@ -1823,6 +2094,7 @@ export default function BotoneraPage() {
           video_source_name: resolvedVideoSourceName,
           p1_video_start_time: resolvedP1,
           p2_video_start_time: resolvedP2,
+          period_adjustments: periodAdjustmentsRef.current,
           botonera_template_id: resolvedTemplateId,
           home_lineup: targetMatch?.home_lineup || existingObj?.home_lineup || null,
           away_lineup: targetMatch?.away_lineup || existingObj?.away_lineup || null,
@@ -1843,6 +2115,7 @@ export default function BotoneraPage() {
             video_source_name: resolvedVideoSourceName || undefined,
             p1_video_start_time: resolvedP1,
             p2_video_start_time: resolvedP2,
+            period_adjustments: periodAdjustmentsRef.current,
             botonera_template_id: resolvedTemplateId || undefined,
           });
           setMatches(dbStore.getMatches());
@@ -1879,6 +2152,7 @@ export default function BotoneraPage() {
           const updatedAnalysis: MatchAnalysis = {
             ...existing,
             events: next,
+            period_adjustments: periodAdjustmentsRef.current || existing.period_adjustments,
             updated_at: new Date().toISOString(),
           };
           dbStore.saveAnalysis(updatedAnalysis);
@@ -1909,6 +2183,7 @@ export default function BotoneraPage() {
           const updatedAnalysis: MatchAnalysis = {
             ...existing,
             events: nextEvents,
+            period_adjustments: periodAdjustmentsRef.current || existing.period_adjustments,
             updated_at: new Date().toISOString(),
           };
           dbStore.saveAnalysis(updatedAnalysis);
@@ -1958,8 +2233,13 @@ export default function BotoneraPage() {
     }
   };
 
-  const handleSaveToMatch = () => {
-    autoSaveToMatch(false);
+  const handleSaveToMatch = async () => {
+    const ok = await flushSessionToSupabase();
+    if (ok) {
+      alert(`✅ Análisis y todos los eventos sincronizados correctamente en Supabase (${events.length} eventos).`);
+    } else {
+      alert(`⚠️ Guardado local completado, pero hubo un problema conectando con Supabase.`);
+    }
   };
 
   const handleExportXml = () => {
@@ -2474,6 +2754,8 @@ export default function BotoneraPage() {
                   onVideoRef={handleVideoRef}
                   onIframeRef={handleIframeRef}
                   periodVideoOffsets={periodVideoOffsets}
+                  periodAdjustments={periodAdjustments}
+                  onClearAdjustment={handleClearAdjustment}
                   onClearPeriodOffset={handleClearPeriodOffset}
                   onUpdatePeriodOffset={handleUpdatePeriodOffset}
                   onEditVideoSettings={handleOpenEditVideoModal}
@@ -2512,6 +2794,7 @@ export default function BotoneraPage() {
                   isTimerRunning={isTimerRunning}
                   onToggleTimer={handleToggleTimer}
                   onResetTimer={handleResetTimer}
+                  onFinalizePeriod={handleFinalizePeriod}
                   onTimerStarted={handleTimerStarted}
                   onSeekVideoToNow={handleSeekVideoToNow}
                   hasVideoSync={hasVideoSync}
@@ -2571,6 +2854,8 @@ export default function BotoneraPage() {
                     isPoppedOut={true}
                     onTogglePopOut={(popped) => (popped ? openVideoPopOut() : closeVideoPopOut())}
                     periodVideoOffsets={periodVideoOffsets}
+                    periodAdjustments={periodAdjustments}
+                    onClearAdjustment={handleClearAdjustment}
                     onClearPeriodOffset={handleClearPeriodOffset}
                     onUpdatePeriodOffset={handleUpdatePeriodOffset}
                     currentPeriod={period}
@@ -2593,6 +2878,7 @@ export default function BotoneraPage() {
                   isTimerRunning={isTimerRunning}
                   onToggleTimer={handleToggleTimer}
                   onResetTimer={handleResetTimer}
+                  onFinalizePeriod={handleFinalizePeriod}
                   onTimerStarted={handleTimerStarted}
                   onSeekVideoToNow={handleSeekVideoToNow}
                   hasVideoSync={hasVideoSync}
@@ -2998,6 +3284,23 @@ export default function BotoneraPage() {
                 <Trash2 className="w-4 h-4" />
                 <span>Sí, Eliminar Registro</span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Visual Syncing Overlay when flushing to Supabase */}
+      {isSyncingToSupabase && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[100] flex items-center justify-center animate-fade-in">
+          <div className="bg-slate-900 border border-slate-700/80 rounded-2xl p-6 shadow-2xl max-w-sm w-full text-center space-y-4">
+            <div className="w-14 h-14 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center mx-auto animate-spin">
+              <Save className="w-7 h-7" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-slate-100">Sincronizando con Supabase...</h3>
+              <p className="text-xs text-slate-400 mt-1">
+                Asegurando que todos los eventos, cortes y configuraciones estén guardados al 100% en el servidor.
+              </p>
             </div>
           </div>
         </div>

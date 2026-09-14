@@ -136,6 +136,9 @@ export async function getAnalysisSessionFromSupabase(matchId?: string): Promise<
       videoUrl: row.video_url || null,
       p1VideoStartSeconds: row.p1_video_start_seconds ?? null,
       p2VideoStartSeconds: row.p2_video_start_seconds ?? null,
+      periodAdjustments: typeof row.period_adjustments === 'string'
+        ? JSON.parse(row.period_adjustments)
+        : (row.period_adjustments || row.home_lineup?._period_adjustments || null),
       botoneraTemplateId: row.botonera_template_id || null,
       home_lineup: typeof row.home_lineup === 'string' ? JSON.parse(row.home_lineup) : (row.home_lineup || null),
       away_lineup: typeof row.away_lineup === 'string' ? JSON.parse(row.away_lineup) : (row.away_lineup || null),
@@ -146,7 +149,7 @@ export async function getAnalysisSessionFromSupabase(matchId?: string): Promise<
   }
 }
 
-// Fetch all active analysis sessions from Supabase (to display "Análisis en marcha" status across matches)
+// Fetch all active analysis sessions across all matches currently in progress
 export async function getAllActiveSessionsFromSupabase(): Promise<Record<string, ActiveBotoneraSession>> {
   try {
     const supabase = createClient();
@@ -155,7 +158,12 @@ export async function getAllActiveSessionsFromSupabase(): Promise<Record<string,
       .select('*')
       .order('updated_at', { ascending: false });
 
-    if (error || !data) return {};
+    if (error || !data) {
+      if (error && !error.message.includes('relation "public.analysis_sessions" does not exist')) {
+        console.warn('Supabase fetch all analysis_sessions warning:', error.message);
+      }
+      return {};
+    }
 
     const result: Record<string, ActiveBotoneraSession> = {};
     for (const row of data) {
@@ -173,6 +181,9 @@ export async function getAllActiveSessionsFromSupabase(): Promise<Record<string,
         videoUrl: row.video_url || null,
         p1VideoStartSeconds: row.p1_video_start_seconds ?? null,
         p2VideoStartSeconds: row.p2_video_start_seconds ?? null,
+        periodAdjustments: typeof row.period_adjustments === 'string'
+          ? JSON.parse(row.period_adjustments)
+          : (row.period_adjustments || row.home_lineup?._period_adjustments || null),
         botoneraTemplateId: row.botonera_template_id || null,
         home_lineup: typeof row.home_lineup === 'string' ? JSON.parse(row.home_lineup) : (row.home_lineup || null),
         away_lineup: typeof row.away_lineup === 'string' ? JSON.parse(row.away_lineup) : (row.away_lineup || null),
@@ -221,9 +232,17 @@ export async function saveAnalysisSessionToSupabase(session: ActiveBotoneraSessi
     const resolvedVideoSourceName = session.videoSourceName || existingSess?.video_source_name || existingMatch?.video_source_name || null;
     const resolvedP1 = session.p1VideoStartSeconds != null ? session.p1VideoStartSeconds : (existingSess?.p1_video_start_seconds ?? existingMatch?.p1_video_start_time ?? null);
     const resolvedP2 = session.p2VideoStartSeconds != null ? session.p2VideoStartSeconds : (existingSess?.p2_video_start_seconds ?? existingMatch?.p2_video_start_time ?? null);
+    const resolvedAdjustments = session.periodAdjustments !== undefined
+      ? session.periodAdjustments
+      : (existingSess?.period_adjustments ?? existingMatch?.period_adjustments ?? existingSess?.home_lineup?._period_adjustments ?? existingMatch?.home_lineup?._period_adjustments ?? null);
     const resolvedTemplateId = session.botoneraTemplateId || existingSess?.botonera_template_id || existingMatch?.botonera_template_id || null;
     const resolvedHomeLineup = session.home_lineup || existingSess?.home_lineup || existingMatch?.home_lineup || null;
     const resolvedAwayLineup = session.away_lineup || existingSess?.away_lineup || existingMatch?.away_lineup || null;
+
+    // Dual protection: fallback inside home_lineup JSONB
+    const safeHomeLineup = resolvedHomeLineup
+      ? { ...resolvedHomeLineup, ...(resolvedAdjustments ? { _period_adjustments: resolvedAdjustments } : {}) }
+      : (resolvedAdjustments ? { _period_adjustments: resolvedAdjustments } : null);
 
     const row: Record<string, any> = {
       match_id: session.selectedMatchId,
@@ -239,8 +258,9 @@ export async function saveAnalysisSessionToSupabase(session: ActiveBotoneraSessi
       video_url: resolvedVideoUrl,
       p1_video_start_seconds: resolvedP1,
       p2_video_start_seconds: resolvedP2,
+      period_adjustments: resolvedAdjustments,
       botonera_template_id: resolvedTemplateId,
-      home_lineup: resolvedHomeLineup,
+      home_lineup: safeHomeLineup,
       away_lineup: resolvedAwayLineup,
       updated_at: new Date().toISOString(),
     };
@@ -251,32 +271,40 @@ export async function saveAnalysisSessionToSupabase(session: ActiveBotoneraSessi
 
     if (error && /Could not find the '.+' column/.test(error.message)) {
       console.warn(
-        `La tabla 'analysis_sessions' de Supabase no tiene las columnas de alineación (${error.message}). ` +
-        'Ejecuta supabase/migrations/0009_add_lineups_to_matches_and_analyses.sql en el SQL Editor.'
+        `La tabla 'analysis_sessions' de Supabase no tiene todas las columnas (${error.message}). ` +
+        'Guardando con fallback de columnas mientras se aplica supabase/migrations/0014_add_period_adjustments.sql.'
       );
       const fallbackRow = { ...row };
-      delete fallbackRow.home_lineup;
-      delete fallbackRow.away_lineup;
+      if (error.message.includes('period_adjustments')) delete fallbackRow.period_adjustments;
+      if (error.message.includes('home_lineup')) delete fallbackRow.home_lineup;
+      if (error.message.includes('away_lineup')) delete fallbackRow.away_lineup;
       ({ error } = await supabase.from('analysis_sessions').upsert([fallbackRow], { onConflict: 'match_id' }));
     }
 
     // Also update matches table in Supabase so match records permanently hold video & offset
-    if (resolvedVideoUrl || resolvedP1 != null || resolvedP2 != null) {
+    if (resolvedVideoUrl || resolvedP1 != null || resolvedP2 != null || resolvedAdjustments != null) {
       try {
-        await supabase
+        const matchPayload: Record<string, any> = {
+          video_url: resolvedVideoUrl,
+          video_type: resolvedVideoType,
+          video_source_name: resolvedVideoSourceName,
+          p1_video_start_time: resolvedP1,
+          p2_video_start_time: resolvedP2,
+          period_adjustments: resolvedAdjustments,
+          botonera_template_id: resolvedTemplateId,
+          home_lineup: safeHomeLineup,
+          away_lineup: resolvedAwayLineup,
+          updated_at: new Date().toISOString(),
+        };
+        let { error: mErr } = await supabase
           .from('matches')
-          .update({
-            video_url: resolvedVideoUrl,
-            video_type: resolvedVideoType,
-            video_source_name: resolvedVideoSourceName,
-            p1_video_start_time: resolvedP1,
-            p2_video_start_time: resolvedP2,
-            botonera_template_id: resolvedTemplateId,
-            home_lineup: resolvedHomeLineup,
-            away_lineup: resolvedAwayLineup,
-            updated_at: new Date().toISOString(),
-          })
+          .update(matchPayload)
           .eq('id', session.selectedMatchId);
+
+        if (mErr && mErr.message.includes('period_adjustments')) {
+          delete matchPayload.period_adjustments;
+          await supabase.from('matches').update(matchPayload).eq('id', session.selectedMatchId);
+        }
       } catch (mErr) {
         console.warn('Could not sync session video settings to matches table in Supabase:', mErr);
       }
@@ -411,7 +439,10 @@ export async function insertAnalysisEventToSupabase(matchId: string, event: Norm
     }
     const row = { ...normalizedEventToRow(matchId, event), created_at: event.created_at || new Date().toISOString() };
 
-    const { error } = await supabase.from('analysis_events').insert([row]);
+    const { error } = await supabase
+      .from('analysis_events')
+      .upsert([row], { onConflict: 'event_id' });
+
     if (error) {
       console.error('Error inserting analysis_event to Supabase:', error.message);
       return false;
@@ -609,3 +640,52 @@ export async function deleteAnalysisSessionFromSupabase(matchId: string): Promis
     return false;
   }
 }
+
+// Real-time synchronization of session timing and video start offsets / adjustments
+export function subscribeToAnalysisSession(
+  matchId: string,
+  onUpdate: (sessionUpdate: {
+    p1VideoStartSeconds?: number | null;
+    p2VideoStartSeconds?: number | null;
+    periodAdjustments?: Record<number, { matchTimeSec: number; videoTimeSec: number }> | null;
+    period?: number;
+    timerSeconds?: number;
+    isTimerRunning?: boolean;
+    videoUrl?: string | null;
+    videoType?: any;
+    videoSourceName?: string | null;
+  }) => void
+): () => void {
+  const supabase = createClient();
+  const channel = supabase
+    .channel(`analysis_session_sync:${matchId}`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'analysis_sessions', filter: `match_id=eq.${matchId}` },
+      (payload: any) => {
+        const row = payload.new;
+        if (!row) return;
+        const parsedAdjustments = typeof row.period_adjustments === 'string'
+          ? JSON.parse(row.period_adjustments)
+          : (row.period_adjustments || row.home_lineup?._period_adjustments || null);
+
+        onUpdate({
+          p1VideoStartSeconds: row.p1_video_start_seconds ?? null,
+          p2VideoStartSeconds: row.p2_video_start_seconds ?? null,
+          periodAdjustments: parsedAdjustments,
+          period: row.period,
+          timerSeconds: row.timer_seconds,
+          isTimerRunning: row.is_timer_running,
+          videoUrl: row.video_url || null,
+          videoType: row.video_type || null,
+          videoSourceName: row.video_source_name || null,
+        });
+      }
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+

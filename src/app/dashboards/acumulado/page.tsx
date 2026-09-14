@@ -6,7 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { ArrowLeft, Eye, Layers, Pencil, RefreshCw, Trophy, Zap } from 'lucide-react';
 import { dbStore } from '@/lib/store/db-store';
 import { BotoneraTemplate, DashboardWidget, Match, NormalizedEvent } from '@/types';
-import { aggregate, buildEngineContext, getAvailableFields } from '@/lib/analytics/dashboard-engine';
+import { aggregate, buildEngineContext, getAvailableFields, calculateMatchScoresFromEvents } from '@/lib/analytics/dashboard-engine';
 import { DashboardGrid } from '@/components/dashboards/DashboardGrid';
 import { WidgetEditorModal } from '@/components/dashboards/WidgetEditorModal';
 import { buildButtonByButtonWidgets } from '@/components/dashboards/dashboard-presets';
@@ -126,14 +126,22 @@ function CumulativeDashboardContent() {
     let w = 0, d = 0, l = 0, gf = 0, ga = 0;
     matches.forEach((m) => {
       if (m.status !== 'Finalizado') return;
+      const matchEvts = events.filter((e) => e.match_id === m.id);
+      const { homeScore, awayScore } = calculateMatchScoresFromEvents(
+        matchEvts,
+        m.home_team,
+        m.away_team,
+        m.home_score ?? 0,
+        m.away_score ?? 0
+      );
       const isHome = m.home_team.toLowerCase().includes('shabab') || m.home_team.toLowerCase().includes('ordon');
-      const us = isHome ? m.home_score : m.away_score;
-      const them = isHome ? m.away_score : m.home_score;
+      const us = isHome ? homeScore : awayScore;
+      const them = isHome ? awayScore : homeScore;
       gf += us; ga += them;
       if (us > them) w++; else if (us === them) d++; else l++;
     });
     return { w, d, l, gf, ga, played: w + d + l };
-  }, [matches]);
+  }, [matches, events]);
 
   return (
     <div className="p-4 sm:p-6 space-y-5 max-w-[1700px] mx-auto">

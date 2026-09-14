@@ -20,6 +20,9 @@ export async function getMatchesFromSupabase(): Promise<Match[]> {
       ...row,
       home_lineup: typeof row.home_lineup === 'string' ? JSON.parse(row.home_lineup) : (row.home_lineup || null),
       away_lineup: typeof row.away_lineup === 'string' ? JSON.parse(row.away_lineup) : (row.away_lineup || null),
+      period_adjustments: typeof row.period_adjustments === 'string'
+        ? JSON.parse(row.period_adjustments)
+        : (row.period_adjustments || row.home_lineup?._period_adjustments || null),
     })) as Match[];
   } catch (err: any) {
     console.warn('Could not load matches from Supabase:', err.message);
@@ -28,7 +31,7 @@ export async function getMatchesFromSupabase(): Promise<Match[]> {
 }
 
 // Columnas opcionales/recientes del partido (vídeo, sincronización y alineaciones)
-// Viven en las migraciones 0001 y 0009; mientras no estén aplicadas,
+// Viven en las migraciones 0001, 0009 y 0014; mientras no estén aplicadas,
 // PostgREST responde "Could not find the 'X' column" y guardamos el
 // resto del partido sin ellas en lugar de perder el upsert entero.
 const OPTIONAL_MATCH_COLUMNS = [
@@ -37,6 +40,7 @@ const OPTIONAL_MATCH_COLUMNS = [
   'video_source_name',
   'p1_video_start_time',
   'p2_video_start_time',
+  'period_adjustments',
   'botonera_template_id',
   'home_lineup',
   'away_lineup',
@@ -55,7 +59,7 @@ export async function saveMatchesToSupabase(matches: Match[]): Promise<boolean> 
     }
 
     // "A Fuego" protection: fetch existing matches and analyses to ensure existing
-    // video_url, video_type, video_source_name, p1_video_start_time, p2_video_start_time
+    // video_url, video_type, video_source_name, p1_video_start_time, p2_video_start_time, period_adjustments
     // are never overwritten with null/empty values by scrapers, crons or partial updates.
     const matchIds = matches.map((m) => m.id);
     let existingMap = new Map<string, any>();
@@ -64,7 +68,7 @@ export async function saveMatchesToSupabase(matches: Match[]): Promise<boolean> 
     try {
       const { data: exMatches } = await supabase
         .from('matches')
-        .select('id, video_type, video_url, video_source_name, p1_video_start_time, p2_video_start_time, botonera_template_id, home_lineup, away_lineup')
+        .select('*')
         .in('id', matchIds);
       if (exMatches) {
         exMatches.forEach((row: any) => existingMap.set(row.id, row));
@@ -72,7 +76,7 @@ export async function saveMatchesToSupabase(matches: Match[]): Promise<boolean> 
 
       const { data: exAnalyses } = await supabase
         .from('match_analyses')
-        .select('match_id, video_type, video_url, video_source_name, p1_video_start_time, p2_video_start_time, botonera_template_id, home_lineup, away_lineup')
+        .select('*')
         .in('match_id', matchIds);
       if (exAnalyses) {
         exAnalyses.forEach((row: any) => analysisMap.set(row.match_id, row));
@@ -90,9 +94,17 @@ export async function saveMatchesToSupabase(matches: Match[]): Promise<boolean> 
       const resolvedVideoSourceName = m.video_source_name || ex?.video_source_name || an?.video_source_name || null;
       const resolvedP1 = m.p1_video_start_time != null ? m.p1_video_start_time : (ex?.p1_video_start_time ?? an?.p1_video_start_time ?? null);
       const resolvedP2 = m.p2_video_start_time != null ? m.p2_video_start_time : (ex?.p2_video_start_time ?? an?.p2_video_start_time ?? null);
+      const resolvedAdjustments = m.period_adjustments !== undefined
+        ? m.period_adjustments
+        : (ex?.period_adjustments ?? an?.period_adjustments ?? ex?.home_lineup?._period_adjustments ?? an?.home_lineup?._period_adjustments ?? null);
       const resolvedTemplateId = m.botonera_template_id || ex?.botonera_template_id || an?.botonera_template_id || null;
       const resolvedHomeLineup = m.home_lineup || ex?.home_lineup || an?.home_lineup || null;
       const resolvedAwayLineup = m.away_lineup || ex?.away_lineup || an?.away_lineup || null;
+
+      // Ensure _period_adjustments is preserved inside home_lineup as robust fallback
+      const safeHomeLineup = resolvedHomeLineup
+        ? { ...resolvedHomeLineup, ...(resolvedAdjustments ? { _period_adjustments: resolvedAdjustments } : {}) }
+        : (resolvedAdjustments ? { _period_adjustments: resolvedAdjustments } : null);
 
       return {
         id: m.id,
@@ -117,8 +129,9 @@ export async function saveMatchesToSupabase(matches: Match[]): Promise<boolean> 
         video_source_name: resolvedVideoSourceName,
         p1_video_start_time: resolvedP1,
         p2_video_start_time: resolvedP2,
+        period_adjustments: resolvedAdjustments,
         botonera_template_id: resolvedTemplateId,
-        home_lineup: resolvedHomeLineup,
+        home_lineup: safeHomeLineup,
         away_lineup: resolvedAwayLineup,
         updated_at: new Date().toISOString()
       };

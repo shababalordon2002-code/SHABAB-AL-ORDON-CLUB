@@ -11,6 +11,7 @@ import {
 } from '@/types';
 import { TacticalLineupPitch, type SubstitutionRecord } from '@/components/pitch/TacticalLineupPitch';
 import { BotoneraPitchCanvas, type EventPitchMarker } from '@/components/botonera/BotoneraPitchCanvas';
+import { BotoneraGoalCanvas, type GoalPointMarker, GOAL_ZONES } from '@/components/botonera/BotoneraGoalCanvas';
 import { TeamLogo } from '@/components/player/PlayerBadge';
 import { dbStore } from '@/lib/store/db-store';
 import { calculateEventVideoTime, resolveEventPeriod } from '@/lib/analytics/video-utils';
@@ -38,6 +39,7 @@ import {
 } from 'lucide-react';
 import { PdfLanguageModal, type PdfReportLanguage } from './PdfLanguageModal';
 import { downloadPdfTechnicalReport } from '@/lib/services/pdf-report-generator';
+import { calculateMatchScoresFromEvents, isEventOfHomeTeam, isEventOfAwayTeam, isGoalEvent } from '@/lib/analytics/dashboard-engine';
 
 const COLOR_MAP: Record<string, string> = {
   emerald: '#10b981',
@@ -715,99 +717,15 @@ function generateDominanceDifferentialPaths(
   return { saoDominancePaths, rivalDominancePaths };
 }
 
-  function isGoalEvent(evt: NormalizedEvent): boolean {
-    const metaDescriptors = evt.metadata?.descriptors || [];
-    const outcomeStr = (evt.outcome || '').toLowerCase().trim();
-    const eventTypeStr = (evt.event_type || '').toLowerCase().trim();
-    const categoryStr = (evt.category || '').toLowerCase().trim();
-    const subcatStr = (evt.subcategory || '').toLowerCase().trim();
-
-    // 1. Direct outcome = Gol / Goal
-    const isOutcomeGol =
-      outcomeStr === 'gol' ||
-      outcomeStr === 'goal' ||
-      outcomeStr.includes('gol marcado') ||
-      outcomeStr.startsWith('gol');
-
-    // 2. Direct event type or category = Gol
-    const isTypeGol =
-      (eventTypeStr === 'gol' || eventTypeStr === 'goal' || eventTypeStr.startsWith('gol ') || eventTypeStr.endsWith(' gol')) &&
-      !eventTypeStr.includes('no gol') &&
-      !eventTypeStr.includes('fallido') &&
-      !eventTypeStr.includes('anulado');
-
-    const isCatGol =
-      (categoryStr === 'gol' || categoryStr === 'goal') &&
-      !categoryStr.includes('no gol') &&
-      !categoryStr.includes('fallido');
-
-    // 3. Descriptors indicate Gol (e.g. Remate / Tiro with descriptor "Resultado: Gol" or "Gol")
-    const hasGolDesc =
-      metaDescriptors.some((d: string) => {
-        const clean = d.toLowerCase().trim();
-        return (
-          clean === 'gol' ||
-          clean === 'goal' ||
-          clean.endsWith(': gol') ||
-          clean.endsWith(':gol') ||
-          clean.includes('resultado: gol') ||
-          clean.includes('resultado:gol') ||
-          clean.includes('finalización: gol') ||
-          clean.includes('finalizacion: gol') ||
-          clean.includes('consecuencia: gol') ||
-          clean.includes('tipo: gol')
-        );
-      }) ||
-      subcatStr === 'gol' ||
-      subcatStr.includes('gol');
-
-    return isOutcomeGol || isTypeGol || isCatGol || hasGolDesc;
-  }
-
-  const isEventOfHomeTeam = useCallback((ev: NormalizedEvent) => {
-    if (!ev) return false;
-    const cleanHome = (homeTeamName || '').toLowerCase().trim();
-    const cleanEvt = (ev.team_name || '').toLowerCase().trim();
-    if (cleanEvt) {
-      if (cleanEvt === cleanHome) return true;
-      if (/shabab|ordon|sao/i.test(cleanHome) && /shabab|ordon|sao/i.test(cleanEvt)) return true;
-      if (cleanEvt === (match.home_team || '').toLowerCase().trim()) return true;
-      return false;
-    }
-    if (ev.team_id) {
-      return ev.team_id === 'home_team' || ev.team_id === 'team_home' || ev.team_id === 'team_shabab_al_ordon';
-    }
-    return true;
-  }, [homeTeamName, match.home_team]);
-
-  const isEventOfAwayTeam = useCallback((ev: NormalizedEvent) => {
-    if (!ev) return false;
-    const cleanAway = (awayTeamName || '').toLowerCase().trim();
-    const cleanEvt = (ev.team_name || '').toLowerCase().trim();
-    if (cleanEvt) {
-      if (cleanEvt === cleanAway) return true;
-      if (/rival/i.test(cleanAway) && /rival/i.test(cleanEvt)) return true;
-      if (cleanEvt === (match.away_team || '').toLowerCase().trim()) return true;
-      return false;
-    }
-    if (ev.team_id) {
-      return ev.team_id === 'away_team' || ev.team_id === 'team_away' || ev.team_id === 'team_rival';
-    }
-    return false;
-  }, [awayTeamName, match.away_team]);
-
-  // Dynamically calculate scores from tagged goal events (Remates / Tiros con resultado GOL, Goles, etc.)
-  const calculatedHomeGoals = useMemo(() => {
-    return allEvents.filter((e) => isEventOfHomeTeam(e) && isGoalEvent(e)).length;
-  }, [allEvents, isEventOfHomeTeam]);
-
-  const calculatedAwayGoals = useMemo(() => {
-    return allEvents.filter((e) => isEventOfAwayTeam(e) && isGoalEvent(e)).length;
-  }, [allEvents, isEventOfAwayTeam]);
-
-  const hasTaggedGoals = calculatedHomeGoals > 0 || calculatedAwayGoals > 0;
-  const displayHomeScore = hasTaggedGoals ? calculatedHomeGoals : (match.home_score ?? 0);
-  const displayAwayScore = hasTaggedGoals ? calculatedAwayGoals : (match.away_score ?? 0);
+  const { homeScore: displayHomeScore, awayScore: displayAwayScore, hasTaggedGoals } = useMemo(() => {
+    return calculateMatchScoresFromEvents(
+      allEvents,
+      homeTeamName,
+      awayTeamName,
+      match.home_score ?? 0,
+      match.away_score ?? 0
+    );
+  }, [allEvents, homeTeamName, awayTeamName, match.home_score, match.away_score]);
 
   // Extract all category buttons from template (or default categories if template unavailable)
   const categoryButtons: BotoneraButton[] = useMemo(() => {
@@ -2298,6 +2216,30 @@ const PlayerDetailModal: React.FC<PlayerDetailModalProps> = ({
   );
 };
 
+function getGoalCoords(evt: NormalizedEvent): { x: number; y: number; zone: string | null } | null {
+  const gx = evt.goal_x ?? (typeof evt.metadata?.goal_x === 'number' ? evt.metadata.goal_x : null);
+  const gy = evt.goal_y ?? (typeof evt.metadata?.goal_y === 'number' ? evt.metadata.goal_y : null);
+  const gz = evt.goal_zone || evt.metadata?.goal_zone || null;
+
+  if (gx !== null && gy !== null) {
+    return { x: gx, y: gy, zone: gz };
+  }
+
+  if (gz) {
+    const matchedZone = GOAL_ZONES.find(
+      (z) =>
+        z.name.toLowerCase().trim() === gz.toLowerCase().trim() ||
+        z.id.toLowerCase().trim() === gz.toLowerCase().trim() ||
+        z.tag.toLowerCase().trim() === gz.toLowerCase().trim()
+    );
+    if (matchedZone) {
+      return { x: matchedZone.x, y: matchedZone.y, zone: gz };
+    }
+  }
+
+  return null;
+}
+
 /* ── EVENT DETAIL MODAL COMPONENT (CAMPOGRAMA Y DESCRIPTORES POR EQUIPO: LOCAL IZQ / VISITANTE DER) ── */
 interface EventDetailModalProps {
   eventDetail: {
@@ -3010,6 +2952,7 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({
     isHome: boolean
   ) => {
     const isZoneMode = pitchViewType.startsWith('zone_') || pitchViewType === 'zone';
+    const [pitchTabMode, setPitchTabMode] = useState<'both' | 'field' | 'goal'>('both');
 
     const pointsListWithSelection = useMemo(() => {
       return teamData.pointsList.map((pt) => ({
@@ -3017,6 +2960,47 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({
         isSelected: selectedEventId ? pt.id === selectedEventId : false,
       }));
     }, [teamData.pointsList, selectedEventId]);
+
+    const goalPointsList: GoalPointMarker[] = useMemo(() => {
+      const list: GoalPointMarker[] = [];
+      descFilteredEvents.forEach((evt) => {
+        const g = getGoalCoords(evt);
+        if (g) {
+          list.push({
+            id: evt.event_id,
+            x: g.x,
+            y: g.y,
+            zone: g.zone,
+            outcome: evt.outcome,
+            player_name: evt.player_name,
+            isSelected: selectedEventId ? evt.event_id === selectedEventId : false,
+          });
+        }
+      });
+      return list;
+    }, [descFilteredEvents, selectedEventId]);
+
+    const isGoalOrRemateCategory = useMemo(() => {
+      const norm = (name || '').toLowerCase().trim();
+      return (
+        norm.includes('remate') ||
+        norm.includes('tiro') ||
+        norm.includes('gol') ||
+        norm.includes('ocasi') ||
+        norm.includes('disparo') ||
+        button?.pitchRequired === 'pitch_and_goal' ||
+        button?.pitchRequired === 'goal_mouth' ||
+        button?.secondaryPitchRequired === 'goal_mouth'
+      );
+    }, [name, button]);
+
+    const isDualCampograma = isGoalOrRemateCategory || goalPointsList.length > 0;
+
+    const selectedEventGoalCoords = useMemo(() => {
+      if (!selectedEventId) return null;
+      const selEvt = allEventsList.find((e) => e.event_id === selectedEventId);
+      return selEvt ? getGoalCoords(selEvt) : null;
+    }, [selectedEventId, allEventsList]);
 
     return (
       <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 space-y-2 flex flex-col justify-between h-full">
@@ -3030,6 +3014,7 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({
               </h4>
               <span className="text-[9px] font-extrabold uppercase tracking-wider text-amber-400 block truncate">
                 {isHome ? 'CAMPOGRAMA LOCAL' : 'CAMPOGRAMA VISITANTE'}
+                {isDualCampograma && ' (DOBLE VISTA)'}
               </span>
             </div>
           </div>
@@ -3038,6 +3023,46 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({
             {pointsListWithSelection.length} {pointsListWithSelection.length === 1 ? 'Acción' : 'Acciones'}
           </span>
         </div>
+
+        {/* Dual Visualization Tab Selector when event has two campogramas */}
+        {isDualCampograma && (
+          <div className="flex items-center gap-1 bg-slate-900/90 p-1 rounded-xl border border-slate-800 font-mono text-[10px] shrink-0">
+            <button
+              type="button"
+              onClick={() => setPitchTabMode('both')}
+              className={`flex-1 py-1 px-1.5 rounded-lg font-extrabold transition cursor-pointer flex items-center justify-center gap-1 ${
+                pitchTabMode === 'both'
+                  ? 'bg-amber-500 text-slate-950 shadow font-black'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Eye className="w-3 h-3" />
+              <span>Vista Doble</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setPitchTabMode('field')}
+              className={`flex-1 py-1 px-1.5 rounded-lg font-extrabold transition cursor-pointer flex items-center justify-center gap-1 ${
+                pitchTabMode === 'field'
+                  ? 'bg-emerald-500 text-slate-950 shadow font-black'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <span>⚽ Terreno</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setPitchTabMode('goal')}
+              className={`flex-1 py-1 px-1.5 rounded-lg font-extrabold transition cursor-pointer flex items-center justify-center gap-1 ${
+                pitchTabMode === 'goal'
+                  ? 'bg-cyan-500 text-slate-950 shadow font-black'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <span>🥅 Portería</span>
+            </button>
+          </div>
+        )}
 
         {/* Active Descriptor Filter Badge */}
         {selectedDescriptor && (
@@ -3087,35 +3112,69 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({
           );
         })()}
 
-        <div className="flex-1 flex items-center justify-center pt-1 pb-1 min-h-0 w-full overflow-hidden">
-          <div className="w-full max-w-[310px] sm:max-w-[330px] mx-auto flex items-center justify-center">
-            <BotoneraPitchCanvas
-              hideHeader={true}
-              hideFooter={true}
-              startX={null}
-              startY={null}
-              endX={null}
-              endY={null}
-              onSetCoords={() => {}}
-              selectedZone={selectedZone}
-              onSelectZone={(zName) => onSelectZone(zName === selectedZone ? null : zName)}
-              onSelectMarker={(mId) => onSelectEventId(mId === selectedEventId ? null : mId)}
-              initialMode={pitchViewType}
-              lockMode={true}
-              pitchViewMode="full"
-              zoneCounts={teamData.zoneCounts}
-              pointsList={pointsListWithSelection}
-            />
-          </div>
+        {/* Main Campogramas Container */}
+        <div className="flex-1 flex flex-col gap-3 justify-center pt-1 pb-1 min-h-0 w-full overflow-hidden">
+          {/* 1. Campograma de Terreno de Juego */}
+          {(pitchTabMode === 'both' || pitchTabMode === 'field') && (
+            <div className="w-full space-y-1">
+              {isDualCampograma && pitchTabMode === 'both' && (
+                <span className="text-[10px] font-black text-emerald-400 uppercase tracking-wider block text-center">
+                  ⚽ 1. Terreno de Juego
+                </span>
+              )}
+              <div className="w-full max-w-[310px] sm:max-w-[330px] mx-auto flex items-center justify-center">
+                <BotoneraPitchCanvas
+                  hideHeader={true}
+                  hideFooter={true}
+                  startX={null}
+                  startY={null}
+                  endX={null}
+                  endY={null}
+                  onSetCoords={() => {}}
+                  selectedZone={selectedZone}
+                  onSelectZone={(zName) => onSelectZone(zName === selectedZone ? null : zName)}
+                  onSelectMarker={(mId) => onSelectEventId(mId === selectedEventId ? null : mId)}
+                  initialMode={pitchViewType}
+                  lockMode={true}
+                  pitchViewMode="full"
+                  zoneCounts={teamData.zoneCounts}
+                  pointsList={pointsListWithSelection}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* 2. Campograma de Portería */}
+          {isDualCampograma && (pitchTabMode === 'both' || pitchTabMode === 'goal') && (
+            <div className={`w-full space-y-1 ${pitchTabMode === 'both' ? 'pt-2 border-t border-slate-800/80' : ''}`}>
+              {pitchTabMode === 'both' && (
+                <span className="text-[10px] font-black text-amber-400 uppercase tracking-wider block text-center">
+                  🥅 2. Campograma de Portería
+                </span>
+              )}
+              <div className="w-full max-w-[310px] sm:max-w-[330px] mx-auto flex items-center justify-center">
+                <BotoneraGoalCanvas
+                  goalX={selectedEventGoalCoords?.x ?? null}
+                  goalY={selectedEventGoalCoords?.y ?? null}
+                  goalZone={selectedEventGoalCoords?.zone ?? null}
+                  pointsList={goalPointsList}
+                  onSelectMarker={(mId) => onSelectEventId(mId === selectedEventId ? null : mId)}
+                  readOnly={true}
+                  hideHeader={true}
+                  className="w-full"
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="text-[9px] text-slate-500 text-center font-mono truncate shrink-0">
           {selectedEventId ? (
-            <span className="text-amber-400 font-bold">🎯 Flecha / Acción resaltada</span>
+            <span className="text-amber-400 font-bold">🎯 Flecha / Ubicación resaltada</span>
           ) : selectedZone ? (
             <span className="text-emerald-400 font-bold">Zona seleccionada: {selectedZone}</span>
           ) : (
-            <span>Ubicaciones registradas en el terreno de juego</span>
+            <span>Ubicaciones registradas en {isDualCampograma ? 'campo y portería' : 'terreno de juego'}</span>
           )}
         </div>
       </div>

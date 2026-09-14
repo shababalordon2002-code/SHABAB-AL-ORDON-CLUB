@@ -14,6 +14,7 @@ import {
   Pencil,
   Crosshair,
   Link2,
+  Flag,
 } from 'lucide-react';
 
 /**
@@ -24,9 +25,9 @@ import {
  */
 export const PERIOD_BASE_SECONDS: Record<number, number> = {
   1: 0,
-  2: 2700,
-  3: 5400,
-  4: 6300,
+  2: 0,
+  3: 0,
+  4: 0,
 };
 
 interface BotoneraStopwatchProps {
@@ -38,6 +39,8 @@ interface BotoneraStopwatchProps {
   isTimerRunning: boolean;
   onToggleTimer: () => void;
   onResetTimer: () => void;
+  /** Called when the user clicks Finalizar Parte */
+  onFinalizePeriod?: () => void;
   /** Called when the timer transitions from stopped → running (not on pause) */
   onTimerStarted?: () => void;
   /** Seeks the video to the current match time (periodOffset + timerSeconds). */
@@ -56,6 +59,7 @@ export const BotoneraStopwatch: React.FC<BotoneraStopwatchProps> = ({
   isTimerRunning,
   onToggleTimer,
   onResetTimer,
+  onFinalizePeriod,
   onTimerStarted,
   onSeekVideoToNow,
   hasVideoSync = false,
@@ -243,6 +247,17 @@ export const BotoneraStopwatch: React.FC<BotoneraStopwatchProps> = ({
               );
             })}
           </div>
+
+          {onFinalizePeriod && (
+            <button
+              onClick={onFinalizePeriod}
+              title={`Dar por finalizada la ${period === 1 ? '1ª Parte' : period === 2 ? '2ª Parte' : `Parte ${period}`}`}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 transition cursor-pointer shadow-sm"
+            >
+              <Flag className="w-3.5 h-3.5 text-amber-400" />
+              <span>Finalizar {period === 1 ? '1ª Parte' : period === 2 ? '2ª Parte' : `Parte ${period}`}</span>
+            </button>
+          )}
         </div>
       </div>
 

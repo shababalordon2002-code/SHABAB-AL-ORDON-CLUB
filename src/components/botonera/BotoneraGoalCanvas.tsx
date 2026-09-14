@@ -8,11 +8,23 @@ export interface GoalCoords {
   y: number; // 0 to 100% (0: top crossbar, 100: ground line)
 }
 
+export interface GoalPointMarker {
+  id: string;
+  x: number;
+  y: number;
+  zone?: string | null;
+  outcome?: string | null;
+  player_name?: string | null;
+  isSelected?: boolean;
+}
+
 interface BotoneraGoalCanvasProps {
-  goalX: number | null;
-  goalY: number | null;
+  goalX?: number | null;
+  goalY?: number | null;
   goalZone?: string | null;
-  onSetGoalCoords: (coords: GoalCoords | null, zone: string | null) => void;
+  pointsList?: GoalPointMarker[];
+  onSetGoalCoords?: (coords: GoalCoords | null, zone: string | null) => void;
+  onSelectMarker?: (markerId: string) => void;
   readOnly?: boolean;
   hideHeader?: boolean;
   hideQuickButtons?: boolean;
@@ -69,25 +81,27 @@ export function detectGoalZone(x: number, y: number): string {
 }
 
 export const BotoneraGoalCanvas: React.FC<BotoneraGoalCanvasProps> = ({
-  goalX,
-  goalY,
-  goalZone,
+  goalX = null,
+  goalY = null,
+  goalZone = null,
+  pointsList = [],
   onSetGoalCoords,
+  onSelectMarker,
   readOnly = false,
   hideHeader = false,
   hideQuickButtons = false,
   className = '',
 }) => {
-  const [internalX, setInternalX] = useState<number | null>(goalX);
-  const [internalY, setInternalY] = useState<number | null>(goalY);
+  const [internalX, setInternalX] = useState<number | null>(goalX ?? null);
+  const [internalY, setInternalY] = useState<number | null>(goalY ?? null);
   const [activeZone, setActiveZone] = useState<string | null>(goalZone || null);
 
   useEffect(() => {
-    setInternalX(goalX);
-    setInternalY(goalY);
+    setInternalX(goalX ?? null);
+    setInternalY(goalY ?? null);
     if (goalZone) {
       setActiveZone(goalZone);
-    } else if (goalX !== null && goalY !== null) {
+    } else if (goalX !== null && goalX !== undefined && goalY !== null && goalY !== undefined) {
       setActiveZone(detectGoalZone(goalX, goalY));
     } else {
       setActiveZone(null);
@@ -132,16 +146,19 @@ export const BotoneraGoalCanvas: React.FC<BotoneraGoalCanvasProps> = ({
     setInternalX(x);
     setInternalY(y);
     setActiveZone(zone);
-    onSetGoalCoords({ x, y }, zone);
+    if (onSetGoalCoords) {
+      onSetGoalCoords({ x, y }, zone);
+    }
   };
-
 
   const handleReset = (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     setInternalX(null);
     setInternalY(null);
     setActiveZone(null);
-    onSetGoalCoords(null, null);
+    if (onSetGoalCoords) {
+      onSetGoalCoords(null, null);
+    }
   };
 
   const hasSelection = internalX !== null && internalY !== null;
@@ -320,8 +337,59 @@ export const BotoneraGoalCanvas: React.FC<BotoneraGoalCanvasProps> = ({
           <circle cx="86" cy="56" r="6" fill="#e2e8f0" />
           <circle cx="514" cy="56" r="6" fill="#e2e8f0" />
 
-          {/* Selected Coordinate Shot Marker (Glowing Ball) */}
-          {hasSelection && (
+          {/* Multiple Goal Markers from pointsList */}
+          {pointsList && pointsList.map((pt) => {
+            const svgX = toSvgX(pt.x);
+            const svgY = toSvgY(pt.y);
+            const isSelected = pt.isSelected || (internalX === pt.x && internalY === pt.y);
+
+            const outLower = (pt.outcome || '').toLowerCase();
+            const isGoal = outLower.includes('gol');
+            const isSave = outLower.includes('parada') || outLower.includes('atajad');
+            const isMiss = outLower.includes('fuera') || outLower.includes('fall');
+
+            const markerColor = isGoal ? '#10b981' : isSave ? '#38bdf8' : isMiss ? '#ef4444' : '#f59e0b';
+            const strokeColor = isGoal ? '#047857' : isSave ? '#0284c7' : isMiss ? '#991b1b' : '#b45309';
+
+            return (
+              <g
+                key={pt.id}
+                transform={`translate(${svgX}, ${svgY})`}
+                className="cursor-pointer transition-all duration-200"
+                onClick={(e) => {
+                  if (onSelectMarker) {
+                    e.stopPropagation();
+                    onSelectMarker(pt.id);
+                  }
+                }}
+              >
+                {isSelected ? (
+                  <g filter="url(#ball-glow)">
+                    <circle cx="0" cy="0" r="16" fill="none" stroke="#f59e0b" strokeWidth="2" strokeDasharray="3 2" />
+                    <circle cx="0" cy="0" r="22" fill="#f59e0b" fillOpacity="0.2" />
+                    <line x1="-12" y1="0" x2="12" y2="0" stroke="#f59e0b" strokeWidth="1.5" />
+                    <line x1="0" y1="-12" x2="0" y2="12" stroke="#f59e0b" strokeWidth="1.5" />
+                    <circle cx="0" cy="0" r="10" fill="#ffffff" stroke="#0f172a" strokeWidth="1.5" />
+                    <polygon points="0,-4 3.8,-1.2 2.4,3.2 -2.4,3.2 -3.8,-1.2" fill="#0f172a" />
+                    <g transform="translate(0, -26)">
+                      <rect x="-48" y="-12" width="96" height="16" rx="4" fill="#0f172a" stroke="#f59e0b" strokeWidth="1" />
+                      <text x="0" y="-1" fill="#fbbf24" fontSize="8.5" fontWeight="bold" textAnchor="middle">
+                        🎯 {pt.player_name || 'Disparo'} ({pt.x}%, {pt.y}%)
+                      </text>
+                    </g>
+                  </g>
+                ) : (
+                  <g>
+                    <circle cx="0" cy="0" r="8" fill={markerColor} stroke={strokeColor} strokeWidth="1.8" />
+                    <circle cx="0" cy="0" r="3.5" fill="#ffffff" />
+                  </g>
+                )}
+              </g>
+            );
+          })}
+
+          {/* Selected Single Coordinate Shot Marker (Glowing Ball) when not in pointsList */}
+          {hasSelection && (!pointsList || !pointsList.some((p) => p.x === internalX && p.y === internalY)) && (
             <g
               transform={`translate(${toSvgX(internalX!)}, ${toSvgY(internalY!)})`}
               filter="url(#ball-glow)"

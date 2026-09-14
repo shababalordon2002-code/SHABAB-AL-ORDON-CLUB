@@ -31,6 +31,9 @@ export async function getAnalysesFromSupabase(matchId?: string): Promise<MatchAn
       video_source_name: row.video_source_name || null,
       p1_video_start_time: row.p1_video_start_time ?? null,
       p2_video_start_time: row.p2_video_start_time ?? null,
+      period_adjustments: typeof row.period_adjustments === 'string'
+        ? JSON.parse(row.period_adjustments)
+        : (row.period_adjustments || row.home_lineup?._period_adjustments || null),
       botonera_template_id: row.botonera_template_id || null,
       home_lineup: typeof row.home_lineup === 'string' ? JSON.parse(row.home_lineup) : (row.home_lineup || null),
       away_lineup: typeof row.away_lineup === 'string' ? JSON.parse(row.away_lineup) : (row.away_lineup || null),
@@ -83,13 +86,21 @@ export async function saveAnalysisToSupabase(analysis: MatchAnalysis): Promise<b
     const resolvedVideoSourceName = analysis.video_source_name || existingAn?.video_source_name || existingMatch?.video_source_name || null;
     const resolvedP1 = analysis.p1_video_start_time != null ? analysis.p1_video_start_time : (existingAn?.p1_video_start_time ?? existingMatch?.p1_video_start_time ?? null);
     const resolvedP2 = analysis.p2_video_start_time != null ? analysis.p2_video_start_time : (existingAn?.p2_video_start_time ?? existingMatch?.p2_video_start_time ?? null);
+    const resolvedAdjustments = analysis.period_adjustments !== undefined
+      ? analysis.period_adjustments
+      : (existingAn?.period_adjustments ?? existingMatch?.period_adjustments ?? existingAn?.home_lineup?._period_adjustments ?? existingMatch?.home_lineup?._period_adjustments ?? null);
     const resolvedTemplateId = analysis.botonera_template_id || existingAn?.botonera_template_id || existingMatch?.botonera_template_id || null;
     const resolvedHomeLineup = analysis.home_lineup || existingAn?.home_lineup || existingMatch?.home_lineup || null;
     const resolvedAwayLineup = analysis.away_lineup || existingAn?.away_lineup || existingMatch?.away_lineup || null;
 
-    // Collaborative Event Safety: Merge all events from existingAn, analysis_events table, and incoming analysis
-    const existingEvents: any[] = (existingAn?.events && Array.isArray(existingAn.events)) ? existingAn.events : [];
+    // Dual protection: ensure _period_adjustments is preserved inside home_lineup JSONB as a 100% resilient fallback
+    const safeHomeLineup = resolvedHomeLineup
+      ? { ...resolvedHomeLineup, ...(resolvedAdjustments ? { _period_adjustments: resolvedAdjustments } : {}) }
+      : (resolvedAdjustments ? { _period_adjustments: resolvedAdjustments } : null);
+
+    // Single Source of Truth: Supabase analysis_events table + incoming active events
     const incomingEvents: any[] = (analysis.events && Array.isArray(analysis.events)) ? analysis.events : [];
+    const existingEvents: any[] = (existingAn?.events && Array.isArray(existingAn.events)) ? existingAn.events : [];
 
     let tableEvents: any[] = [];
     try {
@@ -105,49 +116,54 @@ export async function saveAnalysisToSupabase(analysis: MatchAnalysis): Promise<b
     }
 
     const eventMap = new Map<string, any>();
-    existingEvents.forEach((e: any) => {
-      if (e && e.event_id) eventMap.set(e.event_id, e);
-    });
-    tableEvents.forEach((r: any) => {
-      if (r && r.event_id) {
-        const prev = eventMap.get(r.event_id);
-        const parsedMeta = typeof r.metadata === 'string' ? JSON.parse(r.metadata) : (r.metadata || {});
-        const rNorm = {
-          event_id: r.event_id,
-          source_event_id: r.source_event_id ?? null,
-          match_id: r.match_id,
-          team_id: r.team_id ?? null,
-          team_name: r.team_name ?? null,
-          player_id: r.player_id ?? null,
-          player_name: r.player_name,
-          event_type: r.event_type,
-          category: r.category,
-          subcategory: r.subcategory ?? null,
-          timestamp: r.timestamp ?? null,
-          minute: r.minute ?? null,
-          second: r.second ?? null,
-          duration: r.duration ?? null,
-          period: r.period ?? null,
-          x: r.x ?? null,
-          y: r.y ?? null,
-          end_x: r.end_x ?? null,
-          end_y: r.end_y ?? null,
-          goal_x: r.goal_x ?? parsedMeta?.goal_x ?? null,
-          goal_y: r.goal_y ?? parsedMeta?.goal_y ?? null,
-          goal_zone: r.goal_zone ?? parsedMeta?.goal_zone ?? null,
-          outcome: r.outcome ?? null,
-          metadata: parsedMeta,
-          source: r.source,
-          created_by: r.created_by ?? null,
-          created_by_name: r.created_by_name ?? null,
-          created_at: r.created_at,
-          updated_at: r.updated_at,
-        };
-        if (!prev || new Date(r.updated_at || 0).getTime() >= new Date(prev.updated_at || 0).getTime()) {
+
+    // 1. If tableEvents exists in Supabase, load them as base truth
+    if (tableEvents.length > 0) {
+      tableEvents.forEach((r: any) => {
+        if (r && r.event_id) {
+          const parsedMeta = typeof r.metadata === 'string' ? JSON.parse(r.metadata) : (r.metadata || {});
+          const rNorm = {
+            event_id: r.event_id,
+            source_event_id: r.source_event_id ?? null,
+            match_id: r.match_id,
+            team_id: r.team_id ?? null,
+            team_name: r.team_name ?? null,
+            player_id: r.player_id ?? null,
+            player_name: r.player_name,
+            event_type: r.event_type,
+            category: r.category,
+            subcategory: r.subcategory ?? null,
+            timestamp: r.timestamp ?? null,
+            minute: r.minute ?? null,
+            second: r.second ?? null,
+            duration: r.duration ?? null,
+            period: r.period ?? null,
+            x: r.x ?? null,
+            y: r.y ?? null,
+            end_x: r.end_x ?? null,
+            end_y: r.end_y ?? null,
+            goal_x: r.goal_x ?? parsedMeta?.goal_x ?? null,
+            goal_y: r.goal_y ?? parsedMeta?.goal_y ?? null,
+            goal_zone: r.goal_zone ?? parsedMeta?.goal_zone ?? null,
+            outcome: r.outcome ?? null,
+            metadata: parsedMeta,
+            source: r.source,
+            created_by: r.created_by ?? null,
+            created_by_name: r.created_by_name ?? null,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+          };
           eventMap.set(r.event_id, rNorm);
         }
-      }
-    });
+      });
+    } else if (existingEvents.length > 0 && incomingEvents.length === 0) {
+      // Fallback for legacy data without tableEvents
+      existingEvents.forEach((e: any) => {
+        if (e && e.event_id) eventMap.set(e.event_id, e);
+      });
+    }
+
+    // 2. Apply incoming active events
     incomingEvents.forEach((e: any) => {
       if (e && e.event_id) {
         const prev = eventMap.get(e.event_id);
@@ -181,8 +197,9 @@ export async function saveAnalysisToSupabase(analysis: MatchAnalysis): Promise<b
       video_source_name: resolvedVideoSourceName,
       p1_video_start_time: resolvedP1,
       p2_video_start_time: resolvedP2,
+      period_adjustments: resolvedAdjustments,
       botonera_template_id: resolvedTemplateId,
-      home_lineup: resolvedHomeLineup,
+      home_lineup: safeHomeLineup,
       away_lineup: resolvedAwayLineup,
       events: consolidatedEvents,
       updated_at: new Date().toISOString(),
@@ -252,12 +269,13 @@ export async function saveAnalysisToSupabase(analysis: MatchAnalysis): Promise<b
 
     if (error && /Could not find the '.+' column/.test(error.message)) {
       console.warn(
-        `La tabla 'match_analyses' de Supabase no tiene las columnas de alineación (${error.message}). ` +
-        'Ejecuta supabase/migrations/0009_add_lineups_to_matches_and_analyses.sql en el SQL Editor.'
+        `La tabla 'match_analyses' de Supabase no tiene todas las columnas requeridas (${error.message}). ` +
+        'Guardando con fallback de columnas mientras se aplica supabase/migrations/0014_add_period_adjustments.sql.'
       );
       const fallbackRow = { ...row };
-      delete fallbackRow.home_lineup;
-      delete fallbackRow.away_lineup;
+      if (error.message.includes('period_adjustments')) delete fallbackRow.period_adjustments;
+      if (error.message.includes('home_lineup')) delete fallbackRow.home_lineup;
+      if (error.message.includes('away_lineup')) delete fallbackRow.away_lineup;
       ({ error } = await supabase.from('match_analyses').upsert([fallbackRow], { onConflict: 'match_id' }));
       if (error) {
         ({ error } = await supabase.from('match_analyses').upsert([fallbackRow], { onConflict: 'id' }));
@@ -265,22 +283,29 @@ export async function saveAnalysisToSupabase(analysis: MatchAnalysis): Promise<b
     }
 
     // Also synchronize video & period offset data to the associated match in Supabase
-    if (resolvedVideoUrl || resolvedP1 != null || resolvedP2 != null) {
+    if (resolvedVideoUrl || resolvedP1 != null || resolvedP2 != null || resolvedAdjustments != null) {
       try {
-        await supabase
+        const matchUpdatePayload: Record<string, any> = {
+          video_url: resolvedVideoUrl,
+          video_type: resolvedVideoType,
+          video_source_name: resolvedVideoSourceName,
+          p1_video_start_time: resolvedP1,
+          p2_video_start_time: resolvedP2,
+          period_adjustments: resolvedAdjustments,
+          botonera_template_id: resolvedTemplateId,
+          home_lineup: safeHomeLineup,
+          away_lineup: resolvedAwayLineup,
+          updated_at: new Date().toISOString(),
+        };
+        let { error: mUpdateErr } = await supabase
           .from('matches')
-          .update({
-            video_url: resolvedVideoUrl,
-            video_type: resolvedVideoType,
-            video_source_name: resolvedVideoSourceName,
-            p1_video_start_time: resolvedP1,
-            p2_video_start_time: resolvedP2,
-            botonera_template_id: resolvedTemplateId,
-            home_lineup: resolvedHomeLineup,
-            away_lineup: resolvedAwayLineup,
-            updated_at: new Date().toISOString(),
-          })
+          .update(matchUpdatePayload)
           .eq('id', analysis.match_id);
+
+        if (mUpdateErr && mUpdateErr.message.includes('period_adjustments')) {
+          delete matchUpdatePayload.period_adjustments;
+          await supabase.from('matches').update(matchUpdatePayload).eq('id', analysis.match_id);
+        }
       } catch (syncErr) {
         console.warn('Could not sync video settings to matches table in Supabase:', syncErr);
       }

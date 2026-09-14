@@ -45,32 +45,7 @@ export const DEFAULT_DASHBOARD_CONFIG: DashboardGlobalConfig = {
   buttonConfigs: {},
 };
 
-export const SEED_MATCH_ANALYSES: MatchAnalysis[] = [
-  {
-    id: 'analysis_demo_1',
-    match_id: 'match_demo_1',
-    title: 'Análisis Táctico Completo vs Al-Faisaly',
-    analyst_name: 'Analista Principal (SAO)',
-    status: 'completed',
-    video_type: 'link',
-    video_url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-    created_at: '2026-09-01T20:45:00Z',
-    updated_at: '2026-09-01T20:45:00Z',
-    events: []
-  },
-  {
-    id: 'analysis_fs_EXAUVBT8_1',
-    match_id: 'match_fs_EXAUVBT8',
-    title: 'Análisis Vídeo 1ª Parte vs Al Ramtha',
-    analyst_name: 'Cuerpo Técnico SAO',
-    status: 'completed',
-    video_type: 'link',
-    video_url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-    created_at: '2026-09-04T18:30:00Z',
-    updated_at: '2026-09-04T18:30:00Z',
-    events: []
-  }
-];
+export const SEED_MATCH_ANALYSES: MatchAnalysis[] = [];
 
 // Initial Seed DEMO Botonera Templates (LongoMatch / Nacsport Style)
 export const SEED_BOTONERA_TEMPLATES: BotoneraTemplate[] = [
@@ -265,8 +240,8 @@ const SEED_MATCHES: Match[] = [
     away_team: 'Shabab Al Ordon',
     away_team_logo: '/logo.png',
     home_score: 0,
-    away_score: 0,
-    status: 'Programado',
+    away_score: 1,
+    status: 'Finalizado',
     event_count: 0,
     import_status: 'Pendiente'
   },
@@ -466,6 +441,9 @@ export const dbStore = {
     const resolvedVideoSourceName = match.video_source_name || existing?.video_source_name || associatedAnalysis?.video_source_name || undefined;
     const resolvedP1 = match.p1_video_start_time != null ? match.p1_video_start_time : (existing?.p1_video_start_time ?? associatedAnalysis?.p1_video_start_time ?? null);
     const resolvedP2 = match.p2_video_start_time != null ? match.p2_video_start_time : (existing?.p2_video_start_time ?? associatedAnalysis?.p2_video_start_time ?? null);
+    const resolvedAdjustments = match.period_adjustments !== undefined
+      ? match.period_adjustments
+      : (existing?.period_adjustments ?? associatedAnalysis?.period_adjustments ?? null);
     const resolvedTemplateId = match.botonera_template_id || existing?.botonera_template_id || associatedAnalysis?.botonera_template_id || undefined;
     const resolvedHomeLineup = match.home_lineup || existing?.home_lineup || associatedAnalysis?.home_lineup || undefined;
     const resolvedAwayLineup = match.away_lineup || existing?.away_lineup || associatedAnalysis?.away_lineup || undefined;
@@ -485,6 +463,7 @@ export const dbStore = {
         video_source_name: resolvedVideoSourceName,
         p1_video_start_time: resolvedP1,
         p2_video_start_time: resolvedP2,
+        period_adjustments: resolvedAdjustments,
         botonera_template_id: resolvedTemplateId,
         home_lineup: resolvedHomeLineup,
         away_lineup: resolvedAwayLineup,
@@ -498,6 +477,7 @@ export const dbStore = {
         video_source_name: resolvedVideoSourceName,
         p1_video_start_time: resolvedP1,
         p2_video_start_time: resolvedP2,
+        period_adjustments: resolvedAdjustments,
         botonera_template_id: resolvedTemplateId,
         home_lineup: resolvedHomeLineup,
         away_lineup: resolvedAwayLineup,
@@ -523,6 +503,7 @@ export const dbStore = {
           video_source_name: resolvedVideoSourceName || a.video_source_name,
           p1_video_start_time: resolvedP1 != null ? resolvedP1 : a.p1_video_start_time,
           p2_video_start_time: resolvedP2 != null ? resolvedP2 : a.p2_video_start_time,
+          period_adjustments: resolvedAdjustments !== undefined ? resolvedAdjustments : a.period_adjustments,
           botonera_template_id: resolvedTemplateId || a.botonera_template_id,
           home_lineup: resolvedHomeLineup || a.home_lineup,
           away_lineup: resolvedAwayLineup,
@@ -922,6 +903,7 @@ export const dbStore = {
         const resolvedVideoSourceName = single.video_source_name || matchObj?.video_source_name || null;
         const resolvedP1 = single.p1_video_start_time != null ? single.p1_video_start_time : (matchObj?.p1_video_start_time ?? null);
         const resolvedP2 = single.p2_video_start_time != null ? single.p2_video_start_time : (matchObj?.p2_video_start_time ?? null);
+        const resolvedAdjustments = single.period_adjustments ?? matchObj?.period_adjustments ?? null;
         const resolvedTemplateId = single.botonera_template_id || matchObj?.botonera_template_id || null;
         const resolvedHomeLineup = single.home_lineup || matchObj?.home_lineup || null;
         const resolvedAwayLineup = single.away_lineup || matchObj?.away_lineup || null;
@@ -935,6 +917,7 @@ export const dbStore = {
           video_source_name: resolvedVideoSourceName,
           p1_video_start_time: resolvedP1,
           p2_video_start_time: resolvedP2,
+          period_adjustments: resolvedAdjustments,
           botonera_template_id: resolvedTemplateId,
           home_lineup: resolvedHomeLineup,
           away_lineup: resolvedAwayLineup,
@@ -958,6 +941,7 @@ export const dbStore = {
         const resolvedVideoSourceName = withVideo.video_source_name || matchObj?.video_source_name || null;
         const resolvedP1 = group.find((a) => a.p1_video_start_time != null)?.p1_video_start_time ?? matchObj?.p1_video_start_time ?? null;
         const resolvedP2 = group.find((a) => a.p2_video_start_time != null)?.p2_video_start_time ?? matchObj?.p2_video_start_time ?? null;
+        const resolvedAdjustments = group.find((a) => a.period_adjustments && Object.keys(a.period_adjustments).length > 0)?.period_adjustments ?? matchObj?.period_adjustments ?? null;
         const resolvedTemplateId = group.find((a) => a.botonera_template_id)?.botonera_template_id ?? matchObj?.botonera_template_id ?? null;
 
         const masterAnalysis: MatchAnalysis = {
@@ -971,6 +955,7 @@ export const dbStore = {
           video_source_name: resolvedVideoSourceName,
           p1_video_start_time: resolvedP1,
           p2_video_start_time: resolvedP2,
+          period_adjustments: resolvedAdjustments,
           botonera_template_id: resolvedTemplateId,
           home_lineup: withHomeLineup?.home_lineup || group[0].home_lineup || null,
           away_lineup: withAwayLineup?.away_lineup || group[0].away_lineup || null,
@@ -991,6 +976,7 @@ export const dbStore = {
           matchObj.video_source_name = an.video_source_name || matchObj.video_source_name;
           matchObj.p1_video_start_time = an.p1_video_start_time ?? matchObj.p1_video_start_time;
           matchObj.p2_video_start_time = an.p2_video_start_time ?? matchObj.p2_video_start_time;
+          matchObj.period_adjustments = an.period_adjustments ?? matchObj.period_adjustments;
           matchObj.botonera_template_id = an.botonera_template_id || matchObj.botonera_template_id;
         }
       }
@@ -1074,12 +1060,6 @@ export const dbStore = {
   getAnalyses(matchId?: string): MatchAnalysis[] {
     let list = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
 
-    // Auto-merge legacy demo analysis ('match_demo_1') into Jornada 2 ('match_fs_ITiecmAk') if present
-    if (list.some((a) => a.match_id === 'match_demo_1' || a.id === 'analysis_demo_1')) {
-      this.mergeMatchAnalyses('match_demo_1', 'match_fs_ITiecmAk');
-      list = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, []);
-    }
-
     const consolidatedList = this.consolidateAnalyses(list);
 
     if (list.length !== consolidatedList.length) {
@@ -1138,6 +1118,9 @@ export const dbStore = {
     const resolvedVideoSourceName = normalizedAnalysis.video_source_name || existing?.video_source_name || matchObj?.video_source_name || null;
     const resolvedP1 = normalizedAnalysis.p1_video_start_time != null ? normalizedAnalysis.p1_video_start_time : (existing?.p1_video_start_time ?? matchObj?.p1_video_start_time ?? null);
     const resolvedP2 = normalizedAnalysis.p2_video_start_time != null ? normalizedAnalysis.p2_video_start_time : (existing?.p2_video_start_time ?? matchObj?.p2_video_start_time ?? null);
+    const resolvedAdjustments = normalizedAnalysis.period_adjustments !== undefined
+      ? normalizedAnalysis.period_adjustments
+      : (existing?.period_adjustments ?? matchObj?.period_adjustments ?? null);
     const resolvedTemplateId = normalizedAnalysis.botonera_template_id || existing?.botonera_template_id || matchObj?.botonera_template_id || null;
     const resolvedHomeLineup = normalizedAnalysis.home_lineup || existing?.home_lineup || matchObj?.home_lineup || null;
     const resolvedAwayLineup = normalizedAnalysis.away_lineup || existing?.away_lineup || matchObj?.away_lineup || null;
@@ -1168,6 +1151,7 @@ export const dbStore = {
         video_source_name: resolvedVideoSourceName,
         p1_video_start_time: resolvedP1,
         p2_video_start_time: resolvedP2,
+        period_adjustments: resolvedAdjustments,
         botonera_template_id: resolvedTemplateId,
         home_lineup: resolvedHomeLineup,
         away_lineup: resolvedAwayLineup,
@@ -1185,6 +1169,7 @@ export const dbStore = {
         video_source_name: resolvedVideoSourceName,
         p1_video_start_time: resolvedP1,
         p2_video_start_time: resolvedP2,
+        period_adjustments: resolvedAdjustments,
         botonera_template_id: resolvedTemplateId,
         home_lineup: resolvedHomeLineup,
         away_lineup: resolvedAwayLineup,
@@ -1224,6 +1209,7 @@ export const dbStore = {
           video_source_name: resolvedVideoSourceName || matches[mIdx].video_source_name,
           p1_video_start_time: resolvedP1 != null ? resolvedP1 : matches[mIdx].p1_video_start_time,
           p2_video_start_time: resolvedP2 != null ? resolvedP2 : matches[mIdx].p2_video_start_time,
+          period_adjustments: resolvedAdjustments !== undefined ? resolvedAdjustments : matches[mIdx].period_adjustments,
           botonera_template_id: resolvedTemplateId || matches[mIdx].botonera_template_id,
           home_lineup: resolvedHomeLineup || matches[mIdx].home_lineup,
           away_lineup: resolvedAwayLineup || matches[mIdx].away_lineup,
@@ -1233,6 +1219,14 @@ export const dbStore = {
         saveMatchesToSupabase([updatedM]).catch(() => {});
       }
     }
+  },
+
+  async saveAnalysisAsync(analysis: MatchAnalysis): Promise<boolean> {
+    this.saveAnalysis(analysis);
+    const targetId = analysis.id && analysis.id.startsWith('analysis_') ? analysis.id : `analysis_${analysis.match_id}`;
+    const all = this.getAnalyses();
+    const updated = all.find(a => a.id === targetId || a.match_id === analysis.match_id) || analysis;
+    return await saveAnalysisToSupabase(updated);
   },
 
   deleteAnalysis(id: string): void {

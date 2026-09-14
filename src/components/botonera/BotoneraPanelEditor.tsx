@@ -1996,14 +1996,14 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                 const isDualPitch = editingButton.pitchDisplayCount === 2 || (
                   editingButton.pitchDisplayCount !== 1 && Boolean(
                     editingButton.pitchRequired === 'pitch_and_goal' ||
-                    (editingButton.secondaryPitchRequired === 'goal_mouth' && editingButton.pitchRequired && editingButton.pitchRequired !== 'goal_mouth' && editingButton.pitchRequired !== 'none') ||
+                    (editingButton.secondaryPitchRequired && editingButton.secondaryPitchRequired !== 'none' && editingButton.pitchRequired && editingButton.pitchRequired !== 'none') ||
                     (editingButton.goalRequired && editingButton.pitchRequired && editingButton.pitchRequired !== 'goal_mouth' && editingButton.pitchRequired !== 'none')
                   )
                 );
                 const pitchCount = isDualPitch ? 2 : (editingButton.pitchRequired && editingButton.pitchRequired !== 'none' ? 1 : 0);
 
-                // Opciones de campo para Campograma 1 (excluyendo none, goal_mouth y pitch_and_goal)
-                const fieldPitchOptions = PITCH_MODE_OPTIONS.filter(o => o.key !== 'none' && o.key !== 'goal_mouth' && o.key !== 'pitch_and_goal');
+                // Opciones de campo para Campogramas (excluyendo none y pitch_and_goal)
+                const selectablePitchOptions = PITCH_MODE_OPTIONS.filter(o => o.key !== 'none' && o.key !== 'pitch_and_goal');
 
                 return (
                   <div className="p-3.5 rounded-xl bg-slate-950 border border-emerald-500/30 space-y-4">
@@ -2076,13 +2076,14 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                           type="button"
                           onClick={() => {
                             const currentP = editingButton.pitchRequired;
-                            const nextField = (currentP && currentP !== 'none' && currentP !== 'goal_mouth' && currentP !== 'pitch_and_goal') ? currentP : 'point_half';
+                            const nextField = (currentP && currentP !== 'none' && currentP !== 'pitch_and_goal') ? currentP : 'point_half';
+                            const nextSec = editingButton.secondaryPitchRequired || 'goal_mouth';
                             setEditingButton({
                               ...editingButton,
                               pitchDisplayCount: 2,
                               pitchRequired: nextField,
-                              goalRequired: true,
-                              secondaryPitchRequired: 'goal_mouth',
+                              goalRequired: (nextField === 'goal_mouth' || nextSec === 'goal_mouth'),
+                              secondaryPitchRequired: nextSec,
                               dualPitchLayout: editingButton.dualPitchLayout || 'simultaneous',
                             });
                           }}
@@ -2158,29 +2159,60 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                             );
                           })}
                         </div>
+
+                        {/* Selector Exigencia 1 Campograma */}
+                        <div className="flex items-center justify-between p-2 rounded-lg bg-slate-900 border border-slate-800 text-xs mt-2">
+                          <span className="font-bold text-slate-300">📌 Exigencia de marcado en campograma:</span>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setEditingButton({ ...editingButton, pitch1RequiredMode: 'required' })}
+                              className={`px-2.5 py-1 rounded text-[11px] font-bold border transition cursor-pointer ${
+                                (editingButton.pitch1RequiredMode || 'required') === 'required'
+                                  ? 'bg-red-500/20 border-red-400 text-red-300 ring-1 ring-red-500/40 shadow'
+                                  : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                              }`}
+                            >
+                              🔴 Obligatorio
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingButton({ ...editingButton, pitch1RequiredMode: 'optional' })}
+                              className={`px-2.5 py-1 rounded text-[11px] font-bold border transition cursor-pointer ${
+                                editingButton.pitch1RequiredMode === 'optional'
+                                  ? 'bg-slate-800 border-slate-600 text-slate-200 shadow'
+                                  : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                              }`}
+                            >
+                              ⚪ Opcional
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     )}
 
                     {/* CASO 2: SELECCIONÓ 2 CAMPOGRAMAS */}
                     {pitchCount === 2 && (
                       <div className="space-y-3.5 pt-1 border-t border-slate-800/80">
-                        {/* 1er Campograma: Terreno de juego */}
+                        {/* 1er Campograma: Terreno de juego o Portería */}
                         <div className="p-3 rounded-xl bg-slate-900/90 border border-emerald-500/30 space-y-2">
                           <div className="flex items-center justify-between">
                             <span className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
-                              <span>🏟️ 1er Campograma: Terreno de Juego (Origen de la Jugada)</span>
+                              <span>🏟️ 1er Campograma (Origen / Principal)</span>
                             </span>
                             <span className="text-[10px] text-emerald-400 font-mono font-bold">
-                              {(fieldPitchOptions.find(o => o.key === (editingButton.pitchRequired || 'point_half'))?.title)}
+                              {(selectablePitchOptions.find(o => o.key === (editingButton.pitchRequired || 'point_half'))?.title)}
                             </span>
                           </div>
                           <p className="text-[10px] text-slate-400">
-                            Elige el formato de campo para marcar dónde se inició la jugada o el tiro:
+                            Elige el formato del primer campograma para marcar dónde se inició la jugada o el tiro:
                           </p>
 
                           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-56 overflow-y-auto pr-1">
-                            {fieldPitchOptions.map((opt) => {
+                            {selectablePitchOptions.map((opt) => {
                               const isSelected = (editingButton.pitchRequired || 'point_half') === opt.key;
+                              const isGoal = opt.key === 'goal_mouth';
+                              const currentSec = editingButton.secondaryPitchRequired || 'goal_mouth';
                               return (
                                 <button
                                   key={opt.key}
@@ -2190,13 +2222,15 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                                       ...editingButton,
                                       pitchRequired: opt.key as any,
                                       pitchDisplayCount: 2,
-                                      goalRequired: true,
-                                      secondaryPitchRequired: 'goal_mouth',
+                                      goalRequired: (opt.key === 'goal_mouth' || currentSec === 'goal_mouth'),
+                                      secondaryPitchRequired: currentSec,
                                     });
                                   }}
                                   className={`p-2 rounded-xl border text-left flex flex-col justify-between gap-1.5 transition-all cursor-pointer ${
                                     isSelected
-                                      ? 'bg-emerald-600/25 border-emerald-400 ring-2 ring-emerald-500/50 shadow-md text-emerald-200'
+                                      ? isGoal
+                                        ? 'bg-amber-600/25 border-amber-400 ring-2 ring-amber-500/50 shadow-md text-amber-200'
+                                        : 'bg-emerald-600/25 border-emerald-400 ring-2 ring-emerald-500/50 shadow-md text-emerald-200'
                                       : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
                                   }`}
                                 >
@@ -2206,30 +2240,120 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                                       <span>{opt.icon}</span>
                                       <span>{opt.title}</span>
                                     </span>
-                                    {isSelected && <Check className="w-3 h-3 text-emerald-400 shrink-0" />}
+                                    {isSelected && <Check className={`w-3 h-3 ${isGoal ? 'text-amber-400' : 'text-emerald-400'} shrink-0`} />}
                                   </div>
                                 </button>
                               );
                             })}
                           </div>
+
+                          {/* Selector Exigencia 1er Campograma */}
+                          <div className="flex items-center justify-between pt-2 border-t border-slate-800 text-xs">
+                            <span className="text-[11px] font-bold text-slate-300">📌 Marcado 1er Campograma:</span>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => setEditingButton({ ...editingButton, pitch1RequiredMode: 'required' })}
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold border transition cursor-pointer ${
+                                  (editingButton.pitch1RequiredMode || 'required') === 'required'
+                                    ? 'bg-red-500/20 border-red-400 text-red-300 ring-1 ring-red-500/40 shadow'
+                                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                                }`}
+                              >
+                                🔴 Obligatorio
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingButton({ ...editingButton, pitch1RequiredMode: 'optional' })}
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold border transition cursor-pointer ${
+                                  editingButton.pitch1RequiredMode === 'optional'
+                                    ? 'bg-slate-800 border-slate-600 text-slate-200 shadow'
+                                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                                }`}
+                              >
+                                ⚪ Opcional
+                              </button>
+                            </div>
+                          </div>
                         </div>
 
-                        {/* 2do Campograma: Portería */}
-                        <div className="p-3 rounded-xl bg-slate-900/90 border border-amber-500/30 flex items-center justify-between gap-3">
-                          <div className="flex items-center gap-2.5">
-                            <div className="w-16 h-10 rounded-lg overflow-hidden shrink-0 border border-slate-800">
-                              <MiniPitchDiagram mode="goal_mouth" />
-                            </div>
-                            <div>
-                              <span className="text-xs font-bold text-amber-300 block flex items-center gap-1.5">
-                                <span>🥅 2º Campograma: Portería (Destino del Disparo)</span>
-                                <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[9px] font-bold border border-amber-500/40">
-                                  ACTIVADO
-                                </span>
-                              </span>
-                              <span className="text-[10px] text-slate-400 block">
-                                Permite marcar la zona exacta del disparo (escuadras, postes, centro, raso) con coordenadas (X, Y).
-                              </span>
+                        {/* 2do Campograma: Libre elección */}
+                        <div className="p-3 rounded-xl bg-slate-900/90 border border-amber-500/30 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                              <span>🎯 2º Campograma (Destino / Adicional)</span>
+                            </span>
+                            <span className="text-[10px] text-amber-400 font-mono font-bold">
+                              {(selectablePitchOptions.find(o => o.key === (editingButton.secondaryPitchRequired || 'goal_mouth'))?.title)}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-400">
+                            Elige el formato del segundo campograma para registrar información adicional (ej. Portería, Flechas, Zonas...):
+                          </p>
+
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-56 overflow-y-auto pr-1">
+                            {selectablePitchOptions.map((opt) => {
+                              const isSelected = (editingButton.secondaryPitchRequired || 'goal_mouth') === opt.key;
+                              const isGoal = opt.key === 'goal_mouth';
+                              return (
+                                <button
+                                  key={opt.key}
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingButton({
+                                      ...editingButton,
+                                      secondaryPitchRequired: opt.key as any,
+                                      pitchDisplayCount: 2,
+                                      goalRequired: (opt.key === 'goal_mouth' || editingButton.pitchRequired === 'goal_mouth'),
+                                    });
+                                  }}
+                                  className={`p-2 rounded-xl border text-left flex flex-col justify-between gap-1.5 transition-all cursor-pointer ${
+                                    isSelected
+                                      ? isGoal
+                                        ? 'bg-amber-600/25 border-amber-400 ring-2 ring-amber-500/50 shadow-md text-amber-200'
+                                        : 'bg-emerald-600/25 border-emerald-400 ring-2 ring-emerald-500/50 shadow-md text-emerald-200'
+                                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                                  }`}
+                                >
+                                  <MiniPitchDiagram mode={opt.key} />
+                                  <div className="flex items-center justify-between gap-1">
+                                    <span className="text-[10.5px] font-bold text-slate-100 truncate flex items-center gap-1">
+                                      <span>{opt.icon}</span>
+                                      <span>{opt.title}</span>
+                                    </span>
+                                    {isSelected && <Check className={`w-3 h-3 ${isGoal ? 'text-amber-400' : 'text-emerald-400'} shrink-0`} />}
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {/* Selector Exigencia 2º Campograma */}
+                          <div className="flex items-center justify-between pt-2 border-t border-slate-800 text-xs">
+                            <span className="text-[11px] font-bold text-slate-300">📌 Marcado 2º Campograma:</span>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => setEditingButton({ ...editingButton, pitch2RequiredMode: 'required' })}
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold border transition cursor-pointer ${
+                                  (editingButton.pitch2RequiredMode || 'required') === 'required'
+                                    ? 'bg-red-500/20 border-red-400 text-red-300 ring-1 ring-red-500/40 shadow'
+                                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                                }`}
+                              >
+                                🔴 Obligatorio
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingButton({ ...editingButton, pitch2RequiredMode: 'optional' })}
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold border transition cursor-pointer ${
+                                  editingButton.pitch2RequiredMode === 'optional'
+                                    ? 'bg-slate-800 border-slate-600 text-slate-200 shadow'
+                                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                                }`}
+                              >
+                                ⚪ Opcional
+                              </button>
                             </div>
                           </div>
                         </div>

@@ -61,6 +61,7 @@ export interface Match {
   video_source_name?: string | null;
   p1_video_start_time?: number | null; // seconds in video when 1st half starts
   p2_video_start_time?: number | null; // seconds in video when 2nd half starts
+  period_adjustments?: Record<number, { matchTimeSec: number; videoTimeSec: number }> | null;
   botonera_template_id?: string | null;
   home_lineup?: TeamLineupConfig | null;
   away_lineup?: TeamLineupConfig | null;
@@ -79,6 +80,7 @@ export interface MatchAnalysis {
   video_source_name?: string | null;
   p1_video_start_time?: number | null;
   p2_video_start_time?: number | null;
+  period_adjustments?: Record<number, { matchTimeSec: number; videoTimeSec: number }> | null;
   botonera_template_id?: string | null;
   home_lineup?: TeamLineupConfig | null;
   away_lineup?: TeamLineupConfig | null;
@@ -253,6 +255,8 @@ export interface BotoneraButton {
   fontSize?: 'sm' | 'md' | 'lg' | 'xl' | '2xl';
   pitchRequired?: PitchRequiredType;
   secondaryPitchRequired?: PitchRequiredType; // Campograma adicional (ej: 'goal_mouth')
+  pitch1RequiredMode?: 'optional' | 'required'; // 'required' (Obligatorio, por defecto) u 'optional' (Opcional)
+  pitch2RequiredMode?: 'optional' | 'required'; // 'required' (Obligatorio, por defecto) u 'optional' (Opcional)
   pitchModes?: PitchRequiredType[]; // Lista de campogramas activos si hay múltiples
   goalRequired?: boolean; // Habilitar campograma de portería simultáneo
   pitchDisplayCount?: 1 | 2; // 1 campograma o 2 campogramas
@@ -310,6 +314,7 @@ export interface ActiveBotoneraSession {
   videoUrl?: string | null;        // youtube/link URL, when videoType === 'link'
   p1VideoStartSeconds?: number | null; // video timestamp in seconds for 1st half start
   p2VideoStartSeconds?: number | null; // video timestamp in seconds for 2nd half start
+  periodAdjustments?: Record<number, { matchTimeSec: number; videoTimeSec: number }> | null;
   botoneraTemplateId?: string | null;
   home_lineup?: TeamLineupConfig | null;
   away_lineup?: TeamLineupConfig | null;

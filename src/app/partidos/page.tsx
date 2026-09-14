@@ -229,9 +229,20 @@ export default function PartidosPage() {
           const activeSession = activeSessionsMap[m.id];
           const isLiveActive = !!(activeSession && activeSession.isTimerRunning);
           const savedAnalyses = dbStore.getAnalyses(m.id);
+          const matchEvents = isLiveActive 
+            ? (activeSession.events || []) 
+            : (savedAnalyses.flatMap((a) => a.events || []));
           const totalEventsCount = isLiveActive 
             ? (activeSession.events?.length || 0) 
             : savedAnalyses.reduce((acc, a) => acc + (a.events?.length || 0), 0);
+
+          const { homeScore, awayScore } = calculateMatchScoresFromEvents(
+            matchEvents,
+            m.home_team,
+            m.away_team,
+            m.home_score ?? 0,
+            m.away_score ?? 0
+          );
 
           return (
             <div key={m.id} className={`p-5 rounded-2xl bg-slate-900/90 border space-y-4 card-hover-effect relative flex flex-col justify-between shadow-xl ${
@@ -273,11 +284,11 @@ export default function PartidosPage() {
                     </div>
 
                     <span className={`font-mono text-base font-black px-2.5 py-0.5 rounded-lg border shrink-0 ${
-                      m.status === 'Finalizado' 
+                      m.status === 'Finalizado' || matchEvents.length > 0
                         ? 'bg-slate-950 text-amber-400 border-amber-500/30' 
                         : 'bg-slate-950 text-slate-500 border-slate-800'
                     }`}>
-                      {m.status === 'Finalizado' ? m.home_score : '-'}
+                      {m.status === 'Finalizado' || matchEvents.length > 0 ? homeScore : '-'}
                     </span>
                   </div>
 
@@ -302,11 +313,11 @@ export default function PartidosPage() {
                     </div>
 
                     <span className={`font-mono text-base font-black px-2.5 py-0.5 rounded-lg border shrink-0 ${
-                      m.status === 'Finalizado' 
+                      m.status === 'Finalizado' || matchEvents.length > 0
                         ? 'bg-slate-950 text-amber-400 border-amber-500/30' 
                         : 'bg-slate-950 text-slate-500 border-slate-800'
                     }`}>
-                      {m.status === 'Finalizado' ? m.away_score : '-'}
+                      {m.status === 'Finalizado' || matchEvents.length > 0 ? awayScore : '-'}
                     </span>
                   </div>
                 </div>

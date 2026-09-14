@@ -33,7 +33,8 @@ export function calculateEventVideoTime(
   evt: NormalizedEvent,
   match?: Match | null,
   periodVideoOffsets?: Record<number, number>,
-  leadInSeconds: number = 0
+  leadInSeconds: number = 0,
+  periodAdjustments?: Record<number, { matchTimeSec: number; videoTimeSec: number }>
 ): number {
   const evtPeriod = resolveEventPeriod(evt);
 
@@ -83,8 +84,13 @@ export function calculateEventVideoTime(
     rawSec = Math.max(0, relMin * 60 + sec);
   }
 
-  // 3. Target video position = period video start offset + seconds in period
-  const targetTime = pOffset + rawSec;
+  // 3. Target video position: check if an adjustment applies to this event's minute
+  const effAdjustments = periodAdjustments || match?.period_adjustments;
+  const adj = effAdjustments?.[evtPeriod];
+  let targetTime = pOffset + rawSec;
+  if (adj && adj.videoTimeSec > pOffset && rawSec >= adj.matchTimeSec) {
+    targetTime = adj.videoTimeSec + (rawSec - adj.matchTimeSec);
+  }
 
   // If lead-in is requested, subtract it without going before period kickoff
   if (leadInSeconds > 0) {

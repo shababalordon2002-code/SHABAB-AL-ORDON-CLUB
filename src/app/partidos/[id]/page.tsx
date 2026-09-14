@@ -33,6 +33,7 @@ import { PitchFilterBar, FilterState } from '@/components/pitch/PitchFilterBar';
 import { MatchTimeline } from '@/components/pitch/MatchTimeline';
 import { MatchStatsPanel } from '@/components/pitch/MatchStatsPanel';
 import { AnalysisVisor } from '@/components/analysis/AnalysisVisor';
+import { calculateMatchScoresFromEvents } from '@/lib/analytics/dashboard-engine';
 
 export default function PartidoDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
@@ -175,13 +176,24 @@ export default function PartidoDetailPage({ params }: { params: Promise<{ id: st
               <span>•</span>
               <span className="text-slate-400">Duración: {match.duration || "90' 00\""}</span>
             </div>
-            <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight flex flex-wrap items-center gap-2 sm:gap-4">
-              <span>{match.home_team}</span>
-              <span className="px-3 py-1 rounded bg-slate-950 border border-slate-800 font-mono text-emerald-400 font-bold">
-                {match.home_score} - {match.away_score}
-              </span>
-              <span>{match.away_team}</span>
-            </h1>
+            {(() => {
+              const { homeScore, awayScore } = calculateMatchScoresFromEvents(
+                events,
+                match.home_team,
+                match.away_team,
+                match.home_score ?? 0,
+                match.away_score ?? 0
+              );
+              return (
+                <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight flex flex-wrap items-center gap-2 sm:gap-4">
+                  <span>{match.home_team}</span>
+                  <span className="px-3 py-1 rounded bg-slate-950 border border-slate-800 font-mono text-emerald-400 font-bold">
+                    {homeScore} - {awayScore}
+                  </span>
+                  <span>{match.away_team}</span>
+                </h1>
+              );
+            })()}
           </div>
 
           <div className="flex flex-wrap items-center gap-3">

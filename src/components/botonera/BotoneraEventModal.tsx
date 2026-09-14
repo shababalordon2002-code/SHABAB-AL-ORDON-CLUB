@@ -4,6 +4,7 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { BotoneraButton, Player, Match, NormalizedEvent } from '@/types';
 import { BotoneraPitchCanvas } from './BotoneraPitchCanvas';
 import { BotoneraGoalCanvas } from './BotoneraGoalCanvas';
+import { PITCH_MODE_OPTIONS } from './BotoneraPanelEditor';
 import { getFormationPositions } from './TeamLineupModal';
 import {
   Check,
@@ -579,10 +580,21 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
   const isDualPitch = button.pitchDisplayCount === 2 || (
     !isSinglePitch && Boolean(
       button.pitchRequired === 'pitch_and_goal' ||
-      (button.secondaryPitchRequired === 'goal_mouth' && button.pitchRequired && button.pitchRequired !== 'goal_mouth' && button.pitchRequired !== 'none') ||
+      (button.secondaryPitchRequired && button.secondaryPitchRequired !== 'none' && button.pitchRequired && button.pitchRequired !== 'none') ||
       (button.goalRequired && button.pitchRequired && button.pitchRequired !== 'goal_mouth' && button.pitchRequired !== 'none')
     )
   );
+
+  const pitch1Mode = button.pitchRequired || (isSinglePitch && button.pitchRequired === 'goal_mouth' ? 'goal_mouth' : 'point_half');
+  const pitch2Mode = isDualPitch
+    ? (button.secondaryPitchRequired || (button.goalRequired || button.pitchRequired === 'pitch_and_goal' ? 'goal_mouth' : 'goal_mouth'))
+    : undefined;
+
+  const pitch1Opt = PITCH_MODE_OPTIONS.find(o => o.key === pitch1Mode);
+  const pitch2Opt = pitch2Mode ? PITCH_MODE_OPTIONS.find(o => o.key === pitch2Mode) : undefined;
+
+  const isPitch1Mandatory = (button.pitch1RequiredMode || 'required') === 'required';
+  const isPitch2Mandatory = (button.pitch2RequiredMode || 'required') === 'required';
 
   const hasGoal = isSinglePitch
     ? button.pitchRequired === 'goal_mouth'
@@ -596,10 +608,13 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
 
   const hasFieldPitch = isSinglePitch
     ? Boolean(button.pitchRequired && button.pitchRequired !== 'none' && button.pitchRequired !== 'goal_mouth')
-    : Boolean(button.pitchRequired && button.pitchRequired !== 'none' && button.pitchRequired !== 'goal_mouth');
+    : Boolean(
+        (button.pitchRequired && button.pitchRequired !== 'none' && button.pitchRequired !== 'goal_mouth') ||
+        (button.secondaryPitchRequired && button.secondaryPitchRequired !== 'none' && button.secondaryPitchRequired !== 'goal_mouth')
+      );
 
   const hasMultiplePitches = isDualPitch || (!isSinglePitch && hasFieldPitch && hasGoal);
-  const hasPitch = hasFieldPitch || hasGoal;
+  const hasPitch = (pitch1Mode && pitch1Mode !== 'none') || Boolean(pitch2Mode);
 
   const isVectorPitch = Boolean(
     button.pitchRequired?.startsWith('vector') ||
@@ -765,18 +780,33 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
   // Validation functions
   const isPitchValid = (): boolean => {
     if (!hasPitch) return true;
-    if (hasFieldPitch) {
-      if (button.pitchRequired?.startsWith('zone')) {
+
+    // Check Pitch 1 if mandatory
+    if (isPitch1Mandatory) {
+      if (pitch1Mode === 'goal_mouth') {
+        if (goalX === null || goalY === null) return false;
+      } else if (pitch1Mode.startsWith('zone')) {
         if (!selectedZone) return false;
-      } else if (button.pitchRequired?.startsWith('point') || button.pitchRequired === 'pitch_and_goal') {
-        if (startX === null || startY === null) return false;
-      } else if (button.pitchRequired?.startsWith('vector')) {
+      } else if (pitch1Mode.startsWith('vector')) {
         if (startX === null || startY === null || endX === null || endY === null) return false;
+      } else if (pitch1Mode.startsWith('point') || pitch1Mode === 'pitch_and_goal') {
+        if (startX === null || startY === null) return false;
       }
     }
-    if (button.pitchRequired === 'goal_mouth' && (goalX === null || goalY === null)) {
-      return false;
+
+    // Check Pitch 2 if dual pitch and Pitch 2 is mandatory
+    if (isDualPitch && isPitch2Mandatory && pitch2Mode) {
+      if (pitch2Mode === 'goal_mouth') {
+        if (goalX === null || goalY === null) return false;
+      } else if (pitch2Mode.startsWith('zone')) {
+        if (!selectedZone) return false;
+      } else if (pitch2Mode.startsWith('vector')) {
+        if (endX === null || endY === null) return false;
+      } else {
+        if (endX === null && startX === null && selectedZone === null) return false;
+      }
     }
+
     return true;
   };
 
@@ -1189,7 +1219,7 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
                               : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
                           }`}
                         >
-                          <span>🏟️ Campo</span>
+                          <span>{pitch1Opt ? `${pitch1Opt.icon} ${pitch1Opt.title}` : '🏟️ 1. Campo'}</span>
                           {isVectorPitch ? (
                             startX !== null && endX !== null ? (
                               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
@@ -1212,9 +1242,11 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
                               : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
                           }`}
                         >
-                          <span>🥅 Portería</span>
-                          {goalX !== null && (
-                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                          <span>{pitch2Opt ? `${pitch2Opt.icon} ${pitch2Opt.title}` : '🎯 2. Campograma'}</span>
+                          {pitch2Mode === 'goal_mouth' ? (
+                            goalX !== null && <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                          ) : (
+                            (endX !== null || selectedZone) && <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
                           )}
                         </button>
                       </div>
@@ -1229,10 +1261,21 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
                 {/* MODO SIMULTÁNEO (AMBOS CAMPOGRAMAS A LA VEZ EN PANTALLA) */}
                 {hasMultiplePitches && dualViewMode === 'simultaneous' ? (
                   <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-3 items-start justify-items-center">
-                    {/* 1. Campograma de Campo */}
+                    {/* 1. Campograma 1 */}
                     <div className="w-full max-w-[240px] flex flex-col items-center">
                       <div className="flex items-center justify-between w-full px-1 text-[10px] font-bold text-emerald-400 mb-1">
-                        <span className="flex items-center gap-1">🏟️ 1. Campo</span>
+                        <span className="flex items-center gap-1">
+                          {pitch1Opt ? `${pitch1Opt.icon} 1. ${pitch1Opt.title}` : '🏟️ 1. Campo'}
+                          {isPitch1Mandatory ? (
+                            <span className="text-[8.5px] font-black text-red-400 bg-red-500/15 px-1 py-0.2 rounded border border-red-500/30">
+                              * OBLIGATORIO
+                            </span>
+                          ) : (
+                            <span className="text-[8.5px] font-bold text-slate-500 bg-slate-900 px-1 py-0.2 rounded border border-slate-800">
+                              Opcional
+                            </span>
+                          )}
+                        </span>
                         {isVectorPitch ? (
                           startX !== null && endX !== null ? (
                             <span className="text-emerald-300 font-mono text-[9.5px]">
@@ -1249,84 +1292,151 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
                           </span>
                         ) : null}
                       </div>
-                      <BotoneraPitchCanvas
-                        startX={startX}
-                        startY={startY}
-                        endX={endX}
-                        endY={endY}
-                        onSetCoords={handlePitchCoords}
-                        selectedZone={selectedZone}
-                        onSelectZone={setSelectedZone}
-                        initialMode={button.pitchRequired === 'pitch_and_goal' ? 'point_half' : button.pitchRequired}
-                        pitchViewMode={button.pitchRequired === 'pitch_and_goal' ? 'half' : button.pitchViewMode}
-                        hideHeader={true}
-                        hideFooter={true}
-                      />
-                    </div>
-
-                    {/* 2. Campograma de Portería */}
-                    <div className="w-full max-w-[280px] flex flex-col items-center">
-                      <div className="flex items-center justify-between w-full px-1 text-[10px] font-bold text-amber-400 mb-1">
-                        <span className="flex items-center gap-1">🥅 2. Portería</span>
-                        {goalX !== null && (
-                          <span className="text-amber-300 font-mono">
-                            ({goalX}%, {goalY}%)
-                          </span>
-                        )}
-                      </div>
-                      <BotoneraGoalCanvas
-                        goalX={goalX}
-                        goalY={goalY}
-                        goalZone={goalZone}
-                        onSetGoalCoords={(coords, zone) => {
-                          setGoalX(coords ? coords.x : null);
-                          setGoalY(coords ? coords.y : null);
-                          setGoalZone(zone);
-                        }}
-                        hideHeader={true}
-                        className="w-full"
-                      />
-                    </div>
-                  </div>
-                ) : (
-                  /* MODO INDIVIDUAL O POR PESTAÑAS */
-                  <div className="w-full flex flex-col items-center justify-center">
-                    {/* Vista de Campo */}
-                    {(!hasMultiplePitches || activePitchTab === 'field') && hasFieldPitch && (
-                      <div className="w-full max-w-[240px] sm:max-w-[260px] mx-auto flex flex-col items-center justify-center">
+                      {pitch1Mode === 'goal_mouth' ? (
+                        <BotoneraGoalCanvas
+                          goalX={goalX}
+                          goalY={goalY}
+                          goalZone={goalZone}
+                          onSetGoalCoords={(coords, zone) => {
+                            setGoalX(coords ? coords.x : null);
+                            setGoalY(coords ? coords.y : null);
+                            setGoalZone(zone);
+                          }}
+                          hideHeader={true}
+                          className="w-full"
+                        />
+                      ) : (
                         <BotoneraPitchCanvas
                           startX={startX}
                           startY={startY}
                           endX={endX}
                           endY={endY}
-                          onSetCoords={(start, end) => {
-                            handlePitchCoords(start, end);
-                            if (hasMultiplePitches && dualViewMode === 'tabs' && goalX === null) {
-                              if (isVectorPitch) {
-                                // Para flechas / vectores: esperar a que se complete el destino de la flecha (end !== null)
-                                if (end !== null) {
-                                  if (tabSwitchTimeoutRef.current) clearTimeout(tabSwitchTimeoutRef.current);
-                                  tabSwitchTimeoutRef.current = setTimeout(() => setActivePitchTab('goal'), 400);
-                                }
-                              } else if (start !== null) {
-                                if (tabSwitchTimeoutRef.current) clearTimeout(tabSwitchTimeoutRef.current);
-                                tabSwitchTimeoutRef.current = setTimeout(() => setActivePitchTab('goal'), 350);
-                              }
-                            }
-                          }}
+                          onSetCoords={handlePitchCoords}
                           selectedZone={selectedZone}
-                          onSelectZone={(z) => {
-                            setSelectedZone(z);
-                            if (hasMultiplePitches && dualViewMode === 'tabs' && z && goalX === null) {
-                              if (tabSwitchTimeoutRef.current) clearTimeout(tabSwitchTimeoutRef.current);
-                              tabSwitchTimeoutRef.current = setTimeout(() => setActivePitchTab('goal'), 350);
-                            }
-                          }}
-                          initialMode={button.pitchRequired === 'pitch_and_goal' ? 'point_half' : button.pitchRequired}
-                          pitchViewMode={button.pitchRequired === 'pitch_and_goal' ? 'half' : button.pitchViewMode}
+                          onSelectZone={setSelectedZone}
+                          initialMode={pitch1Mode}
+                          pitchViewMode={button.pitchViewMode}
                           hideHeader={true}
                           hideFooter={true}
                         />
+                      )}
+                    </div>
+
+                    {/* 2. Campograma 2 */}
+                    <div className="w-full max-w-[280px] flex flex-col items-center">
+                      <div className="flex items-center justify-between w-full px-1 text-[10px] font-bold text-amber-400 mb-1">
+                        <span className="flex items-center gap-1">
+                          {pitch2Opt ? `${pitch2Opt.icon} 2. ${pitch2Opt.title}` : '🎯 2. Campograma'}
+                          {isPitch2Mandatory ? (
+                            <span className="text-[8.5px] font-black text-red-400 bg-red-500/15 px-1 py-0.2 rounded border border-red-500/30">
+                              * OBLIGATORIO
+                            </span>
+                          ) : (
+                            <span className="text-[8.5px] font-bold text-slate-500 bg-slate-900 px-1 py-0.2 rounded border border-slate-800">
+                              Opcional
+                            </span>
+                          )}
+                        </span>
+                        {pitch2Mode === 'goal_mouth' ? (
+                          goalX !== null && (
+                            <span className="text-amber-300 font-mono">
+                              ({goalX}%, {goalY}%)
+                            </span>
+                          )
+                        ) : (
+                          endX !== null && (
+                            <span className="text-amber-300 font-mono">
+                              ({endX}%, {endY}%)
+                            </span>
+                          )
+                        )}
+                      </div>
+                      {pitch2Mode === 'goal_mouth' ? (
+                        <BotoneraGoalCanvas
+                          goalX={goalX}
+                          goalY={goalY}
+                          goalZone={goalZone}
+                          onSetGoalCoords={(coords, zone) => {
+                            setGoalX(coords ? coords.x : null);
+                            setGoalY(coords ? coords.y : null);
+                            setGoalZone(zone);
+                          }}
+                          hideHeader={true}
+                          className="w-full"
+                        />
+                      ) : (
+                        <BotoneraPitchCanvas
+                          startX={endX}
+                          startY={endY}
+                          endX={null}
+                          endY={null}
+                          onSetCoords={(start) => {
+                            setEndX(start?.x ?? null);
+                            setEndY(start?.y ?? null);
+                          }}
+                          selectedZone={selectedZone}
+                          onSelectZone={setSelectedZone}
+                          initialMode={pitch2Mode}
+                          pitchViewMode={button.pitchViewMode}
+                          hideHeader={true}
+                          hideFooter={true}
+                        />
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  /* MODO INDIVIDUAL O POR PESTAÑAS */
+                  <div className="w-full flex flex-col items-center justify-center">
+                    {/* Vista de Campograma 1 */}
+                    {(!hasMultiplePitches || activePitchTab === 'field') && hasFieldPitch && (
+                      <div className="w-full max-w-[240px] sm:max-w-[260px] mx-auto flex flex-col items-center justify-center">
+                        {pitch1Mode === 'goal_mouth' ? (
+                          <BotoneraGoalCanvas
+                            goalX={goalX}
+                            goalY={goalY}
+                            goalZone={goalZone}
+                            onSetGoalCoords={(coords, zone) => {
+                              setGoalX(coords ? coords.x : null);
+                              setGoalY(coords ? coords.y : null);
+                              setGoalZone(zone);
+                            }}
+                            hideHeader={false}
+                            className="w-full"
+                          />
+                        ) : (
+                          <BotoneraPitchCanvas
+                            startX={startX}
+                            startY={startY}
+                            endX={endX}
+                            endY={endY}
+                            onSetCoords={(start, end) => {
+                              handlePitchCoords(start, end);
+                              if (hasMultiplePitches && dualViewMode === 'tabs' && (goalX === null && endX === null)) {
+                                if (isVectorPitch) {
+                                  if (end !== null) {
+                                    if (tabSwitchTimeoutRef.current) clearTimeout(tabSwitchTimeoutRef.current);
+                                    tabSwitchTimeoutRef.current = setTimeout(() => setActivePitchTab('goal'), 400);
+                                  }
+                                } else if (start !== null) {
+                                  if (tabSwitchTimeoutRef.current) clearTimeout(tabSwitchTimeoutRef.current);
+                                  tabSwitchTimeoutRef.current = setTimeout(() => setActivePitchTab('goal'), 350);
+                                }
+                              }
+                            }}
+                            selectedZone={selectedZone}
+                            onSelectZone={(z) => {
+                              setSelectedZone(z);
+                              if (hasMultiplePitches && dualViewMode === 'tabs' && z && (goalX === null && endX === null)) {
+                                if (tabSwitchTimeoutRef.current) clearTimeout(tabSwitchTimeoutRef.current);
+                                tabSwitchTimeoutRef.current = setTimeout(() => setActivePitchTab('goal'), 350);
+                              }
+                            }}
+                            initialMode={pitch1Mode}
+                            pitchViewMode={button.pitchViewMode}
+                            hideHeader={true}
+                            hideFooter={true}
+                          />
+                        )}
                         {hasMultiplePitches && (
                           <div className="text-[10px] mt-1.5 flex items-center justify-center text-center font-medium">
                             {isVectorPitch ? (
@@ -1363,29 +1473,58 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
                       </div>
                     )}
 
-                    {/* Vista de Portería */}
-                    {(!hasMultiplePitches || activePitchTab === 'goal') && hasGoal && (
+                    {/* Vista de Campograma 2 */}
+                    {(!hasMultiplePitches || activePitchTab === 'goal') && Boolean(pitch2Mode) && (
                       <div className="w-full max-w-[280px] sm:max-w-[320px] mx-auto flex flex-col items-center justify-center">
-                        <BotoneraGoalCanvas
-                          goalX={goalX}
-                          goalY={goalY}
-                          goalZone={goalZone}
-                          onSetGoalCoords={(coords, zone) => {
-                            setGoalX(coords ? coords.x : null);
-                            setGoalY(coords ? coords.y : null);
-                            setGoalZone(zone);
-                          }}
-                          hideHeader={false}
-                          className="w-full"
-                        />
+                        {pitch2Mode === 'goal_mouth' ? (
+                          <BotoneraGoalCanvas
+                            goalX={goalX}
+                            goalY={goalY}
+                            goalZone={goalZone}
+                            onSetGoalCoords={(coords, zone) => {
+                              setGoalX(coords ? coords.x : null);
+                              setGoalY(coords ? coords.y : null);
+                              setGoalZone(zone);
+                            }}
+                            hideHeader={false}
+                            className="w-full"
+                          />
+                        ) : (
+                          <BotoneraPitchCanvas
+                            startX={endX}
+                            startY={endY}
+                            endX={null}
+                            endY={null}
+                            onSetCoords={(start) => {
+                              setEndX(start?.x ?? null);
+                              setEndY(start?.y ?? null);
+                            }}
+                            selectedZone={selectedZone}
+                            onSelectZone={setSelectedZone}
+                            initialMode={pitch2Mode}
+                            pitchViewMode={button.pitchViewMode}
+                            hideHeader={true}
+                            hideFooter={true}
+                          />
+                        )}
                         {hasMultiplePitches && (
                           <div className="text-[10px] mt-1.5 flex items-center justify-center text-center font-medium">
-                            {goalX !== null ? (
-                              <span className="text-amber-400 font-bold flex items-center gap-1">
-                                <span>Paso 2: Disparo registrado en portería ({goalX}%, {goalY}%) ✓</span>
-                              </span>
+                            {pitch2Mode === 'goal_mouth' ? (
+                              goalX !== null ? (
+                                <span className="text-amber-400 font-bold flex items-center gap-1">
+                                  <span>Paso 2: Disparo registrado en portería ({goalX}%, {goalY}%) ✓</span>
+                                </span>
+                              ) : (
+                                <span className="text-slate-400">Paso 2: Haz clic en la portería para registrar el disparo</span>
+                              )
                             ) : (
-                              <span className="text-slate-400">Paso 2: Haz clic en la portería para registrar el disparo</span>
+                              endX !== null || selectedZone ? (
+                                <span className="text-amber-400 font-bold flex items-center gap-1">
+                                  <span>Paso 2: Ubicación registrada en 2º campograma ✓</span>
+                                </span>
+                              ) : (
+                                <span className="text-slate-400">Paso 2: Haz clic para fijar la posición en el 2º campograma</span>
+                              )
                             )}
                           </div>
                         )}

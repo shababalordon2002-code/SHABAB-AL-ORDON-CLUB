@@ -18,6 +18,7 @@ import {
   Database
 } from 'lucide-react';
 import { Match, MatchAnalysis } from '@/types';
+import { calculateMatchScoresFromEvents } from '@/lib/analytics/dashboard-engine';
 
 interface MatchAnalysisSelectorModalProps {
   match: Match;
@@ -73,9 +74,21 @@ export const MatchAnalysisSelectorModal: React.FC<MatchAnalysisSelectorModalProp
                 }}
               />
               <span>{match.home_team}</span>
-              <span className="px-2 py-0.5 rounded bg-slate-900 text-amber-400 font-mono text-xs border border-slate-800 font-bold">
-                {match.status === 'Finalizado' ? `${match.home_score} - ${match.away_score}` : 'vs'}
-              </span>
+              {(() => {
+                const allEvts = analyses.flatMap((a) => a.events || []);
+                const { homeScore, awayScore } = calculateMatchScoresFromEvents(
+                  allEvts,
+                  match.home_team,
+                  match.away_team,
+                  match.home_score ?? 0,
+                  match.away_score ?? 0
+                );
+                return (
+                  <span className="px-2 py-0.5 rounded bg-slate-900 text-amber-400 font-mono text-xs border border-slate-800 font-bold">
+                    {match.status === 'Finalizado' || allEvts.length > 0 ? `${homeScore} - ${awayScore}` : 'vs'}
+                  </span>
+                );
+              })()}
               <span>{match.away_team}</span>
               <img
                 src={isShababAway ? '/logo.png' : (match.away_team_logo || '/logo.png')}
