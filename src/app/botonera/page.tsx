@@ -69,8 +69,17 @@ export default function BotoneraPage() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [selectedMatchId, setSelectedMatchId] = useState<string>('free_session');
 
-  // Saved Analyses & Visor modal state
-  const [savedAnalyses, setSavedAnalyses] = useState<MatchAnalysis[]>([]);
+  // Saved Analyses & Visor modal state (Instant load from local store for 0ms latency)
+  const [savedAnalyses, setSavedAnalyses] = useState<MatchAnalysis[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        return dbStore.getAnalyses();
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  });
   const [activeVisorAnalysis, setActiveVisorAnalysis] = useState<MatchAnalysis | null>(null);
   const [deleteConfirmAnalysis, setDeleteConfirmAnalysis] = useState<MatchAnalysis | null>(null);
   const [editingAnalysisId, setEditingAnalysisId] = useState<string | null>(null);
@@ -378,24 +387,37 @@ export default function BotoneraPage() {
   // Load Initial Data & Restore Active Tagging Session from Supabase / dbStore
   useEffect(() => {
     const init = async () => {
+      // 1. CARGA INMEDIATA LOCAL (0ms de retardo): muestra análisis, partidos y plantillas al instante
+      const localAnalyses = dbStore.getAnalyses();
+      if (localAnalyses.length > 0) {
+        setSavedAnalyses(localAnalyses);
+      }
       const loadedMatches = dbStore.getMatches();
       const loadedPlayers = dbStore.getPlayers();
       setMatches(loadedMatches);
       setPlayers(loadedPlayers);
 
-      // 1. Sync templates from Supabase
-      const templates = await dbStore.syncBotoneraTemplatesFromSupabase();
-      if (templates && templates.length > 0) {
-        setTemplate(templates[0]);
+      const localTemplates = dbStore.getBotoneraTemplates();
+      if (localTemplates.length > 0) {
+        setTemplate(localTemplates[0]);
       }
 
-      // Sync saved analyses from Supabase
-      const loadedAnalyses = await dbStore.syncAnalysesFromSupabase();
-      if (loadedAnalyses && loadedAnalyses.length > 0) {
-        setSavedAnalyses(loadedAnalyses);
-      } else {
-        setSavedAnalyses(dbStore.getAnalyses());
-      }
+      // 2. Sincronización en segundo plano con Supabase en paralelo (sin congelar la UI)
+      Promise.allSettled([
+        dbStore.syncBotoneraTemplatesFromSupabase().then((templates) => {
+          if (templates && templates.length > 0) setTemplate(templates[0]);
+        }),
+        dbStore.syncAnalysesFromSupabase().then((loadedAnalyses) => {
+          if (loadedAnalyses && loadedAnalyses.length > 0) {
+            setSavedAnalyses(loadedAnalyses);
+          }
+        }),
+        dbStore.syncMatchesFromSupabase().then((loadedMatches) => {
+          if (loadedMatches && loadedMatches.length > 0) {
+            setMatches(loadedMatches);
+          }
+        }),
+      ]);
 
       // Check URL query parameters for match_id & analysis_id & mode
       const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
@@ -519,8 +541,8 @@ export default function BotoneraPage() {
           setVideoSourceName(resolvedVideoSourceName);
           setVideoUrl(resolvedVideoUrl);
           const tmplId = activeSession.botoneraTemplateId || analysisFallback?.botonera_template_id || matchFallback?.botonera_template_id;
-          if (tmplId && templates && templates.length > 0) {
-            const savedTemplate = templates.find((t) => t.id === tmplId);
+          if (tmplId && localTemplates && localTemplates.length > 0) {
+            const savedTemplate = localTemplates.find((t) => t.id === tmplId);
             if (savedTemplate) setTemplate(savedTemplate);
           }
           if (urlMatchId || urlAnalysisId || urlMode) {
@@ -548,12 +570,20 @@ export default function BotoneraPage() {
     let cancelled = false;
 
     getAnalysisEventsFromSupabase(selectedMatchId).then((remoteEvents) => {
-      if (cancelled || remoteEvents.length === 0) return;
+      if (cancelled) return;
       setEvents((prev) => {
-        const prevIds = new Set(prev.map((e) => e.event_id));
-        const newOnes = remoteEvents.filter((e) => !prevIds.has(e.event_id));
-        if (newOnes.length === 0) return prev;
-        return [...newOnes, ...prev];
+        const remoteIds = new Set(remoteEvents.map((e) => e.event_id));
+        // Conserva eventos locales aún no confirmados en Supabase (escrituras propias pendientes)
+        const pendingLocal = prev.filter(
+          (e) => ownWritesRef.current.has(e.event_id) && !remoteIds.has(e.event_id)
+        );
+        const merged = [...remoteEvents, ...pendingLocal].sort((a, b) => {
+          const ta = a.timestamp ?? Date.parse(a.created_at || '') ?? 0;
+          const tb = b.timestamp ?? Date.parse(b.created_at || '') ?? 0;
+          return ta - tb;
+        });
+        dbStore.saveNormalizedEvents(merged, true, selectedMatchId);
+        return merged;
       });
     });
 
