@@ -857,9 +857,7 @@ export default function BotoneraPage() {
       const resolvedVideoSourceName = videoSourceName || existingObj?.video_source_name || targetMatch?.video_source_name || (resolvedVideoUrl ? 'Vídeo del Partido' : null);
       const resolvedP1 = periodVideoOffsets[1] ?? existingObj?.p1_video_start_time ?? targetMatch?.p1_video_start_time ?? null;
       const resolvedP2 = periodVideoOffsets[2] ?? existingObj?.p2_video_start_time ?? targetMatch?.p2_video_start_time ?? null;
-      const resolvedAdjustments = Object.keys(periodAdjustments).length > 0
-        ? periodAdjustments
-        : (existingObj?.period_adjustments ?? targetMatch?.period_adjustments ?? null);
+      const resolvedAdjustments = periodAdjustments;
       const resolvedTemplateId = template?.id || existingObj?.botonera_template_id || targetMatch?.botonera_template_id || null;
 
       const newAnalysis: MatchAnalysis = {
@@ -1648,6 +1646,7 @@ export default function BotoneraPage() {
           ...m,
           period_adjustments: next,
         });
+        setMatches(dbStore.getMatches());
       }
       const existingAns = dbStore.getAnalyses(selectedMatchId);
       const masterAn = existingAns.length > 0 ? existingAns[0] : null;
@@ -1656,9 +1655,56 @@ export default function BotoneraPage() {
           ...masterAn,
           period_adjustments: next,
         });
+        setSavedAnalyses(dbStore.getAnalyses());
+      }
+      const activeSess = dbStore.getActiveBotoneraSession();
+      if (activeSess) {
+        dbStore.saveActiveBotoneraSession({
+          ...activeSess,
+          periodAdjustments: next,
+        });
       }
     }
     // Re-aplicar inmediatamente al crono para reflejar el inicio sin ajuste
+    applyVideoTime(getCurrentVideoTime(), true);
+  };
+
+  const handleUpdateAdjustment = (p: number, newMatchTimeSec: number) => {
+    const existing = periodAdjustmentsRef.current[p];
+    const curVideoTime = existing ? existing.videoTimeSec : getCurrentVideoTime();
+    const updatedAdjustments = {
+      ...periodAdjustmentsRef.current,
+      [p]: { matchTimeSec: newMatchTimeSec, videoTimeSec: curVideoTime },
+    };
+    setPeriodAdjustments(updatedAdjustments);
+    periodAdjustmentsRef.current = updatedAdjustments;
+
+    if (selectedMatchId && selectedMatchId !== 'free_session') {
+      const m = dbStore.getMatchById(selectedMatchId);
+      if (m) {
+        dbStore.saveMatch({
+          ...m,
+          period_adjustments: updatedAdjustments,
+        });
+        setMatches(dbStore.getMatches());
+      }
+      const existingAns = dbStore.getAnalyses(selectedMatchId);
+      const masterAn = existingAns.length > 0 ? existingAns[0] : null;
+      if (masterAn) {
+        dbStore.saveAnalysis({
+          ...masterAn,
+          period_adjustments: updatedAdjustments,
+        });
+        setSavedAnalyses(dbStore.getAnalyses());
+      }
+      const activeSess = dbStore.getActiveBotoneraSession();
+      if (activeSess) {
+        dbStore.saveActiveBotoneraSession({
+          ...activeSess,
+          periodAdjustments: updatedAdjustments,
+        });
+      }
+    }
     applyVideoTime(getCurrentVideoTime(), true);
   };
 
@@ -2299,6 +2345,18 @@ export default function BotoneraPage() {
     URL.revokeObjectURL(url);
   };
 
+  const handleImportEvents = (importedEvents: NormalizedEvent[]) => {
+    setEvents((prev) => {
+      const existingIds = new Set(prev.map((e) => e.event_id));
+      const newOnly = importedEvents.filter((e) => !existingIds.has(e.event_id));
+      const updated = [...newOnly, ...prev];
+      if (selectedMatchId && selectedMatchId !== 'free_session') {
+        dbStore.saveNormalizedEvents(selectedMatchId, updated);
+      }
+      return updated;
+    });
+  };
+
   const selectedMatch = matches.find((m) => m.id === selectedMatchId);
 
   return (
@@ -2756,6 +2814,7 @@ export default function BotoneraPage() {
                   periodVideoOffsets={periodVideoOffsets}
                   periodAdjustments={periodAdjustments}
                   onClearAdjustment={handleClearAdjustment}
+                  onUpdateAdjustment={handleUpdateAdjustment}
                   onClearPeriodOffset={handleClearPeriodOffset}
                   onUpdatePeriodOffset={handleUpdatePeriodOffset}
                   onEditVideoSettings={handleOpenEditVideoModal}
@@ -2774,6 +2833,7 @@ export default function BotoneraPage() {
                   onRestoreDeletedEvents={handleRestoreDeletedEvents}
                   onExportXml={handleExportXml}
                   onExportJson={handleExportJson}
+                  onImportEvents={handleImportEvents}
                   onSeekToEvent={handleSeekToEvent}
                   buttons={template?.buttons || []}
                   players={players}
@@ -2856,6 +2916,7 @@ export default function BotoneraPage() {
                     periodVideoOffsets={periodVideoOffsets}
                     periodAdjustments={periodAdjustments}
                     onClearAdjustment={handleClearAdjustment}
+                    onUpdateAdjustment={handleUpdateAdjustment}
                     onClearPeriodOffset={handleClearPeriodOffset}
                     onUpdatePeriodOffset={handleUpdatePeriodOffset}
                     currentPeriod={period}
@@ -2924,6 +2985,7 @@ export default function BotoneraPage() {
                   onRestoreDeletedEvents={handleRestoreDeletedEvents}
                   onExportXml={handleExportXml}
                   onExportJson={handleExportJson}
+                  onImportEvents={handleImportEvents}
                   onSeekToEvent={handleSeekToEvent}
                   buttons={template?.buttons || []}
                   players={players}

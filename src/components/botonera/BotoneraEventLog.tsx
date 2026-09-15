@@ -22,6 +22,7 @@ import {
   AlertTriangle,
   RotateCcw,
   RefreshCw,
+  UploadCloud,
 } from 'lucide-react';
 import { NormalizedEvent, BotoneraButton, Player, Match } from '@/types';
 import { getButtonColorHex } from './BotoneraPanelEditor';
@@ -38,6 +39,7 @@ interface BotoneraEventLogProps {
   onRestoreDeletedEvents?: () => void;
   onExportXml?: () => void;
   onExportJson?: () => void;
+  onImportEvents?: (events: NormalizedEvent[]) => void;
   /** Called when the user clicks the ▶ button to reproduce the event cut in a pop-up window */
   onSeekToEvent?: (event: NormalizedEvent) => void;
   /** Buttons of the active botonera, used to paint each row with its button colour */
@@ -61,6 +63,7 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
   onRestoreDeletedEvents,
   onExportXml,
   onExportJson,
+  onImportEvents,
   onSeekToEvent,
   buttons = [],
   players = [],
@@ -83,6 +86,155 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
   const [clearAllInput, setClearAllInput] = useState<string>('');
 
   const [trashCount, setTrashCount] = useState<number>(0);
+
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  const handleDefaultExportXml = () => {
+    if (onExportXml) {
+      onExportXml();
+      return;
+    }
+    let xmlString = `<?xml version="1.0" encoding="UTF-8"?>\n<longomatch_project version="1.0">\n`;
+    xmlString += `  <project_info>\n    <date>${new Date().toISOString()}</date>\n    <total_events>${events.length}</total_events>\n  </project_info>\n  <events>\n`;
+    events.forEach((e) => {
+      const lead = e.metadata?.leadTime ?? 5;
+      const lag = e.metadata?.lagTime ?? 5;
+      const startTime = Math.max(0, (e.timestamp || 0) - lead);
+      const stopTime = Math.max(startTime + 1, (e.timestamp || 0) + lag);
+      xmlString += `    <event>\n      <id>${e.event_id}</id>\n      <category>${e.category}</category>\n      <player>${e.player_name}</player>\n      <start_time>${startTime}</start_time>\n      <stop_time>${stopTime}</stop_time>\n      <period>${e.period}</period>\n`;
+      if (e.x !== null && e.y !== null) {
+        xmlString += `      <coordinates start_x="${e.x}" start_y="${e.y}" end_x="${e.end_x || ''}" end_y="${e.end_y || ''}" />\n`;
+      }
+      if (e.outcome) {
+        xmlString += `      <outcome>${e.outcome}</outcome>\n`;
+      }
+      xmlString += `    </event>\n`;
+    });
+    xmlString += `  </events>\n</longomatch_project>`;
+
+    const blob = new Blob([xmlString], { type: 'text/xml' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `longomatch_session_${Date.now()}.xml`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDefaultExportJson = () => {
+    if (onExportJson) {
+      onExportJson();
+      return;
+    }
+    const dataStr = JSON.stringify(events, null, 2);
+    const blob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `events_tagging_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const ext = file.name.split('.').pop()?.toLowerCase();
+      let importedList: NormalizedEvent[] = [];
+
+      if (ext === 'json' || text.trim().startsWith('{') || text.trim().startsWith('[')) {
+        const parsed = JSON.parse(text);
+        const rawList = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.events) ? parsed.events : []);
+        importedList = rawList.map((item: any, idx: number) => ({
+          event_id: item.event_id || `imp_${Date.now()}_${idx}`,
+          category: item.category || item.event_type || 'Importado',
+          event_type: item.event_type || item.category || 'Importado',
+          player_id: item.player_id || null,
+          player_name: item.player_name || item.player || 'Jugador Sin Asignar',
+          timestamp: item.timestamp ?? item.start_time ?? 0,
+          period: item.period ?? 1,
+          team_id: item.team_id || 'team_imported',
+          team_name: item.team_name || item.team || 'Equipo Importado',
+          x: item.x ?? (item.coordinates?.start_x ? Number(item.coordinates.start_x) : null),
+          y: item.y ?? (item.coordinates?.start_y ? Number(item.coordinates.start_y) : null),
+          end_x: item.end_x ?? (item.coordinates?.end_x ? Number(item.coordinates.end_x) : null),
+          end_y: item.end_y ?? (item.coordinates?.end_y ? Number(item.coordinates.end_y) : null),
+          goal_x: item.goal_x ?? null,
+          goal_y: item.goal_y ?? null,
+          goal_zone: item.goal_zone ?? null,
+          subcategory: item.subcategory || null,
+          outcome: item.outcome || null,
+          created_by_name: item.created_by_name || 'Importado XML/JSON',
+          created_at: item.created_at || new Date().toISOString(),
+          metadata: item.metadata || {},
+        }));
+      } else {
+        // XML parsing
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(text, 'text/xml');
+        const eventNodes = Array.from(xmlDoc.getElementsByTagName('event'));
+
+        importedList = eventNodes.map((node, idx) => {
+          const getVal = (tag: string) => node.getElementsByTagName(tag)[0]?.textContent || '';
+          const category = getVal('category') || getVal('type') || 'Evento Importado';
+          const player = getVal('player') || getVal('player_name') || 'Jugador Sin Asignar';
+          const period = parseInt(getVal('period') || '1', 10);
+          const startTime = parseFloat(getVal('start_time') || getVal('timestamp') || '0');
+          const outcome = getVal('outcome') || null;
+
+          const coordNode = node.getElementsByTagName('coordinates')[0];
+          const startX = coordNode ? parseFloat(coordNode.getAttribute('start_x') || '') : null;
+          const startY = coordNode ? parseFloat(coordNode.getAttribute('start_y') || '') : null;
+          const endX = coordNode ? parseFloat(coordNode.getAttribute('end_x') || '') : null;
+          const endY = coordNode ? parseFloat(coordNode.getAttribute('end_y') || '') : null;
+
+          return {
+            event_id: getVal('id') || `xml_imp_${Date.now()}_${idx}`,
+            category,
+            event_type: category,
+            player_id: null,
+            player_name: player,
+            timestamp: isNaN(startTime) ? 0 : startTime,
+            period: isNaN(period) ? 1 : period,
+            team_id: 'team_imported',
+            team_name: getVal('team') || 'Equipo Importado',
+            x: isNaN(startX as any) ? null : startX,
+            y: isNaN(startY as any) ? null : startY,
+            end_x: isNaN(endX as any) ? null : endX,
+            end_y: isNaN(endY as any) ? null : endY,
+            goal_x: null,
+            goal_y: null,
+            goal_zone: null,
+            subcategory: null,
+            outcome,
+            created_by_name: 'Importado XML',
+            created_at: new Date().toISOString(),
+            metadata: {},
+          };
+        });
+      }
+
+      if (importedList.length === 0) {
+        alert('⚠️ No se encontraron eventos válidos en el archivo seleccionado.');
+        return;
+      }
+
+      if (onImportEvents) {
+        onImportEvents(importedList);
+      } else if (typeof window !== 'undefined') {
+        dbStore.addNormalizedEvents(importedList);
+      }
+
+      alert(`✅ ¡Se han importado exitosamente ${importedList.length} eventos al registro!`);
+    } catch (err: any) {
+      alert(`❌ Error al procesar el archivo: ${err.message || 'Formato no válido'}`);
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
 
   const updateTrashCount = () => {
     if (typeof window !== 'undefined') {
@@ -208,35 +360,54 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
           </div>
         </div>
 
-        {/* Action buttons: Export & Clear */}
+        {/* Action buttons: Export & Import & Clear */}
         <div className="flex items-center gap-2">
-          {onExportXml && (
-            <button
-              onClick={onExportXml}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-bold border border-slate-700 transition"
-            >
-              <FileCode2 className="w-3.5 h-3.5" />
-              <span>XML LongoMatch</span>
-            </button>
-          )}
+          <button
+            onClick={handleDefaultExportXml}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-bold border border-slate-700 transition cursor-pointer shadow-sm"
+            title="Exportar archivo XML LongoMatch a tu ordenador local"
+          >
+            <FileCode2 className="w-3.5 h-3.5" />
+            <span>XML LongoMatch</span>
+          </button>
 
-          {onExportJson && (
-            <button
-              onClick={onExportJson}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold border border-slate-700 transition"
-            >
-              <FileText className="w-3.5 h-3.5" />
-              <span>JSON</span>
-            </button>
+          <button
+            onClick={handleDefaultExportJson}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold border border-slate-700 transition cursor-pointer shadow-sm"
+            title="Exportar archivo JSON a tu ordenador local"
+          >
+            <FileText className="w-3.5 h-3.5" />
+            <span>JSON</span>
+          </button>
+
+          {!readOnly && (
+            <>
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileImport}
+                accept=".xml,.json,text/xml,application/json"
+                className="hidden"
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-950/60 hover:bg-sky-900/80 text-sky-300 hover:text-sky-100 text-xs font-bold border border-sky-800/60 hover:border-sky-500/80 transition cursor-pointer shadow-sm"
+                title="Importar eventos desde un archivo XML o JSON de tu ordenador"
+              >
+                <UploadCloud className="w-3.5 h-3.5 text-sky-400" />
+                <span>Importar XML/JSON</span>
+              </button>
+            </>
           )}
 
           {!readOnly && onClearAllEvents && events.length > 0 && (
             <button
               onClick={() => setIsConfirmingClearAll(true)}
-              className="p-1.5 rounded-xl bg-slate-800 hover:bg-red-950/60 text-slate-400 hover:text-red-400 border border-slate-700 hover:border-red-500/40 transition text-xs cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-950/50 hover:bg-red-900/70 text-red-300 hover:text-red-100 text-xs font-bold border border-red-800/60 hover:border-red-500/80 transition shadow-sm cursor-pointer"
               title="Borrar Todos los Eventos"
             >
-              <Trash2 className="w-4 h-4" />
+              <Trash2 className="w-3.5 h-3.5 text-red-400" />
+              <span>Borrar Eventos</span>
             </button>
           )}
         </div>
@@ -813,16 +984,16 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
         );
       })()}
 
-      {/* ── MODAL CONFIRMACIÓN ALTA SEGURIDAD: BORRAR UN EVENTO SELECCIONADO ── */}
+      {/* ── MODAL CONFIRMACIÓN: BORRAR UN EVENTO INDIVIDUAL (SOLO CONFIRMAR CON OK) ── */}
       {deletingEventTarget && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/90 backdrop-blur-md p-4 animate-fade-in">
-          <div className="bg-slate-900 border border-red-500/50 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 text-slate-100 text-center">
+          <div className="bg-slate-900 border border-slate-700/80 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 text-slate-100 text-center">
             <div className="w-12 h-12 rounded-2xl bg-red-500/10 border border-red-500/30 text-red-400 mx-auto flex items-center justify-center">
               <AlertTriangle className="w-6 h-6" />
             </div>
 
             <div className="space-y-1">
-              <h3 className="text-base font-black text-white">¿Confirmar eliminación del registro?</h3>
+              <h3 className="text-base font-black text-white">¿Eliminar este evento?</h3>
               <p className="text-xs text-slate-300 leading-relaxed">
                 ¿Estás seguro de que deseas borrar la acción{' '}
                 <strong className="text-amber-400">
@@ -833,57 +1004,34 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
               </p>
             </div>
 
-            <div className="space-y-1.5 text-left bg-slate-950 p-3 rounded-xl border border-slate-800">
-              <label className="block text-[10px] font-extrabold uppercase text-amber-400">
-                🔒 Medida de Protección (Escribe para Desbloquear):
-              </label>
-              <p className="text-[11px] text-slate-400">
-                Escribe exactamente <strong className="text-red-400 font-mono">BORRAR</strong> para habilitar la eliminación:
-              </p>
-              <input
-                type="text"
-                value={singleDeleteInput}
-                onChange={(e) => setSingleDeleteInput(e.target.value)}
-                placeholder='Escribe "BORRAR"'
-                className="w-full p-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white font-mono font-black text-center focus:outline-none focus:border-red-500 text-xs"
-              />
-            </div>
-
             <div className="flex items-center gap-3 pt-2">
               <button
                 onClick={() => {
                   setDeletingEventTarget(null);
-                  setSingleDeleteInput('');
                 }}
                 className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition cursor-pointer"
               >
                 Cancelar
               </button>
               <button
-                disabled={singleDeleteInput.trim().toUpperCase() !== 'BORRAR'}
                 onClick={() => {
                   if (onDeleteEvent && deletingEventTarget) {
                     onDeleteEvent(deletingEventTarget.event_id);
                     updateTrashCount();
                   }
                   setDeletingEventTarget(null);
-                  setSingleDeleteInput('');
                 }}
-                className={`flex-1 py-2.5 rounded-xl text-white font-black text-xs transition flex items-center justify-center gap-1.5 ${
-                  singleDeleteInput.trim().toUpperCase() === 'BORRAR'
-                    ? 'bg-red-600 hover:bg-red-500 shadow-lg shadow-red-600/30 cursor-pointer'
-                    : 'bg-slate-800 text-slate-500 cursor-not-allowed opacity-60'
-                }`}
+                className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-black text-xs transition flex items-center justify-center gap-1.5 shadow-lg shadow-red-600/30 cursor-pointer"
               >
                 <Trash2 className="w-4 h-4" />
-                <span>Sí, Eliminar</span>
+                <span>Confirmar OK</span>
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ── MODAL CONFIRMACIÓN ALTA SEGURIDAD: BORRAR TODOS LOS EVENTOS DE LA SESIÓN ── */}
+      {/* ── MODAL CONFIRMACIÓN: BORRAR TODOS LOS EVENTOS (Escribir "BORRAR") ── */}
       {isConfirmingClearAll && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/90 backdrop-blur-md p-4 animate-fade-in">
           <div className="bg-slate-900 border border-red-500/60 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 text-slate-100 text-center">
@@ -901,17 +1049,18 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
 
             <div className="space-y-1.5 text-left bg-slate-950 p-3 rounded-xl border border-red-900/40">
               <label className="block text-[10px] font-extrabold uppercase text-amber-400">
-                ⚠️ Protección Anti-Borrado de Seguridad (Costoso):
+                🔒 Confirmación Obligatoria de Seguridad:
               </label>
               <p className="text-[11px] text-slate-300">
-                Para evitar pérdidas accidentales de análisis, escribe exactamente <strong className="text-red-400 font-mono">BORRAR TODO</strong>:
+                Para confirmar la eliminación total, escribe la palabra <strong className="text-red-400 font-mono">BORRAR</strong>:
               </p>
               <input
                 type="text"
                 value={clearAllInput}
                 onChange={(e) => setClearAllInput(e.target.value)}
-                placeholder='Escribe "BORRAR TODO"'
+                placeholder='Escribe "BORRAR"'
                 className="w-full p-2.5 rounded-xl bg-slate-900 border border-red-700/60 text-amber-300 font-mono font-black text-center focus:outline-none focus:border-red-500 text-xs"
+                autoFocus
               />
             </div>
 
@@ -926,7 +1075,7 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
                 Cancelar
               </button>
               <button
-                disabled={clearAllInput.trim().toUpperCase() !== 'BORRAR TODO'}
+                disabled={clearAllInput.trim().toUpperCase() !== 'BORRAR'}
                 onClick={() => {
                   if (onClearAllEvents) {
                     onClearAllEvents();
@@ -936,13 +1085,13 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
                   setClearAllInput('');
                 }}
                 className={`flex-1 py-2.5 rounded-xl text-white font-black text-xs transition flex items-center justify-center gap-1.5 ${
-                  clearAllInput.trim().toUpperCase() === 'BORRAR TODO'
+                  clearAllInput.trim().toUpperCase() === 'BORRAR'
                     ? 'bg-red-600 hover:bg-red-500 shadow-lg shadow-red-600/40 cursor-pointer'
                     : 'bg-slate-800 text-slate-500 cursor-not-allowed opacity-60'
                 }`}
               >
                 <Trash2 className="w-4 h-4" />
-                <span>Sí, Borrar Todo</span>
+                <span>Borrar Todos</span>
               </button>
             </div>
           </div>

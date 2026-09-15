@@ -20,6 +20,8 @@ interface BotoneraVideoPlayerProps {
   periodAdjustments?: Record<number, { matchTimeSec: number; videoTimeSec: number }>;
   /** Called when user clears a manual chrono adjustment */
   onClearAdjustment?: (period: number) => void;
+  /** Called when user updates a manual chrono adjustment */
+  onUpdateAdjustment?: (period: number, newMatchTimeSeconds: number) => void;
   /** Called when the user wants to reset a period's sync offset so it can be re-recorded */
   onClearPeriodOffset?: (period: number) => void;
   /** Called when the user manually edits a period's video start offset (in seconds) */
@@ -118,6 +120,7 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
   periodVideoOffsets = {},
   periodAdjustments = {},
   onClearAdjustment,
+  onUpdateAdjustment,
   onClearPeriodOffset,
   onUpdatePeriodOffset,
   onEditVideoSettings,
@@ -224,6 +227,24 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
       onUpdatePeriodOffset(p, Math.max(0, parsed));
     }
     setEditingPeriod(null);
+  };
+
+  const [editingAdjustmentPeriod, setEditingAdjustmentPeriod] = useState<number | null>(null);
+  const [editingAdjustmentValue, setEditingAdjustmentValue] = useState<string>('');
+
+  const handleStartAdjustmentEdit = (p: number) => {
+    const existing = periodAdjustments?.[p];
+    if (!existing) return;
+    setEditingAdjustmentValue(fmtVideoTime(existing.matchTimeSec));
+    setEditingAdjustmentPeriod(p);
+  };
+
+  const handleConfirmAdjustmentEdit = (p: number) => {
+    const parsed = parseMinSec(editingAdjustmentValue);
+    if (parsed !== null && onUpdateAdjustment) {
+      onUpdateAdjustment(p, Math.max(0, parsed));
+    }
+    setEditingAdjustmentPeriod(null);
   };
 
   // Embed de YouTube calculado una sola vez por URL: al volver de la ventana
@@ -357,22 +378,70 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
                   )}
 
                   {periodAdjustments && periodAdjustments[p] && (
-                    <div
-                      title={`Ajuste activo desde el minuto de vídeo ${fmtVideoTime(periodAdjustments[p].videoTimeSec)} hasta finalizar la parte`}
-                      className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-300 font-mono text-[11px] font-bold"
-                    >
-                      <span className="uppercase text-[9px] font-black bg-amber-500/30 px-1.5 py-0.5 rounded text-amber-200 tracking-wider">Ajuste</span>
-                      <span>{fmtVideoTime(periodAdjustments[p].matchTimeSec)}</span>
-                      {onClearAdjustment && (
+                    editingAdjustmentPeriod === p ? (
+                      <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-lg bg-amber-500/20 border border-amber-400">
+                        <span className="uppercase text-[9px] font-black bg-amber-500/40 px-1 py-0.5 rounded text-amber-200 tracking-wider">Ajuste</span>
+                        <input
+                          autoFocus
+                          type="text"
+                          value={editingAdjustmentValue}
+                          onChange={(e) => setEditingAdjustmentValue(e.target.value)}
+                          onBlur={() => handleConfirmAdjustmentEdit(p)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleConfirmAdjustmentEdit(p);
+                            if (e.key === 'Escape') setEditingAdjustmentPeriod(null);
+                          }}
+                          placeholder="mm:ss"
+                          title="Edita el minuto de partido ajustado (ej: 23:10 o 25:00)"
+                          className="w-16 px-1 py-0.5 rounded bg-slate-950 border border-amber-400 text-amber-300 font-mono text-[11px] font-bold text-center focus:outline-none"
+                        />
                         <button
-                          onClick={() => onClearAdjustment(p)}
-                          title="Quitar ajuste manual"
-                          className="p-0.5 rounded text-amber-400 hover:text-red-400 hover:bg-slate-800 transition cursor-pointer"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => handleConfirmAdjustmentEdit(p)}
+                          className="p-1 rounded bg-amber-500 text-slate-950 hover:bg-amber-400 cursor-pointer"
+                          title="Guardar ajuste"
+                        >
+                          <Check className="w-2.5 h-2.5" />
+                        </button>
+                        <button
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => setEditingAdjustmentPeriod(null)}
+                          className="p-1 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 cursor-pointer"
+                          title="Cancelar"
                         >
                           <X className="w-2.5 h-2.5" />
                         </button>
-                      )}
-                    </div>
+                      </div>
+                    ) : (
+                      <div
+                        title={`Ajuste activo desde el minuto de vídeo ${fmtVideoTime(periodAdjustments[p].videoTimeSec)} hasta finalizar la parte. Haz clic para editar.`}
+                        className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-300 font-mono text-[11px] font-bold"
+                      >
+                        <span className="uppercase text-[9px] font-black bg-amber-500/30 px-1.5 py-0.5 rounded text-amber-200 tracking-wider">Ajuste</span>
+                        <button
+                          type="button"
+                          onClick={() => handleStartAdjustmentEdit(p)}
+                          title="Editar el minutaje de este ajuste manual (haz clic para modificar)"
+                          className="flex items-center gap-1 hover:text-white transition cursor-pointer"
+                        >
+                          <span>{fmtVideoTime(periodAdjustments[p].matchTimeSec)}</span>
+                          <Pencil className="w-2.5 h-2.5 text-amber-400 hover:text-amber-200" />
+                        </button>
+                        {onClearAdjustment && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onClearAdjustment(p);
+                            }}
+                            title="Eliminar este ajuste manual"
+                            className="p-0.5 rounded text-amber-400 hover:text-red-400 hover:bg-slate-800 transition cursor-pointer"
+                          >
+                            <X className="w-2.5 h-2.5" />
+                          </button>
+                        )}
+                      </div>
+                    )
                   )}
                 </div>
               )}
