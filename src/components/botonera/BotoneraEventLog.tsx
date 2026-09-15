@@ -148,36 +148,46 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
       if (ext === 'json' || text.trim().startsWith('{') || text.trim().startsWith('[')) {
         const parsed = JSON.parse(text);
         const rawList = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.events) ? parsed.events : []);
-        importedList = rawList.map((item: any, idx: number) => ({
-          event_id: item.event_id || `imp_${Date.now()}_${idx}`,
-          category: item.category || item.event_type || 'Importado',
-          event_type: item.event_type || item.category || 'Importado',
-          player_id: item.player_id || null,
-          player_name: item.player_name || item.player || 'Jugador Sin Asignar',
-          timestamp: item.timestamp ?? item.start_time ?? 0,
-          period: item.period ?? 1,
-          team_id: item.team_id || 'team_imported',
-          team_name: item.team_name || item.team || 'Equipo Importado',
-          x: item.x ?? (item.coordinates?.start_x ? Number(item.coordinates.start_x) : null),
-          y: item.y ?? (item.coordinates?.start_y ? Number(item.coordinates.start_y) : null),
-          end_x: item.end_x ?? (item.coordinates?.end_x ? Number(item.coordinates.end_x) : null),
-          end_y: item.end_y ?? (item.coordinates?.end_y ? Number(item.coordinates.end_y) : null),
-          goal_x: item.goal_x ?? null,
-          goal_y: item.goal_y ?? null,
-          goal_zone: item.goal_zone ?? null,
-          subcategory: item.subcategory || null,
-          outcome: item.outcome || null,
-          created_by_name: item.created_by_name || 'Importado XML/JSON',
-          created_at: item.created_at || new Date().toISOString(),
-          metadata: item.metadata || {},
-        }));
+        importedList = rawList.map((item: any, idx: number): NormalizedEvent => {
+          const ts = item.timestamp ?? item.start_time ?? 0;
+          return {
+            event_id: item.event_id || `imp_${Date.now()}_${idx}`,
+            source_event_id: item.source_event_id || null,
+            match_id: item.match_id || (match ? match.id : 'free_session'),
+            category: item.category || item.event_type || 'Importado',
+            event_type: item.event_type || item.category || 'Importado',
+            player_id: item.player_id || null,
+            player_name: item.player_name || item.player || 'Jugador Sin Asignar',
+            timestamp: ts,
+            minute: ts !== null ? Math.floor(ts / 60) : null,
+            second: ts !== null ? Math.floor(ts % 60) : null,
+            duration: item.duration ?? 5,
+            period: item.period ?? 1,
+            team_id: item.team_id || 'team_imported',
+            team_name: item.team_name || item.team || 'Equipo Importado',
+            x: item.x ?? (item.coordinates?.start_x ? Number(item.coordinates.start_x) : null),
+            y: item.y ?? (item.coordinates?.start_y ? Number(item.coordinates.start_y) : null),
+            end_x: item.end_x ?? (item.coordinates?.end_x ? Number(item.coordinates.end_x) : null),
+            end_y: item.end_y ?? (item.coordinates?.end_y ? Number(item.coordinates.end_y) : null),
+            goal_x: item.goal_x ?? null,
+            goal_y: item.goal_y ?? null,
+            goal_zone: item.goal_zone ?? null,
+            subcategory: item.subcategory || null,
+            outcome: item.outcome || null,
+            source: item.source || 'imported',
+            created_by_name: item.created_by_name || 'Importado XML/JSON',
+            created_at: item.created_at || new Date().toISOString(),
+            updated_at: item.updated_at || new Date().toISOString(),
+            metadata: item.metadata || {},
+          };
+        });
       } else {
         // XML parsing
         const parser = new DOMParser();
         const xmlDoc = parser.parseFromString(text, 'text/xml');
         const eventNodes = Array.from(xmlDoc.getElementsByTagName('event'));
 
-        importedList = eventNodes.map((node, idx) => {
+        importedList = eventNodes.map((node, idx): NormalizedEvent => {
           const getVal = (tag: string) => node.getElementsByTagName(tag)[0]?.textContent || '';
           const category = getVal('category') || getVal('type') || 'Evento Importado';
           const player = getVal('player') || getVal('player_name') || 'Jugador Sin Asignar';
@@ -190,14 +200,20 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
           const startY = coordNode ? parseFloat(coordNode.getAttribute('start_y') || '') : null;
           const endX = coordNode ? parseFloat(coordNode.getAttribute('end_x') || '') : null;
           const endY = coordNode ? parseFloat(coordNode.getAttribute('end_y') || '') : null;
+          const ts = isNaN(startTime) ? 0 : startTime;
 
           return {
             event_id: getVal('id') || `xml_imp_${Date.now()}_${idx}`,
+            source_event_id: null,
+            match_id: match ? match.id : 'free_session',
             category,
             event_type: category,
             player_id: null,
             player_name: player,
-            timestamp: isNaN(startTime) ? 0 : startTime,
+            timestamp: ts,
+            minute: Math.floor(ts / 60),
+            second: Math.floor(ts % 60),
+            duration: 5,
             period: isNaN(period) ? 1 : period,
             team_id: 'team_imported',
             team_name: getVal('team') || 'Equipo Importado',
@@ -210,8 +226,10 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
             goal_zone: null,
             subcategory: null,
             outcome,
+            source: 'imported',
             created_by_name: 'Importado XML',
             created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
             metadata: {},
           };
         });
@@ -225,7 +243,7 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
       if (onImportEvents) {
         onImportEvents(importedList);
       } else if (typeof window !== 'undefined') {
-        dbStore.addNormalizedEvents(importedList);
+        dbStore.saveNormalizedEvents(importedList, false);
       }
 
       alert(`✅ ¡Se han importado exitosamente ${importedList.length} eventos al registro!`);

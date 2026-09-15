@@ -2351,7 +2351,7 @@ export default function BotoneraPage() {
       const newOnly = importedEvents.filter((e) => !existingIds.has(e.event_id));
       const updated = [...newOnly, ...prev];
       if (selectedMatchId && selectedMatchId !== 'free_session') {
-        dbStore.saveNormalizedEvents(selectedMatchId, updated);
+        dbStore.saveNormalizedEvents(updated, true, selectedMatchId);
       }
       return updated;
     });
