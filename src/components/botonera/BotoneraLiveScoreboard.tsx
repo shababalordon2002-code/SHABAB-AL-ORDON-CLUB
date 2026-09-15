@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Match, NormalizedEvent, TeamLineupConfig, Player } from '@/types';
-import { Shield, Trophy, CheckCircle, Flame, Users, Settings, Edit3, RefreshCw, ArrowRightLeft, X } from 'lucide-react';
+import { Shield, Trophy, CheckCircle, Flame, Users, Settings, Edit3, RefreshCw, ArrowRightLeft, RotateCcw, X } from 'lucide-react';
 import { dbStore } from '@/lib/store/db-store';
 import { TeamLineupModal, TeamCircleIcon, getFormationPositions } from './TeamLineupModal';
 
@@ -127,6 +127,7 @@ interface BotoneraLiveScoreboardProps {
   period?: number;
   onUpdateLineup?: (team: 'home' | 'away', config: TeamLineupConfig, updatedPlayers: Player[]) => void;
   onAddEvent?: (evt: NormalizedEvent) => void;
+  onResetSubstitutions?: (team: 'home' | 'away') => void;
 }
 
 export function isGoalEvent(evt: NormalizedEvent): boolean {
@@ -192,6 +193,7 @@ export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
   period = 1,
   onUpdateLineup,
   onAddEvent,
+  onResetSubstitutions,
 }) => {
   const homeTeamName = match?.home_team || 'Shabab Al Ordon Club';
   const awayTeamName = match?.away_team || 'Al-Faisaly SC';

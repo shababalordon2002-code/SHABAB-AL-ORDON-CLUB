@@ -431,26 +431,6 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
         </div>
       </div>
 
-      {/* ── RESTAURAR REGISTROS DE LA PAPELERA ── */}
-      {trashCount > 0 && !readOnly && (
-        <div className="flex items-center justify-between p-2.5 px-3.5 bg-emerald-950/40 border border-emerald-500/40 rounded-xl text-xs shadow-sm">
-          <div className="flex items-center gap-2 text-emerald-300 font-bold">
-            <RotateCcw className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span>
-              Papelera de Recuperación: Tienes <strong className="text-white font-black">{trashCount} registros</strong> respaldados en la papelera de seguridad.
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={handleRestoreFromTrash}
-            className="px-3 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs shadow-md transition flex items-center gap-1 cursor-pointer"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span>Restaurar Registros</span>
-          </button>
-        </div>
-      )}
-
       {/* Search, Category Filters & Sort Control */}
       <div className="flex flex-wrap items-center gap-3 bg-slate-950/80 p-2.5 rounded-xl border border-slate-800">
         <div className="flex-1 min-w-44 flex items-center gap-2 bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-800">

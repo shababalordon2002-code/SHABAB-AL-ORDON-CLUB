@@ -2239,6 +2239,52 @@ export default function BotoneraPage() {
     });
   };
 
+  const handleResetTeamSubstitutions = (team: 'home' | 'away') => {
+    const teamId = team === 'home' ? 'home_team' : 'away_team';
+    const targets = events.filter(
+      (e) => (e.event_type === 'Sustitución' || e.category === 'Cambio') && e.team_id === teamId
+    );
+    if (targets.length === 0) return;
+    const ok = confirm(
+      '¿Seguro que quieres resetear todos los cambios (sustituciones) de este equipo? Esta acción no se puede deshacer.'
+    );
+    if (!ok) return;
+
+    const targetIds = new Set(targets.map((e) => e.event_id));
+    dbStore.backupDeletedEvents(targets);
+
+    setEvents((prev) => {
+      const next = prev.filter((e) => !targetIds.has(e.event_id));
+      dbStore.saveNormalizedEvents(next, true, selectedMatchId);
+
+      if (selectedMatchId && selectedMatchId !== 'free_session') {
+        const deleterName = profile?.full_name || user?.email || 'Analista';
+        targets.forEach((e) => {
+          ownWritesRef.current.add(e.event_id);
+          deleteAnalysisEventFromSupabase(e.event_id, deleterName).catch((err) =>
+            console.warn('Could not sync substitution reset to Supabase:', err)
+          );
+        });
+
+        const targetId = selectedMatchId;
+        const masterAnalysisId = `analysis_${targetId}`;
+        const analyses = dbStore.getAnalyses(targetId);
+        const existing = analyses.find((a) => a.match_id === targetId || a.id === masterAnalysisId) || analyses[0];
+        if (existing) {
+          const updatedAnalysis: MatchAnalysis = {
+            ...existing,
+            events: next,
+            period_adjustments: periodAdjustmentsRef.current || existing.period_adjustments,
+            updated_at: new Date().toISOString(),
+          };
+          dbStore.saveAnalysis(updatedAnalysis);
+          setSavedAnalyses(dbStore.getAnalyses());
+        }
+      }
+      return next;
+    });
+  };
+
   const handleUpdateEvent = (updatedEvt: NormalizedEvent) => {
     setEvents((prev) => {
       const nextEvents = prev.map((e) => (e.event_id === updatedEvt.event_id ? updatedEvt : e));
@@ -2775,6 +2821,7 @@ export default function BotoneraPage() {
                 );
               }
             }}
+            onResetSubstitutions={handleResetTeamSubstitutions}
             onUpdateLineup={(team, config, updatedPlayers) => {
               const currentM = matches.find((m) => m.id === selectedMatchId) || selectedMatch || matches[0];
               const teamName = team === 'home'
