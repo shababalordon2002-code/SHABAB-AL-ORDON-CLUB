@@ -14,7 +14,7 @@ import { saveMatchesToSupabase, getMatchesFromSupabase } from '@/lib/services/ma
 import { getPlayersFromSupabase, savePlayersToSupabase } from '@/lib/services/players-service';
 import { getAnalysesFromSupabase, saveAnalysisToSupabase, deleteAnalysisFromSupabase } from '@/lib/services/analysis-service';
 import { getDashboardsFromSupabase, saveDashboardToSupabase, deleteDashboardFromSupabase } from '@/lib/services/dashboard-service';
-import { isMatchOnOrAfterSept2026 } from '@/lib/scraper/flashscore-scraper';
+import { isMatchOnOrAfterSept2026 } from '@/lib/utils/date-utils';
 
 const STORAGE_KEYS = {
   MATCHES: 'sao_analytics_matches_v1',
