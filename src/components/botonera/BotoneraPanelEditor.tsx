@@ -1145,7 +1145,7 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
           <span className="text-[11px] text-slate-400 hidden sm:inline">
             {pinnedTeam === 'both'
               ? '⚠️ De serie: Se registrarán eventos con ambos equipos (Libre)'
-              : `📌 Fijado a ${pinnedTeam === 'home' ? (homeTeamName || 'Local') : (awayTeamName || 'Visitante')}: Todos los eventos se asignarán directamente a este equipo.`}
+              : `📌 Fijado a ${pinnedTeam === 'home' ? (homeTeamName || 'Shabab Al Ordon Club') : (awayTeamName || 'Rival')}: Todos los eventos se asignarán a este equipo.`}
           </span>
         </div>
 
@@ -1169,17 +1169,17 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
             onClick={() => onPinTeamChange?.('home')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
               pinnedTeam === 'home'
-                ? 'bg-red-600/30 text-red-200 border border-red-500/80 shadow ring-2 ring-red-500/50'
+                ? 'bg-red-600/30 text-red-200 border border-red-500/80 shadow ring-2 ring-red-500/50 font-black'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-850'
             }`}
-            title={`Fijar equipo a ${homeTeamName || 'Local'}`}
+            title={`Fijar sólo a ${homeTeamName || 'Shabab Al Ordon Club'}`}
           >
             {homeTeamLogo ? (
               <img src={homeTeamLogo} alt="" className="w-3.5 h-3.5 object-contain rounded bg-slate-950 p-0.5" />
             ) : (
               <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
             )}
-            <span className="truncate max-w-[140px]">{homeTeamName || 'Local'} (Fijado)</span>
+            <span className="truncate max-w-[160px]">{homeTeamName || 'Shabab Al Ordon Club'}</span>
           </button>
 
           <button
@@ -1187,17 +1187,17 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
             onClick={() => onPinTeamChange?.('away')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
               pinnedTeam === 'away'
-                ? 'bg-blue-600/30 text-blue-200 border border-blue-400/80 shadow ring-2 ring-blue-500/50'
+                ? 'bg-blue-600/30 text-blue-200 border border-blue-400/80 shadow ring-2 ring-blue-500/50 font-black'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-850'
             }`}
-            title={`Fijar equipo a ${awayTeamName || 'Visitante'}`}
+            title={`Fijar sólo a ${awayTeamName || 'Rival'}`}
           >
             {awayTeamLogo ? (
               <img src={awayTeamLogo} alt="" className="w-3.5 h-3.5 object-contain rounded bg-slate-950 p-0.5" />
             ) : (
               <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />
             )}
-            <span className="truncate max-w-[140px]">{awayTeamName || 'Visitante'} (Fijado)</span>
+            <span className="truncate max-w-[160px]">{awayTeamName || 'Rival'}</span>
           </button>
         </div>
       </div>

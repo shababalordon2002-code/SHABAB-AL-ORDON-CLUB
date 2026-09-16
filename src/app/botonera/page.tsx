@@ -2759,6 +2759,11 @@ export default function BotoneraPage() {
   };
 
   const selectedMatch = matches.find((m) => m.id === selectedMatchId);
+  const activeMatchObj = selectedMatch || (selectedMatchId && selectedMatchId !== 'free_session' ? dbStore.getMatchById(selectedMatchId) : null) || matches[0] || null;
+  const currentHomeTeamName = activeMatchObj?.home_team || 'Shabab Al Ordon Club';
+  const currentAwayTeamName = activeMatchObj?.away_team || 'Al Ramtha';
+  const currentHomeTeamLogo = activeMatchObj?.home_team_logo;
+  const currentAwayTeamLogo = activeMatchObj?.away_team_logo;
 
   return (
     <div className="-m-6 px-2 sm:px-4 py-4 space-y-4 w-[calc(100%+3rem)] min-h-screen overflow-x-hidden">
@@ -3307,6 +3312,12 @@ export default function BotoneraPage() {
                     onTriggerEvent={handleTriggerEvent}
                     isTimerRunning={isTimerRunning}
                     onToggleTimer={handleToggleTimer}
+                    pinnedTeam={pinnedTeam}
+                    onPinTeamChange={setPinnedTeam}
+                    homeTeamName={currentHomeTeamName}
+                    awayTeamName={currentAwayTeamName}
+                    homeTeamLogo={currentHomeTeamLogo}
+                    awayTeamLogo={currentAwayTeamLogo}
                   />
                 )}
 
@@ -3404,6 +3415,12 @@ export default function BotoneraPage() {
                         onTriggerEvent={handleTriggerEvent}
                         isTimerRunning={isTimerRunning}
                         onToggleTimer={handleToggleTimer}
+                        pinnedTeam={pinnedTeam}
+                        onPinTeamChange={setPinnedTeam}
+                        homeTeamName={currentHomeTeamName}
+                        awayTeamName={currentAwayTeamName}
+                        homeTeamLogo={currentHomeTeamLogo}
+                        awayTeamLogo={currentAwayTeamLogo}
                       />
                     )}
                   </div>
