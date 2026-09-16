@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/client';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { Match } from '@/types';
+import { isMatchOnOrAfterSept2026 } from '@/lib/utils/date-utils';
 
 // Fetch matches from Supabase 'matches' table
 export async function getMatchesFromSupabase(): Promise<Match[]> {
@@ -16,7 +17,7 @@ export async function getMatchesFromSupabase(): Promise<Match[]> {
       return [];
     }
 
-    return (data || []).map((row: any) => ({
+    const rawList = (data || []).map((row: any) => ({
       ...row,
       home_lineup: typeof row.home_lineup === 'string' ? JSON.parse(row.home_lineup) : (row.home_lineup || null),
       away_lineup: typeof row.away_lineup === 'string' ? JSON.parse(row.away_lineup) : (row.away_lineup || null),
@@ -24,6 +25,8 @@ export async function getMatchesFromSupabase(): Promise<Match[]> {
         ? JSON.parse(row.period_adjustments)
         : (row.period_adjustments || row.home_lineup?._period_adjustments || null),
     })) as Match[];
+
+    return rawList.filter(m => isMatchOnOrAfterSept2026(m.date));
   } catch (err: any) {
     console.warn('Could not load matches from Supabase:', err.message);
     return [];
@@ -48,7 +51,9 @@ const OPTIONAL_MATCH_COLUMNS = [
 
 // Upsert matches into Supabase 'matches' table
 export async function saveMatchesToSupabase(matches: Match[]): Promise<boolean> {
-  if (!matches || matches.length === 0) return true;
+  const filteredMatches = (matches || []).filter(m => isMatchOnOrAfterSept2026(m.date));
+  if (filteredMatches.length === 0) return true;
+  matches = filteredMatches;
 
   try {
     let supabase: any;

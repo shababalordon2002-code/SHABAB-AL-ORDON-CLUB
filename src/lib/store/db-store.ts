@@ -358,26 +358,22 @@ export const dbStore = {
   // Matches
   getMatches(): Match[] {
     const matches: Match[] = getFromStorage(STORAGE_KEYS.MATCHES, SEED_MATCHES);
-    const validMatches = matches.filter((m) => {
-      if (m.id.startsWith('match_fs_') && !isMatchOnOrAfterSept2026(m.date)) {
-        return false;
-      }
-      return true;
-    });
+    const validMatches = matches.filter((m) => isMatchOnOrAfterSept2026(m.date));
     const sanitized = validMatches.map(sanitizeMatchLogos);
     setToStorage(STORAGE_KEYS.MATCHES, sanitized);
     return sanitized;
   },
 
   async syncMatchesFromSupabase(): Promise<Match[]> {
-    const remote = await getMatchesFromSupabase();
+    const remoteRaw = await getMatchesFromSupabase();
+    const remote = remoteRaw ? remoteRaw.filter((rm) => isMatchOnOrAfterSept2026(rm.date)) : [];
     if (remote && remote.length > 0) {
       const allLocal = this.getMatches();
       const localMap = new Map(allLocal.map((m) => [m.id, m]));
       const remoteIds = new Set(remote.map((m) => m.id));
       const localOnly = allLocal.filter((m) => {
         if (remoteIds.has(m.id)) return false;
-        if (m.id.startsWith('match_fs_') && !isMatchOnOrAfterSept2026(m.date)) return false;
+        if (!isMatchOnOrAfterSept2026(m.date)) return false;
         return true;
       });
 
@@ -414,6 +410,7 @@ export const dbStore = {
   },
 
   saveMatch(match: Match): void {
+    if (!isMatchOnOrAfterSept2026(match.date)) return;
     const matches = this.getMatches();
 
     const norm = (str: string) => str.toLowerCase().replace(/[^a-z0-9]/g, '');
