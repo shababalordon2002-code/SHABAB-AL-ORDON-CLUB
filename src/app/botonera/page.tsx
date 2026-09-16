@@ -36,7 +36,7 @@ import { BotoneraStopwatch, PERIOD_BASE_SECONDS } from '@/components/botonera/Bo
 import { BotoneraEventModal } from '@/components/botonera/BotoneraEventModal';
 import { BotoneraLiveScoreboard } from '@/components/botonera/BotoneraLiveScoreboard';
 import { AnalysisVisor } from '@/components/analysis/AnalysisVisor';
-import { Compass, Flame, Sliders, PlayCircle, Trophy, CheckCircle2, FileCode2, Save, Radio, Pencil, Ban, X, Home, FolderOpen, Eye, Edit3, Trash2, AlertTriangle, User, Video, LogOut } from 'lucide-react';
+import { Compass, Flame, Sliders, PlayCircle, Trophy, CheckCircle2, FileCode2, Save, Radio, Pencil, Ban, X, Home, FolderOpen, Eye, Edit3, Trash2, AlertTriangle, User, Video, LogOut, Sparkles } from 'lucide-react';
 
 /**
  * Calculates features string for window.open to ensure the pop-out window
@@ -2887,10 +2887,10 @@ export default function BotoneraPage() {
 
       {/* ----------------- LANDING: ELEGIR ENTRE REGISTRO O EDITAR + LISTADO DE REGISTROS ----------------- */}
       {pageMode === null && (
-        <div className="space-y-8 max-w-5xl mx-auto py-8 animate-fade-in">
+        <div className="w-full space-y-6 py-4 animate-fade-in">
           {/* Active Session Banner (if an in-progress session exists) */}
           {isSessionConfigured && (
-            <div className="p-5 rounded-2xl bg-gradient-to-r from-emerald-950/80 via-slate-900 to-slate-900 border border-emerald-500/40 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xl">
+            <div className="p-5 rounded-2xl bg-gradient-to-r from-emerald-950/80 via-slate-900 to-slate-900 border border-emerald-500/40 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xl w-full">
               <div className="flex items-center gap-3.5">
                 <div className="p-3 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shrink-0">
                   <Radio className="w-5 h-5 animate-pulse text-emerald-400" />
@@ -2919,201 +2919,235 @@ export default function BotoneraPage() {
               </div>
             </div>
           )}
-          {/* Main Action Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 max-w-3xl mx-auto">
-            <button
-              onClick={handleStartNewRegistration}
-              className="group p-8 rounded-2xl bg-slate-900 border border-slate-800 hover:border-emerald-500/50 hover:bg-slate-900/80 text-left transition-all shadow-xl cursor-pointer"
-            >
-              <div className="w-14 h-14 rounded-2xl bg-emerald-600/15 border border-emerald-500/30 flex items-center justify-center mb-4 group-hover:scale-105 transition-transform">
-                <PlayCircle className="w-7 h-7 text-emerald-400" />
-              </div>
-              <h2 className="text-sm font-extrabold text-white tracking-wide mb-1.5">⚡ REGISTRAR NUEVO PARTIDO</h2>
-              <p className="text-xs text-slate-400 leading-relaxed">
-                Configura un nuevo registro en directo: elige vídeo, partido y botonera, y empieza a etiquetar eventos con el cronómetro activo.
-              </p>
-            </button>
 
-            <button
-              onClick={() => setPageMode('edit')}
-              className="group p-8 rounded-2xl bg-slate-900 border border-slate-800 hover:border-amber-500/50 hover:bg-slate-900/80 text-left transition-all shadow-xl cursor-pointer"
-            >
-              <div className="w-14 h-14 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center mb-4 group-hover:scale-105 transition-transform">
-                <Sliders className="w-7 h-7 text-amber-400" />
-              </div>
-              <h2 className="text-sm font-extrabold text-white tracking-wide mb-1.5">🎨 DISEÑAR PIZARRAS</h2>
-              <p className="text-xs text-slate-400 leading-relaxed">
-                Crea o edita botoneras desde cero: arrastra y redimensiona botones, asigna colores y configura el campograma.
-              </p>
-            </button>
-          </div>
+          {/* Responsive Layout: Sidebar / Lateral Panel (Action Buttons) + Full-Width Matches Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start w-full">
 
-          {/* Section: Registros y Análisis Realizados */}
-          <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4 shadow-xl">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
-              <div>
-                <h3 className="text-sm font-extrabold text-white flex items-center gap-2">
-                  <FolderOpen className="w-4.5 h-4.5 text-amber-400" />
-                  <span>REGISTROS Y ANÁLISIS REALIZADOS ({savedAnalyses.length})</span>
-                </h3>
-                <p className="text-xs text-slate-400">
-                  Historial de análisis guardados en Supabase. Ábrelos en formato Visor (vídeo + campograma), reábrelos en la botonera o elimínalos.
-                </p>
+            {/* LATERAL / SIDEBAR (3 Cols on Desktop): The 2 Action Buttons always pinned on the side */}
+            <div className="lg:col-span-3 xl:col-span-3 space-y-4 lg:sticky lg:top-4">
+              <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-3 shadow-xl">
+                <div className="text-xs font-black uppercase tracking-wider text-slate-300 flex items-center gap-1.5 pb-2 border-b border-slate-800">
+                  <Sparkles className="w-4 h-4 text-amber-400" />
+                  <span>Acciones de Botonera</span>
+                </div>
+
+                {/* Button 1: Registrar Nuevo Partido */}
+                <button
+                  onClick={handleStartNewRegistration}
+                  className="w-full group p-5 rounded-xl bg-gradient-to-br from-slate-950 to-slate-900 border border-slate-800 hover:border-emerald-500/60 hover:from-emerald-950/30 hover:to-slate-900 text-left transition-all shadow-md cursor-pointer flex flex-col gap-2.5"
+                >
+                  <div className="flex items-center justify-between w-full">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-600/20 border border-emerald-500/40 flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <PlayCircle className="w-5 h-5 text-emerald-400" />
+                    </div>
+                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                      Directo
+                    </span>
+                  </div>
+                  <div>
+                    <h2 className="text-xs font-black text-white tracking-wide group-hover:text-emerald-300 transition-colors">
+                      ⚡ REGISTRAR NUEVO PARTIDO
+                    </h2>
+                    <p className="text-[11px] text-slate-400 leading-snug mt-1">
+                      Elige partido, vídeo y empieza el etiquetado en vivo con cronómetro.
+                    </p>
+                  </div>
+                </button>
+
+                {/* Button 2: Diseñar Pizarras */}
+                <button
+                  onClick={() => setPageMode('edit')}
+                  className="w-full group p-5 rounded-xl bg-gradient-to-br from-slate-950 to-slate-900 border border-slate-800 hover:border-amber-500/60 hover:from-amber-950/30 hover:to-slate-900 text-left transition-all shadow-md cursor-pointer flex flex-col gap-2.5"
+                >
+                  <div className="flex items-center justify-between w-full">
+                    <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <Sliders className="w-5 h-5 text-amber-400" />
+                    </div>
+                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                      Diseñador
+                    </span>
+                  </div>
+                  <div>
+                    <h2 className="text-xs font-black text-white tracking-wide group-hover:text-amber-300 transition-colors">
+                      🎨 DISEÑAR PIZARRAS
+                    </h2>
+                    <p className="text-[11px] text-slate-400 leading-snug mt-1">
+                      Crea o edita plantillas de botonera tácticas a medida.
+                    </p>
+                  </div>
+                </button>
               </div>
             </div>
 
-            {savedAnalyses.length === 0 ? (
-              <div className="p-8 text-center rounded-xl bg-slate-950/60 border border-dashed border-slate-800 space-y-2">
-                <FileCode2 className="w-8 h-8 text-slate-600 mx-auto" />
-                <p className="text-xs font-semibold text-slate-300">Aún no hay registros de análisis guardados.</p>
-                <p className="text-[11px] text-slate-500">Haz clic arriba en &quot;Registrar Partido&quot; para iniciar tu primer etiquetado en directo.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {savedAnalyses.map((an) => {
-                  const m = matches.find((match) => match.id === an.match_id);
-                  const rawUrl = an.video_url || m?.video_url;
-                  let ytThumb: string | null = null;
-                  if (rawUrl) {
-                    const matchId = rawUrl.match(/(?:v=|\/embed\/|\/shorts\/|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
-                    if (matchId && matchId[1]) {
-                      ytThumb = `https://img.youtube.com/vi/${matchId[1]}/hqdefault.jpg`;
-                    }
-                  }
+            {/* MAIN AREA (9 Cols on Desktop): Saved Registros & Análisis Realizados Full-Width Grid */}
+            <div className="lg:col-span-9 xl:col-span-9 space-y-4 w-full">
+              <div className="p-5 sm:p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4 shadow-xl w-full">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3.5">
+                  <div>
+                    <h3 className="text-sm font-extrabold text-white flex items-center gap-2">
+                      <FolderOpen className="w-4.5 h-4.5 text-amber-400" />
+                      <span>REGISTROS Y ANÁLISIS REALIZADOS ({savedAnalyses.length})</span>
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Historial completo de análisis guardados en Supabase. Ábrelos en formato Visor (vídeo + campograma), reábrelos en la botonera o elimínalos.
+                    </p>
+                  </div>
+                </div>
 
-                  return (
-                    <div
-                      key={an.id}
-                      className="rounded-xl bg-slate-950 border border-slate-800 hover:border-amber-500/50 space-y-3 transition-all flex flex-col justify-between shadow-xl overflow-hidden group hover:shadow-2xl hover:shadow-amber-500/10"
-                    >
-                      {/* Miniatura de Vídeo de YouTube / Enlace */}
-                      {ytThumb ? (
-                        <div className="relative aspect-video w-full bg-slate-900 overflow-hidden shrink-0">
-                          <img
-                            src={ytThumb}
-                            alt={an.title}
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                            onError={(e) => {
-                              (e.currentTarget.parentElement as HTMLElement).style.display = 'none';
-                            }}
-                          />
-                          <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent" />
-                          <div className="absolute top-2 left-2 right-2 flex items-center justify-between z-10">
-                            {m?.round ? (
-                              <span className="px-2 py-0.5 rounded text-[10px] font-black bg-amber-500 text-slate-950 shadow-md">
-                                {m.round}
-                              </span>
-                            ) : <div />}
-                            <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-bold border backdrop-blur-md ${
-                                an.status === 'completed'
-                                  ? 'bg-emerald-950/90 text-emerald-300 border-emerald-500/40 shadow-sm'
-                                  : 'bg-rose-950/90 text-rose-300 border-rose-500/40 shadow-sm'
-                              }`}
-                            >
-                              {an.status === 'completed' ? 'Finalizado' : 'En progreso'}
-                            </span>
-                          </div>
-                          <div className="absolute bottom-2 left-3 right-3 flex items-center justify-between text-[11px] font-mono text-slate-200 z-10">
-                            <span className="bg-slate-950/80 px-2 py-0.5 rounded text-[10px] font-bold text-amber-300 border border-amber-500/30 backdrop-blur-md">
-                              {new Date(an.updated_at || an.created_at).toLocaleDateString()}
-                            </span>
-                            {an.video_type && (
-                              <span className="bg-slate-950/80 px-2 py-0.5 rounded text-[10px] font-bold text-sky-300 border border-sky-500/30 backdrop-blur-md flex items-center gap-1">
-                                <Video className="w-3 h-3" />
-                                <span>{an.video_type === 'link' ? 'Vídeo Enlace' : 'Vídeo Local'}</span>
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      ) : null}
+                {savedAnalyses.length === 0 ? (
+                  <div className="p-10 text-center rounded-xl bg-slate-950/60 border border-dashed border-slate-800 space-y-2">
+                    <FileCode2 className="w-9 h-9 text-slate-600 mx-auto" />
+                    <p className="text-xs font-semibold text-slate-300">Aún no hay registros de análisis guardados.</p>
+                    <p className="text-[11px] text-slate-500">Haz clic a la izquierda en &quot;Registrar Partido&quot; para iniciar tu primer etiquetado en directo.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4 gap-4 w-full">
+                    {savedAnalyses.map((an) => {
+                      const m = matches.find((match) => match.id === an.match_id);
+                      const rawUrl = an.video_url || m?.video_url;
+                      let ytThumb: string | null = null;
+                      if (rawUrl) {
+                        const matchId = rawUrl.match(/(?:v=|\/embed\/|\/shorts\/|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+                        if (matchId && matchId[1]) {
+                          ytThumb = `https://img.youtube.com/vi/${matchId[1]}/hqdefault.jpg`;
+                        }
+                      }
 
-                      <div className="p-4 space-y-3 flex-1 flex flex-col justify-between">
-                        <div>
-                          {!ytThumb && (
-                            <div className="flex items-center justify-between text-[11px] text-slate-400 pb-2 border-b border-slate-800/60">
-                              <span className="font-mono text-slate-300">
-                                {new Date(an.updated_at || an.created_at).toLocaleDateString()}
-                              </span>
-                              <span
-                                className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
-                                  an.status === 'completed'
-                                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                                    : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
-                                }`}
-                              >
-                                {an.status === 'completed' ? 'Finalizado' : 'En progreso'}
-                              </span>
+                      return (
+                        <div
+                          key={an.id}
+                          className="rounded-xl bg-slate-950 border border-slate-800 hover:border-amber-500/50 space-y-3 transition-all flex flex-col justify-between shadow-xl overflow-hidden group hover:shadow-2xl hover:shadow-amber-500/10"
+                        >
+                          {/* Miniatura de Vídeo de YouTube / Enlace */}
+                          {ytThumb ? (
+                            <div className="relative aspect-video w-full bg-slate-900 overflow-hidden shrink-0">
+                              <img
+                                src={ytThumb}
+                                alt={an.title}
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                                onError={(e) => {
+                                  (e.currentTarget.parentElement as HTMLElement).style.display = 'none';
+                                }}
+                              />
+                              <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent" />
+                              <div className="absolute top-2 left-2 right-2 flex items-center justify-between z-10">
+                                {m?.round ? (
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-black bg-amber-500 text-slate-950 shadow-md">
+                                    {m.round}
+                                  </span>
+                                ) : <div />}
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[10px] font-bold border backdrop-blur-md ${
+                                    an.status === 'completed'
+                                      ? 'bg-emerald-950/90 text-emerald-300 border-emerald-500/40 shadow-sm'
+                                      : 'bg-rose-950/90 text-rose-300 border-rose-500/40 shadow-sm'
+                                  }`}
+                                >
+                                  {an.status === 'completed' ? 'Finalizado' : 'En progreso'}
+                                </span>
+                              </div>
+                              <div className="absolute bottom-2 left-3 right-3 flex items-center justify-between text-[11px] font-mono text-slate-200 z-10">
+                                <span className="bg-slate-950/80 px-2 py-0.5 rounded text-[10px] font-bold text-amber-300 border border-amber-500/30 backdrop-blur-md">
+                                  {new Date(an.updated_at || an.created_at).toLocaleDateString()}
+                                </span>
+                                {an.video_type && (
+                                  <span className="bg-slate-950/80 px-2 py-0.5 rounded text-[10px] font-bold text-sky-300 border border-sky-500/30 backdrop-blur-md flex items-center gap-1">
+                                    <Video className="w-3 h-3" />
+                                    <span>{an.video_type === 'link' ? 'Vídeo Enlace' : 'Vídeo Local'}</span>
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                          )}
+                          ) : null}
 
-                          <h4 className="font-extrabold text-sm text-white line-clamp-1 group-hover:text-amber-300 transition-colors">
-                            {an.title}
-                          </h4>
-                          {m && (
-                            <div className="flex items-center justify-between gap-2 mt-0.5">
-                              <p className="text-xs text-amber-400 font-semibold truncate">
-                                {m.home_team} vs {m.away_team}
+                          <div className="p-4 space-y-3 flex-1 flex flex-col justify-between">
+                            <div>
+                              {!ytThumb && (
+                                <div className="flex items-center justify-between text-[11px] text-slate-400 pb-2 border-b border-slate-800/60">
+                                  <span className="font-mono text-slate-300">
+                                    {new Date(an.updated_at || an.created_at).toLocaleDateString()}
+                                  </span>
+                                  <span
+                                    className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                                      an.status === 'completed'
+                                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                                        : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                                    }`}
+                                  >
+                                    {an.status === 'completed' ? 'Finalizado' : 'En progreso'}
+                                  </span>
+                                </div>
+                              )}
+
+                              <h4 className="font-extrabold text-sm text-white line-clamp-1 group-hover:text-amber-300 transition-colors">
+                                {an.title}
+                              </h4>
+                              {m && (
+                                <div className="flex items-center justify-between gap-2 mt-0.5">
+                                  <p className="text-xs text-amber-400 font-semibold truncate">
+                                    {m.home_team} vs {m.away_team}
+                                  </p>
+                                  {m.round && (
+                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/40 shrink-0">
+                                      {m.round}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                              <p className="text-xs text-slate-400 mt-1 flex items-center gap-1.5 line-clamp-1">
+                                <User className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                <span className="truncate">{an.analyst_name || 'Analista Principal'}</span>
                               </p>
-                              {m.round && (
-                                <span className="px-1.5 py-0.5 rounded text-[10px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/40 shrink-0">
-                                  {m.round}
+                            </div>
+
+                            <div className="flex items-center gap-2 mt-3 text-[11px] text-slate-300 font-mono">
+                              <span className="bg-slate-900 px-2.5 py-1 rounded-lg border border-slate-800 font-bold text-emerald-400">
+                                {an.events?.length || 0} eventos
+                              </span>
+                              {!ytThumb && an.video_type && (
+                                <span className="bg-slate-900 px-2 py-1 rounded border border-slate-800 text-sky-400 flex items-center gap-1">
+                                  <Video className="w-3 h-3" />
+                                  <span>{an.video_type === 'link' ? 'Vídeo URL' : an.video_type === 'local' ? 'Vídeo Local' : 'Sin vídeo'}</span>
                                 </span>
                               )}
                             </div>
-                          )}
-                          <p className="text-xs text-slate-400 mt-1 flex items-center gap-1.5 line-clamp-1">
-                            <User className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                            <span className="truncate">{an.analyst_name || 'Analista Principal'}</span>
-                          </p>
 
-                          <div className="flex items-center gap-2 mt-3 text-[11px] text-slate-300 font-mono">
-                            <span className="bg-slate-900 px-2.5 py-1 rounded-lg border border-slate-800 font-bold text-emerald-400">
-                              {an.events?.length || 0} eventos
-                            </span>
-                            {!ytThumb && an.video_type && (
-                              <span className="bg-slate-900 px-2 py-1 rounded border border-slate-800 text-sky-400 flex items-center gap-1">
-                                <Video className="w-3 h-3" />
-                                <span>{an.video_type === 'link' ? 'Vídeo URL' : an.video_type === 'local' ? 'Vídeo Local' : 'Sin vídeo'}</span>
-                              </span>
-                            )}
+                            <div className="flex items-center gap-2 pt-3 border-t border-slate-800/60">
+                              <button
+                                onClick={() => {
+                                  const fresh = dbStore.getAnalysisById(an.id) || dbStore.getAnalyses(an.match_id)[0] || an;
+                                  setActiveVisorAnalysis(fresh);
+                                }}
+                                className="flex-1 py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-extrabold text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-md"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                                <span>Abrir Visor</span>
+                              </button>
+
+                              <button
+                                onClick={() => handleEditAnalysisInBotonera(an)}
+                                className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-amber-400 border border-slate-800 transition-colors cursor-pointer"
+                                title="Editar en Botonera"
+                              >
+                                <Edit3 className="w-4 h-4" />
+                              </button>
+
+                              <button
+                                onClick={() => setDeleteConfirmAnalysis(an)}
+                                className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-rose-400 border border-slate-800 transition-colors cursor-pointer"
+                                title="Eliminar Registro"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
                           </div>
                         </div>
-
-                        <div className="flex items-center gap-2 pt-3 border-t border-slate-800/60">
-                          <button
-                            onClick={() => {
-                              const fresh = dbStore.getAnalysisById(an.id) || dbStore.getAnalyses(an.match_id)[0] || an;
-                              setActiveVisorAnalysis(fresh);
-                            }}
-                            className="flex-1 py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-extrabold text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-md"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                            <span>Abrir Visor</span>
-                          </button>
-
-                          <button
-                            onClick={() => handleEditAnalysisInBotonera(an)}
-                            className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-amber-400 border border-slate-800 transition-colors cursor-pointer"
-                            title="Editar en Botonera"
-                          >
-                            <Edit3 className="w-4 h-4" />
-                          </button>
-
-                          <button
-                            onClick={() => setDeleteConfirmAnalysis(an)}
-                            className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-rose-400 border border-slate-800 transition-colors cursor-pointer"
-                            title="Eliminar Registro"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+                      );
+                    })}
+                  </div>
+                )}
               </div>
-            )}
+            </div>
           </div>
         </div>
       )}
