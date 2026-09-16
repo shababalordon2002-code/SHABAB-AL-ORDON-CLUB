@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { BotoneraButton, Player, Match, NormalizedEvent } from '@/types';
+import { BotoneraButton, Player, Match, NormalizedEvent, TeamCircleStyle, LineupPlayerItem } from '@/types';
 import { BotoneraPitchCanvas } from './BotoneraPitchCanvas';
 import { BotoneraGoalCanvas } from './BotoneraGoalCanvas';
 import { PITCH_MODE_OPTIONS } from './BotoneraPanelEditor';
@@ -28,6 +28,9 @@ interface ExtendedPlayer extends Player {
   subMinute?: number;
   subReplaces?: string;
   replacedBy?: string;
+  originalStarterId?: string;
+  x?: number;
+  y?: number;
 }
 
 interface BotoneraEventModalProps {
@@ -66,15 +69,36 @@ interface BotoneraEventModalProps {
  * Renders the 11 active on-field players according to the tactical system formation
  * with dorsal circles. Substituted-in players replace outgoing players dynamically.
  */
-const MiniTacticalPlayerPitch: React.FC<{
+interface MiniTacticalPlayerPitchProps {
   teamName: string;
   formation: string;
   active11: ExtendedPlayer[];
   teamColor: string;
+  circleStyle?: TeamCircleStyle;
+  starters?: LineupPlayerItem[];
+  customPositions?: Record<string, { x: number; y: number }>;
   selectedPlayerId: string | null;
   onSelectPlayer: (p: Player) => void;
-}> = ({ teamName, formation, active11, teamColor, selectedPlayerId, onSelectPlayer }) => {
-  const positions = getFormationPositions(formation);
+}
+
+/**
+ * Compact Tactical Pitch Component ("Campograma pequeño")
+ * Renders the 11 active on-field players according to the tactical system formation
+ * with dorsal circles. Substituted-in players replace outgoing players dynamically,
+ * respecting custom pitch coordinates and team circle styles configured in Lineups.
+ */
+const MiniTacticalPlayerPitch: React.FC<MiniTacticalPlayerPitchProps> = ({
+  teamName,
+  formation,
+  active11,
+  teamColor,
+  circleStyle,
+  starters = [],
+  customPositions = {},
+  selectedPlayerId,
+  onSelectPlayer,
+}) => {
+  const presetPositions = getFormationPositions(formation);
 
   return (
     <div className="relative w-[215px] sm:w-[230px] mx-auto h-[180px] rounded-xl bg-gradient-to-b from-[#091b12] via-[#0d281a] to-[#07160e] border border-emerald-600/40 shadow-inner overflow-hidden select-none shrink-0">
@@ -105,29 +129,46 @@ const MiniTacticalPlayerPitch: React.FC<{
         {formation}
       </div>
 
-      {/* 11 Players Placed According to Formation System */}
-      {positions.map((pos, idx) => {
-        const player = active11[idx] || {
-          id: `slot_${idx}`,
-          name: pos.role,
-          number: idx + 1,
-          position: pos.role,
-          team_name: teamName,
-          team_id: 'team',
-          isStarter: true,
-        };
+      {/* 11 Players Placed According to Exact Lineup Coordinates & Custom Positions */}
+      {active11.map((player, idx) => {
+        const presetPos = presetPositions[idx] || { x: 50, y: 50, role: 'JUG' };
+        const originalStarterId = player.originalStarterId || starters[idx]?.id || player.id;
+
+        const activePos =
+          (customPositions && (customPositions[originalStarterId] || customPositions[player.id])) ||
+          (starters[idx] && starters[idx].x != null && starters[idx].y != null ? { x: starters[idx].x!, y: starters[idx].y! } : null) ||
+          (player.x != null && player.y != null ? { x: player.x!, y: player.y! } : null) ||
+          presetPos;
 
         const isSelected = selectedPlayerId === player.id;
-        const isGK = idx === 0 || pos.role === 'POR';
+        const isGK = idx === 0 || player.position === 'POR' || presetPos.role === 'POR';
         const isSub = Boolean(player.isSubstitutedIn);
+
+        const primary = circleStyle?.primaryColor || teamColor;
+        const secondary = circleStyle?.secondaryColor || '#ffffff';
+        const pattern = circleStyle?.pattern || 'solid';
+
+        let bgStyle: React.CSSProperties = {
+          backgroundColor: isSelected ? '#f59e0b' : isGK ? '#eab308' : primary,
+          color: isGK && !isSelected ? '#0f172a' : '#ffffff',
+          borderColor: isSelected ? '#fbbf24' : '#ffffff90',
+        };
+
+        if (!isSelected && !isGK) {
+          if (pattern === 'striped') {
+            bgStyle.background = `repeating-linear-gradient(45deg, ${primary}, ${primary} 4px, ${secondary} 4px, ${secondary} 8px)`;
+          } else if (pattern === 'split') {
+            bgStyle.background = `linear-gradient(90deg, ${primary} 50%, ${secondary} 50%)`;
+          }
+        }
 
         return (
           <button
             key={player.id || idx}
             type="button"
             onClick={() => onSelectPlayer(player)}
-            title={`#${player.number} ${player.name} (${pos.role})${isSub ? ` - 🔄 Entró en min ${player.subMinute}'` : ''}`}
-            style={{ left: `${pos.x}%`, top: `${pos.y}%` }}
+            title={`#${player.number} ${player.name} (${player.position || presetPos.role})${isSub ? ` - 🔄 Entró en min ${player.subMinute}'` : ''}`}
+            style={{ left: `${activePos.x}%`, top: `${activePos.y}%` }}
             className={`absolute -translate-x-1/2 -translate-y-1/2 flex items-center justify-center transition-all duration-200 cursor-pointer group z-10 ${
               isSelected ? 'scale-125 z-30' : 'hover:scale-115 hover:z-20'
             }`}
@@ -139,15 +180,7 @@ const MiniTacticalPlayerPitch: React.FC<{
                   ? 'ring-3 ring-amber-400 ring-offset-1 ring-offset-slate-950 text-white font-black'
                   : ''
               }`}
-              style={{
-                backgroundColor: isSelected
-                  ? '#f59e0b'
-                  : isGK
-                  ? '#eab308'
-                  : teamColor,
-                color: isGK && !isSelected ? '#0f172a' : '#ffffff',
-                borderColor: isSelected ? '#fbbf24' : '#ffffff90',
-              }}
+              style={bgStyle}
             >
               {player.number ?? idx + 1}
 
@@ -319,6 +352,9 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
             team_id: teamId,
             team_name: teamName,
             isStarter: true,
+            x: s.x,
+            y: s.y,
+            originalStarterId: s.id || `${prefix}_st_${s.number || idx + 1}`,
           });
         });
       }
@@ -332,6 +368,7 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
           team_id: teamId,
           team_name: teamName,
           isStarter: true,
+          originalStarterId: `${prefix}_st_${idx + 1}`,
         });
       }
       return list;
@@ -449,6 +486,9 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
             isSubstitutedIn: true,
             subMinute: sub.minute,
             subReplaces: oldPlayer.name,
+            originalStarterId: oldPlayer.originalStarterId || oldPlayer.id,
+            x: oldPlayer.x,
+            y: oldPlayer.y,
           };
         }
       }
@@ -500,6 +540,9 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
             isSubstitutedIn: true,
             subMinute: sub.minute,
             subReplaces: oldPlayer.name,
+            originalStarterId: oldPlayer.originalStarterId || oldPlayer.id,
+            x: oldPlayer.x,
+            y: oldPlayer.y,
           };
         }
       }
@@ -520,6 +563,8 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
       awaySubbedOut,
       homeUnusedBench,
       awayUnusedBench,
+      homeLineup,
+      awayLineup,
       homeAll: [...homeActive11, ...homeUnusedBench, ...homeSubbedOut],
       awayAll: [...awayActive11, ...awayUnusedBench, ...awaySubbedOut],
     };
@@ -652,6 +697,7 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
   const currentSubbedOut = isViewHome ? squadData.homeSubbedOut : squadData.awaySubbedOut;
   const currentFormation = isViewHome ? homeFormation : awayFormation;
   const currentTeamColor = isViewHome ? homeColor : awayColor;
+  const currentLineup = isViewHome ? squadData.homeLineup : squadData.awayLineup;
 
   const selectedPlayer: ExtendedPlayer | null = useMemo(() => {
     if (!modalPlayerId) return null;
@@ -1052,6 +1098,9 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
                     formation={currentFormation}
                     active11={currentActive11}
                     teamColor={currentTeamColor}
+                    circleStyle={currentLineup?.circleStyle}
+                    starters={currentLineup?.starters}
+                    customPositions={currentLineup?.customPositions}
                     selectedPlayerId={modalPlayerId}
                     onSelectPlayer={handleSelectPlayer}
                   />
