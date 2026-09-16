@@ -239,7 +239,7 @@ const SEED_MATCHES: Match[] = [
     home_team_logo: 'https://static.flashscore.com/res/image/data/YZJS9hAr-WdX72eig.png',
     away_team: 'Shabab Al Ordon',
     away_team_logo: '/logo.png',
-    home_score: 0,
+    home_score: 1,
     away_score: 1,
     status: 'Finalizado',
     event_count: 0,
@@ -453,8 +453,8 @@ export const dbStore = {
         ...existing,
         ...match,
         id: existing.id, // Keep existing ID so links and event relations don't break
-        home_score: match.status === 'Finalizado' || match.home_score > 0 ? match.home_score : existing.home_score,
-        away_score: match.status === 'Finalizado' || match.away_score > 0 ? match.away_score : existing.away_score,
+        home_score: match.home_score !== undefined ? match.home_score : existing.home_score,
+        away_score: match.away_score !== undefined ? match.away_score : existing.away_score,
         status: match.status === 'Finalizado' ? 'Finalizado' : existing.status,
         import_status: existing.import_status === 'XML Importado' ? 'XML Importado' : match.import_status,
         event_count: existing.event_count > 0 ? existing.event_count : match.event_count,
@@ -521,22 +521,20 @@ export const dbStore = {
   // Helper for deduplicating events by event_id (preserving unique events tagged by any analyst)
   deduplicateEventsByTime(events: NormalizedEvent[]): NormalizedEvent[] {
     if (!events || events.length === 0) return [];
-    const trash = this.getTrashEvents();
-    const trashSet = new Set(trash.map((t) => t.event_id));
 
-    // 1. Filter out trash & invalid events
-    const valid = events.filter((e) => e && e.event_id && !trashSet.has(e.event_id));
+    // 1. Filter out invalid events
+    const valid = events.filter((e) => e && e.event_id);
 
-    // 2. Map by event_id first
+    // 2. Map by event_id keeping the latest version
     const byIdMap = new Map<string, NormalizedEvent>();
     valid.forEach((e) => {
       if (!byIdMap.has(e.event_id)) {
         byIdMap.set(e.event_id, e);
       } else {
         const existing = byIdMap.get(e.event_id)!;
-        const existingTime = new Date(existing.updated_at || 0).getTime();
-        const currentTime = new Date(e.updated_at || 0).getTime();
-        if (currentTime > existingTime) {
+        const existingTime = new Date(existing.updated_at || existing.created_at || 0).getTime();
+        const currentTime = new Date(e.updated_at || e.created_at || 0).getTime();
+        if (currentTime >= existingTime) {
           byIdMap.set(e.event_id, e);
         }
       }
@@ -824,12 +822,12 @@ export const dbStore = {
 
   _lastActiveSessionSupabaseSync: 0,
 
-  saveActiveBotoneraSession(session: ActiveBotoneraSession): void {
+  saveActiveBotoneraSession(session: ActiveBotoneraSession, forceImmediate = false): void {
     setToStorage(STORAGE_KEYS.BOTONERA_ACTIVE_SESSION, session);
 
-    // Sync active session asynchronously to Supabase (throttled to every 5s or when paused)
+    // Sync active session asynchronously to Supabase (throttled to every 5s or when paused, or immediate on event tagging)
     const now = Date.now();
-    if (now - (this._lastActiveSessionSupabaseSync || 0) > 5000 || !session.isTimerRunning) {
+    if (forceImmediate || now - (this._lastActiveSessionSupabaseSync || 0) > 5000 || !session.isTimerRunning) {
       this._lastActiveSessionSupabaseSync = now;
       saveAnalysisSessionToSupabase(session).catch(err => {
         console.warn("Could not sync active session to Supabase:", err);
@@ -1077,12 +1075,47 @@ export const dbStore = {
 
   async syncAnalysesFromSupabase(matchId?: string): Promise<MatchAnalysis[]> {
     const remote = await getAnalysesFromSupabase(matchId);
-    const allLocal = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
+    
+    let consolidated: MatchAnalysis[] = [];
+    if (remote && remote.length > 0) {
+      // Remote from Supabase is the single source of truth:
+      // Any remote match completely supersedes local storage for that match.
+      const allLocal = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
+      const remoteMatchIds = new Set(remote.map((r) => r.match_id));
+      const localOnly = allLocal.filter((l) => l && l.match_id && !remoteMatchIds.has(l.match_id));
 
-    const mergedRaw = [...remote, ...allLocal];
-    const consolidated = this.consolidateAnalyses(mergedRaw);
+      const mergedRaw = [...remote, ...localOnly];
+      consolidated = this.consolidateAnalyses(mergedRaw);
 
-    setToStorage(STORAGE_KEYS.MATCH_ANALYSES, consolidated);
+      setToStorage(STORAGE_KEYS.MATCH_ANALYSES, consolidated);
+
+      // Save all normalized events from remote analyses into local event store
+      consolidated.forEach((an) => {
+        if (an.events && an.events.length > 0) {
+          this.saveNormalizedEvents(an.events, true, an.match_id);
+        }
+      });
+
+      // Update event counts on matches in local store
+      const matches = this.getMatches();
+      let matchesUpdated = false;
+      matches.forEach((m) => {
+        const matchingAn = consolidated.find((c) => c.match_id === m.id);
+        if (matchingAn) {
+          const count = matchingAn.events?.length || 0;
+          if (m.event_count !== count) {
+            m.event_count = count;
+            matchesUpdated = true;
+          }
+        }
+      });
+      if (matchesUpdated) {
+        setToStorage(STORAGE_KEYS.MATCHES, matches);
+      }
+    } else {
+      const allLocal = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
+      consolidated = this.consolidateAnalyses(allLocal);
+    }
 
     if (remote && remote.length > 1 && matchId) {
       const matchRemote = remote.filter((r) => r.match_id === matchId);
@@ -1129,15 +1162,12 @@ export const dbStore = {
 
     if (idx >= 0 && existing) {
       const combinedAnalystNames = this.sanitizeAnalystNames([existing.analyst_name, normalizedAnalysis.analyst_name]);
-      // CRITICAL DATA PROTECTION: Never overwrite existing events with an empty array.
-      // If incoming events has items, use them. If incoming is empty [] but existing has events (>0), preserve existing!
+      // If incoming events is provided (including empty array when user cleared events), use them.
       let targetEvents: NormalizedEvent[];
-      if (normalizedAnalysis.events && normalizedAnalysis.events.length > 0) {
+      if (normalizedAnalysis.events !== undefined) {
         targetEvents = normalizedAnalysis.events;
-      } else if (existing.events && existing.events.length > 0) {
-        targetEvents = existing.events;
       } else {
-        targetEvents = normalizedAnalysis.events || [];
+        targetEvents = existing.events || [];
       }
 
       updated = {

@@ -414,75 +414,88 @@ export function withPitchVectors(events: NormalizedEvent[]): NormalizedEvent[] {
 export function isGoalEvent(evt: NormalizedEvent): boolean {
   if (!evt) return false;
 
-  const outcomeStr = (evt.outcome || '').toLowerCase().trim();
-  const typeStr = (evt.event_type || '').toLowerCase().trim();
-  const catStr = (evt.category || '').toLowerCase().trim();
-  const subcatStr = (evt.subcategory || '').toLowerCase().trim();
-  const metaDesc = (evt.metadata?.descriptor || '').toLowerCase().trim();
-  const metaOutcome = (evt.metadata?.outcome || '').toLowerCase().trim();
+  const outcomeStr = String(evt.outcome || '').toLowerCase().trim();
+  const typeStr = String(evt.event_type || '').toLowerCase().trim();
+  const catStr = String(evt.category || '').toLowerCase().trim();
+  const subcatStr = String(evt.subcategory || '').toLowerCase().trim();
+  const metaDesc = String(evt.metadata?.descriptor || '').toLowerCase().trim();
+  const metaOutcome = String(evt.metadata?.outcome || '').toLowerCase().trim();
   const metaDescriptors: string[] = [
     ...(evt.metadata?.descriptors || []),
     ...(evt.metadata?.tags || []),
     ...(evt.metadata?.options || []),
   ];
 
-  // 1. Direct outcome = Gol / Goal
-  if (
-    outcomeStr === 'gol' ||
-    outcomeStr === 'goal' ||
-    outcomeStr.includes('gol marcado') ||
-    outcomeStr.startsWith('gol') ||
-    metaOutcome === 'gol' ||
-    metaOutcome.includes('gol marcado')
-  ) {
+  // Helper para verificar si un término representa un Gol positivo
+  const isGoalTerm = (raw: string): boolean => {
+    if (!raw) return false;
+    const s = String(raw).toLowerCase().trim();
+
+    // Exclusiones explícitas (no goles)
+    if (
+      s.includes('no gol') ||
+      s.includes('sin gol') ||
+      s.includes('fallido') ||
+      s.includes('anulado') ||
+      s.includes('parada') ||
+      s.includes('fuera') ||
+      s.includes('poste') ||
+      s.includes('larguero')
+    ) {
+      return false;
+    }
+
+    // Coincidencia exacta o frases de gol
+    if (
+      s === 'gol' ||
+      s === 'goal' ||
+      s.startsWith('gol ') ||
+      s.endsWith(' gol') ||
+      s.includes('gol marcado') ||
+      s.includes('golazo')
+    ) {
+      return true;
+    }
+
+    // Formato tipo "GRUPO : VALOR" o "GRUPO:VALOR" (ej: "RESULTADO: Gol", "RESULTADO : GOL", "GOLPEO: Pie / RESULTADO: Gol")
+    if (s.includes(':')) {
+      const parts = s.split(':');
+      const val = parts[parts.length - 1].trim();
+      if (
+        val === 'gol' ||
+        val === 'goal' ||
+        val.startsWith('gol ') ||
+        val.endsWith(' gol') ||
+        val.includes('gol marcado')
+      ) {
+        return true;
+      }
+    }
+
+    return false;
+  };
+
+  // 1. Direct outcome o metadata outcome
+  if (isGoalTerm(outcomeStr) || isGoalTerm(metaOutcome)) {
     return true;
   }
 
-  // 2. Direct event type or category = Gol
-  if (
-    (typeStr === 'gol' || typeStr === 'goal' || typeStr.startsWith('gol ') || typeStr.endsWith(' gol')) &&
-    !typeStr.includes('no gol') &&
-    !typeStr.includes('fallido') &&
-    !typeStr.includes('anulado') &&
-    !typeStr.includes('parada')
-  ) {
+  // 2. Direct event type, category o descriptor principal
+  if (isGoalTerm(typeStr) || isGoalTerm(catStr) || isGoalTerm(metaDesc)) {
     return true;
   }
 
-  if (
-    (catStr === 'gol' || catStr === 'goal') &&
-    !catStr.includes('no gol') &&
-    !catStr.includes('fallido')
-  ) {
+  // 3. Subcategory
+  if (isGoalTerm(subcatStr)) {
     return true;
   }
 
-  // 3. Descriptors indicate Gol (e.g. Remates/Tiros with descriptor = Gol or GOL or Resultado: Gol)
-  if (metaDesc === 'gol' || metaDesc.endsWith(': gol') || metaDesc.includes('resultado: gol')) {
+  // 4. Cualquier descriptor en la lista de descriptores
+  if (metaDescriptors.some((d) => isGoalTerm(d))) {
     return true;
   }
 
-  const hasGolDesc =
-    metaDescriptors.some((d: string) => {
-      const clean = String(d).toLowerCase().trim();
-      return (
-        clean === 'gol' ||
-        clean === 'goal' ||
-        clean.endsWith(': gol') ||
-        clean.endsWith(':gol') ||
-        clean.includes('resultado: gol') ||
-        clean.includes('resultado:gol') ||
-        clean.includes('finalización: gol') ||
-        clean.includes('finalizacion: gol') ||
-        clean.includes('consecuencia: gol') ||
-        clean.includes('tipo: gol')
-      );
-    }) ||
-    subcatStr === 'gol' ||
-    subcatStr.includes(': gol') ||
-    subcatStr.includes('resultado: gol');
-
-  return hasGolDesc;
+  return false;
 }
 
 export function isEventOfAwayTeam(
@@ -500,7 +513,15 @@ export function isEventOfAwayTeam(
   const typeStr = (evt.event_type || '').toLowerCase().trim();
   const teamId = (evt.team_id || '').toLowerCase().trim();
 
-  // 1. Explicit descriptors/tags/categories indicating Rival / Away / Visitante / En Contra
+  // 1. Explicit team_id
+  if (teamId === 'away_team' || teamId === 'team_away' || teamId === 'rival' || teamId === 'away' || teamId === 'visitante') {
+    return true;
+  }
+  if (teamId === 'home_team' || teamId === 'team_home' || teamId === 'home' || teamId === 'local') {
+    return false;
+  }
+
+  // 2. Explicit descriptors/tags/categories indicating Rival / Away / Visitante / En Contra
   const isExplicitAway =
     descriptors.some((d: string) => d.includes('rival') || d.includes('visitante') || d.includes('en contra') || d === 'away') ||
     category.includes('rival') ||
@@ -509,11 +530,6 @@ export function isEventOfAwayTeam(
     typeStr.includes('visitante');
 
   if (isExplicitAway) return true;
-
-  // 2. Explicit team_id
-  if (teamId === 'away_team' || teamId === 'team_away' || teamId === 'rival' || teamId === 'away') {
-    return true;
-  }
 
   // 3. Team name matching
   if (cleanEvt) {
@@ -526,10 +542,6 @@ export function isEventOfAwayTeam(
     if (cleanHome && (cleanEvt === cleanHome || cleanHome.includes(cleanEvt) || cleanEvt.includes(cleanHome))) {
       return false;
     }
-  }
-
-  if (teamId === 'home_team' || teamId === 'team_home' || teamId === 'home') {
-    return false;
   }
 
   return false;
@@ -548,45 +560,51 @@ export function isEventOfHomeTeam(
 }
 
 /**
- * Calcula dinámicamente el marcador (homeScore, awayScore) a partir de los eventos etiquetados.
- * Si se etiquetan Remates con resultado GOL, suma los goles calculados.
- * Si en el análisis aún no hay eventos de gol registrados, conserva el marcador oficial del partido.
+ * Prioridad de Marcador:
+ * 1. El resultado se saca prioritariamente del scraping (Flashscore / marcador oficial).
+ * 2. Si el scraping NO tiene resultado (null o undefined), se saca de lo registrado en la botonera.
  */
 export function calculateMatchScoresFromEvents(
   events: NormalizedEvent[],
   homeTeamName?: string,
   awayTeamName?: string,
-  defaultHomeScore = 0,
-  defaultAwayScore = 0
+  defaultHomeScore?: number | null,
+  defaultAwayScore?: number | null
 ): { homeScore: number; awayScore: number; totalGoals: number; hasTaggedGoals: boolean } {
-  // If NO events exist at all for this match, fallback to official scraped score
-  if (!events || events.length === 0) {
-    return {
-      homeScore: defaultHomeScore,
-      awayScore: defaultAwayScore,
-      totalGoals: defaultHomeScore + defaultAwayScore,
-      hasTaggedGoals: false,
-    };
-  }
-
-  // When events ARE registered in an analysis, calculate score strictly from tagged goal events
-  const goalEvents = events.filter(isGoalEvent);
-
-  let homeGoals = 0;
-  let awayGoals = 0;
+  // 1. Goles registrados en la botonera
+  const goalEvents = (events || []).filter(isGoalEvent);
+  let botoneraHome = 0;
+  let botoneraAway = 0;
 
   goalEvents.forEach((g) => {
     if (isEventOfAwayTeam(g, awayTeamName, homeTeamName)) {
-      awayGoals += 1;
+      botoneraAway += 1;
     } else {
-      homeGoals += 1;
+      botoneraHome += 1;
     }
   });
 
+  // 2. Si el scraping tiene resultado válido, usar prioritariamente el scraping
+  const hasScrapedScore =
+    defaultHomeScore !== null &&
+    defaultHomeScore !== undefined &&
+    defaultAwayScore !== null &&
+    defaultAwayScore !== undefined;
+
+  if (hasScrapedScore) {
+    return {
+      homeScore: Number(defaultHomeScore),
+      awayScore: Number(defaultAwayScore),
+      totalGoals: Number(defaultHomeScore) + Number(defaultAwayScore),
+      hasTaggedGoals: goalEvents.length > 0,
+    };
+  }
+
+  // 3. Si el scraping no tiene resultado, usar los eventos de la botonera
   return {
-    homeScore: homeGoals,
-    awayScore: awayGoals,
-    totalGoals: homeGoals + awayGoals,
+    homeScore: botoneraHome,
+    awayScore: botoneraAway,
+    totalGoals: botoneraHome + botoneraAway,
     hasTaggedGoals: goalEvents.length > 0,
   };
 }

@@ -573,8 +573,7 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
 
   const isSinglePitch = button.pitchDisplayCount === 1 || (
     button.pitchDisplayCount !== 2 &&
-    button.pitchRequired === 'goal_mouth' &&
-    !button.secondaryPitchRequired
+    (button.pitchRequired === 'goal_mouth' || !button.secondaryPitchRequired)
   );
 
   const isDualPitch = button.pitchDisplayCount === 2 || (
@@ -585,9 +584,9 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
     )
   );
 
-  const pitch1Mode = button.pitchRequired || (isSinglePitch && button.pitchRequired === 'goal_mouth' ? 'goal_mouth' : 'point_half');
+  const pitch1Mode = button.pitchRequired || 'point_half';
   const pitch2Mode = isDualPitch
-    ? (button.secondaryPitchRequired || (button.goalRequired || button.pitchRequired === 'pitch_and_goal' ? 'goal_mouth' : 'goal_mouth'))
+    ? (button.secondaryPitchRequired || (button.goalRequired || button.pitchRequired === 'pitch_and_goal' ? 'goal_mouth' : undefined))
     : undefined;
 
   const pitch1Opt = PITCH_MODE_OPTIONS.find(o => o.key === pitch1Mode);
@@ -613,7 +612,7 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
         (button.secondaryPitchRequired && button.secondaryPitchRequired !== 'none' && button.secondaryPitchRequired !== 'goal_mouth')
       );
 
-  const hasMultiplePitches = isDualPitch || (!isSinglePitch && hasFieldPitch && hasGoal);
+  const hasMultiplePitches = isDualPitch && Boolean(pitch2Mode);
   const hasPitch = (pitch1Mode && pitch1Mode !== 'none') || Boolean(pitch2Mode);
 
   const isVectorPitch = Boolean(
@@ -1175,7 +1174,48 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
             {/* Top-Right: Campograma (Campo / Portería / 1 o 2 Campogramas) */}
             {hasPitch && (
               <div className={`p-2 flex flex-col items-center justify-center min-h-[220px] ${hasMultiplePitches && dualViewMode === 'simultaneous' ? 'w-full md:w-3/5' : 'w-full md:w-1/2'}`}>
-                {/* Selector de modo de vista si hay 2 campogramas (Simultáneos o Pestañas) */}
+                {/* Header si hay 1 solo campograma */}
+                {!hasMultiplePitches && (
+                  <div className="w-full flex items-center justify-between px-1 mb-2 pb-1.5 border-b border-slate-800">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                        <span>{pitch1Opt ? `${pitch1Opt.icon} ${pitch1Opt.title}` : (pitch1Mode === 'goal_mouth' ? '... Portería' : '🏟️ Campograma')}</span>
+                      </span>
+                      <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border tracking-wide ${
+                        isPitch1Mandatory
+                          ? 'bg-red-500/20 text-red-300 border-red-500/40'
+                          : 'bg-slate-800/80 text-slate-400 border-slate-700'
+                      }`}>
+                        {isPitch1Mandatory ? '* OBLIGATORIO' : 'OPCIONAL'}
+                      </span>
+                    </div>
+                    <div className="text-[10px] font-mono">
+                      {pitch1Mode === 'goal_mouth' ? (
+                        goalX !== null ? (
+                          <span className="text-amber-300 font-bold">({goalX}%, {goalY}%) ✓</span>
+                        ) : (
+                          <span className="text-slate-500">Sin marcar</span>
+                        )
+                      ) : isVectorPitch ? (
+                        startX !== null && endX !== null ? (
+                          <span className="text-emerald-300 font-bold">({startX}%,{startY}%) → ({endX}%,{endY}%) ✓</span>
+                        ) : startX !== null ? (
+                          <span className="text-amber-300 font-bold animate-pulse">Clic destino...</span>
+                        ) : (
+                          <span className="text-slate-500">Sin marcar</span>
+                        )
+                      ) : (startX !== null || selectedZone) ? (
+                        <span className="text-emerald-300 font-bold">
+                          {startX !== null ? `(${startX}%, ${startY}%) ✓` : `${selectedZone} ✓`}
+                        </span>
+                      ) : (
+                        <span className="text-slate-500">Sin marcar</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Header y Selector de modo de vista si hay 2 campogramas */}
                 {hasMultiplePitches && (
                   <div className="w-full flex items-center justify-between gap-2 mb-2 pb-1.5 border-b border-slate-800">
                     <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-800">
@@ -1219,12 +1259,15 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
                               : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
                           }`}
                         >
-                          <span>{pitch1Opt ? `${pitch1Opt.icon} ${pitch1Opt.title}` : '🏟️ 1. Campo'}</span>
-                          {isVectorPitch ? (
+                          <span>{pitch1Opt ? `${pitch1Opt.icon} 1. ${pitch1Opt.title}` : '🏟️ 1. Campo'}</span>
+                          {isPitch1Mandatory && <span className="text-[9px] text-red-400 font-bold">*</span>}
+                          {pitch1Mode === 'goal_mouth' ? (
+                            goalX !== null && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                          ) : isVectorPitch ? (
                             startX !== null && endX !== null ? (
                               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
                             ) : startX !== null ? (
-                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" title="Origen fijado, falta destino"></span>
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
                             ) : null
                           ) : (startX !== null || selectedZone) ? (
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
@@ -1242,7 +1285,8 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
                               : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
                           }`}
                         >
-                          <span>{pitch2Opt ? `${pitch2Opt.icon} ${pitch2Opt.title}` : '🎯 2. Campograma'}</span>
+                          <span>{pitch2Opt ? `${pitch2Opt.icon} 2. ${pitch2Opt.title}` : '🎯 2. Campograma'}</span>
+                          {isPitch2Mandatory && <span className="text-[9px] text-red-400 font-bold">*</span>}
                           {pitch2Mode === 'goal_mouth' ? (
                             goalX !== null && <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
                           ) : (
@@ -1388,8 +1432,8 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
                   /* MODO INDIVIDUAL O POR PESTAÑAS */
                   <div className="w-full flex flex-col items-center justify-center">
                     {/* Vista de Campograma 1 */}
-                    {(!hasMultiplePitches || activePitchTab === 'field') && hasFieldPitch && (
-                      <div className="w-full max-w-[240px] sm:max-w-[260px] mx-auto flex flex-col items-center justify-center">
+                    {(!hasMultiplePitches || activePitchTab === 'field') && (
+                      <div className={`w-full ${pitch1Mode === 'goal_mouth' ? 'max-w-[280px] sm:max-w-[340px]' : 'max-w-[240px] sm:max-w-[260px]'} mx-auto flex flex-col items-center justify-center`}>
                         {pitch1Mode === 'goal_mouth' ? (
                           <BotoneraGoalCanvas
                             goalX={goalX}
@@ -1474,8 +1518,8 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
                     )}
 
                     {/* Vista de Campograma 2 */}
-                    {(!hasMultiplePitches || activePitchTab === 'goal') && Boolean(pitch2Mode) && (
-                      <div className="w-full max-w-[280px] sm:max-w-[320px] mx-auto flex flex-col items-center justify-center">
+                    {hasMultiplePitches && activePitchTab === 'goal' && Boolean(pitch2Mode) && (
+                      <div className={`w-full ${pitch2Mode === 'goal_mouth' ? 'max-w-[280px] sm:max-w-[340px]' : 'max-w-[240px] sm:max-w-[260px]'} mx-auto flex flex-col items-center justify-center`}>
                         {pitch2Mode === 'goal_mouth' ? (
                           <BotoneraGoalCanvas
                             goalX={goalX}
@@ -1507,27 +1551,25 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
                             hideFooter={true}
                           />
                         )}
-                        {hasMultiplePitches && (
-                          <div className="text-[10px] mt-1.5 flex items-center justify-center text-center font-medium">
-                            {pitch2Mode === 'goal_mouth' ? (
-                              goalX !== null ? (
-                                <span className="text-amber-400 font-bold flex items-center gap-1">
-                                  <span>Paso 2: Disparo registrado en portería ({goalX}%, {goalY}%) ✓</span>
-                                </span>
-                              ) : (
-                                <span className="text-slate-400">Paso 2: Haz clic en la portería para registrar el disparo</span>
-                              )
+                        <div className="text-[10px] mt-1.5 flex items-center justify-center text-center font-medium">
+                          {pitch2Mode === 'goal_mouth' ? (
+                            goalX !== null ? (
+                              <span className="text-amber-400 font-bold flex items-center gap-1">
+                                <span>Paso 2: Disparo registrado en portería ({goalX}%, {goalY}%) ✓</span>
+                              </span>
                             ) : (
-                              endX !== null || selectedZone ? (
-                                <span className="text-amber-400 font-bold flex items-center gap-1">
-                                  <span>Paso 2: Ubicación registrada en 2º campograma ✓</span>
-                                </span>
-                              ) : (
-                                <span className="text-slate-400">Paso 2: Haz clic para fijar la posición en el 2º campograma</span>
-                              )
-                            )}
-                          </div>
-                        )}
+                              <span className="text-slate-400">Paso 2: Haz clic en la portería para registrar el disparo</span>
+                            )
+                          ) : (
+                            endX !== null || selectedZone ? (
+                              <span className="text-amber-400 font-bold flex items-center gap-1">
+                                <span>Paso 2: Ubicación registrada en 2º campograma ✓</span>
+                              </span>
+                            ) : (
+                              <span className="text-slate-400">Paso 2: Haz clic para fijar la posición en el 2º campograma</span>
+                            )
+                          )}
+                        </div>
                       </div>
                     )}
                   </div>

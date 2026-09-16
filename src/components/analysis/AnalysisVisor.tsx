@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import Link from 'next/link';
 import {
   Video,
@@ -21,6 +21,7 @@ import { BotoneraEventLog } from '@/components/botonera/BotoneraEventLog';
 import { BotoneraLiveStats } from '@/components/botonera/BotoneraLiveStats';
 import { dbStore } from '@/lib/store/db-store';
 import { calculateEventVideoTime, openClipPopupWindow } from '@/lib/analytics/video-utils';
+import { getAnalysisEventsFromSupabase, subscribeToAnalysisEvents } from '@/lib/services/botonera-service';
 
 interface AnalysisVisorProps {
   match: Match;
@@ -34,7 +35,52 @@ export const AnalysisVisor: React.FC<AnalysisVisorProps> = ({
   analysis,
   onClose,
 }) => {
-  const events = analysis.events || [];
+  const [liveEvents, setLiveEvents] = useState<NormalizedEvent[]>(() => analysis.events || []);
+
+  useEffect(() => {
+    if (analysis.events && analysis.events.length > 0) {
+      setLiveEvents(analysis.events);
+    }
+  }, [analysis.events]);
+
+  // Direct Supabase loading for 100% cloud accuracy (no local-only scoping)
+  useEffect(() => {
+    if (!analysis?.match_id) return;
+    let cancelled = false;
+
+    getAnalysisEventsFromSupabase(analysis.match_id).then((remoteEvents) => {
+      if (cancelled) return;
+      if (remoteEvents && remoteEvents.length > 0) {
+        setLiveEvents((prev) => {
+          const map = new Map<string, NormalizedEvent>();
+          remoteEvents.forEach((e) => map.set(e.event_id, e));
+          prev.forEach((e) => {
+            if (!map.has(e.event_id)) map.set(e.event_id, e);
+          });
+          return Array.from(map.values()).sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+        });
+      }
+    });
+
+    const unsubscribe = subscribeToAnalysisEvents(analysis.match_id, {
+      onInsert: (evt) => {
+        setLiveEvents((prev) => (prev.some((e) => e.event_id === evt.event_id) ? prev : [...prev, evt]));
+      },
+      onUpdate: (evt) => {
+        setLiveEvents((prev) => prev.map((e) => (e.event_id === evt.event_id ? evt : e)));
+      },
+      onDelete: (eventId) => {
+        setLiveEvents((prev) => prev.filter((e) => e.event_id !== eventId));
+      },
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [analysis?.match_id]);
+
+  const events = liveEvents;
   const [activeTab, setActiveTab] = useState<'editor_view' | 'pitch'>('editor_view');
   const [selectedEvent, setSelectedEvent] = useState<NormalizedEvent | null>(null);
   const [activeClipEvent, setActiveClipEvent] = useState<NormalizedEvent | null>(null);

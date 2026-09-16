@@ -233,6 +233,13 @@ async function scrapeTransfermarktViaFetch(): Promise<Player[]> {
 }
 
 export async function scrapeTransfermarktPlayers(): Promise<Player[]> {
+  const isVercel = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
+
+  if (isVercel) {
+    console.log("Vercel environment detected. Running lightweight fetch scraper for Transfermarkt...");
+    return await scrapeTransfermarktViaFetch();
+  }
+
   try {
     return await scrapeTransfermarktViaPuppeteer();
   } catch (err: any) {

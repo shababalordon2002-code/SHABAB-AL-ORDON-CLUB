@@ -3,8 +3,9 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Match, NormalizedEvent, TeamLineupConfig, Player } from '@/types';
-import { Shield, Trophy, CheckCircle, Flame, Users, Settings, Edit3, RefreshCw, ArrowRightLeft, RotateCcw, X } from 'lucide-react';
+import { Shield, Trophy, CheckCircle, Flame, Users, Settings, Edit3, RefreshCw, ArrowRightLeft, RotateCcw, X, AlertTriangle, Trash2 } from 'lucide-react';
 import { dbStore } from '@/lib/store/db-store';
+import { isGoalEvent } from '@/lib/analytics/dashboard-engine';
 import { TeamLineupModal, TeamCircleIcon, getFormationPositions } from './TeamLineupModal';
 
 export function MiniCampogramaWidget({
@@ -128,63 +129,10 @@ interface BotoneraLiveScoreboardProps {
   onUpdateLineup?: (team: 'home' | 'away', config: TeamLineupConfig, updatedPlayers: Player[]) => void;
   onAddEvent?: (evt: NormalizedEvent) => void;
   onResetSubstitutions?: (team: 'home' | 'away') => void;
+  onResetLineupsAndSubstitutions?: (team?: 'home' | 'away' | 'both') => void;
 }
 
-export function isGoalEvent(evt: NormalizedEvent): boolean {
-  if (!evt) return false;
 
-  const outcomeStr = (evt.outcome || '').toLowerCase().trim();
-  const typeStr = (evt.event_type || '').toLowerCase().trim();
-  const catStr = (evt.category || '').toLowerCase().trim();
-  const subcatStr = (evt.subcategory || '').toLowerCase().trim();
-  const metaDescriptors: string[] = evt.metadata?.descriptors || [];
-
-  // 1. Direct outcome = Gol / Goal
-  if (outcomeStr === 'gol' || outcomeStr === 'goal' || outcomeStr.includes('gol marcado')) {
-    return true;
-  }
-
-  // 2. Direct event type or category = Gol
-  if (
-    (typeStr === 'gol' || typeStr === 'goal' || typeStr.startsWith('gol ') || typeStr.endsWith(' gol')) &&
-    !typeStr.includes('no gol') &&
-    !typeStr.includes('fallido') &&
-    !typeStr.includes('anulado') &&
-    !typeStr.includes('parada')
-  ) {
-    return true;
-  }
-
-  if (
-    (catStr === 'gol' || catStr === 'goal') &&
-    !catStr.includes('no gol') &&
-    !catStr.includes('fallido')
-  ) {
-    return true;
-  }
-
-  // 3. Descriptors indicate Gol (e.g. Remates/Tiros with "Resultado: Gol" or "Gol" or "GOL")
-  const hasGolDesc =
-    metaDescriptors.some((d: string) => {
-      const clean = d.toLowerCase().trim();
-      return (
-        clean === 'gol' ||
-        clean === 'goal' ||
-        clean.endsWith(': gol') ||
-        clean.endsWith(':gol') ||
-        clean.includes('resultado: gol') ||
-        clean.includes('resultado:gol') ||
-        clean.includes('finalización: gol') ||
-        clean.includes('finalizacion: gol') ||
-        clean.includes('consecuencia: gol') ||
-        clean.includes('tipo: gol')
-      );
-    }) ||
-    subcatStr === 'gol' ||
-    subcatStr.includes('gol');
-
-  return hasGolDesc;
-}
 
 export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
   match,
@@ -194,6 +142,7 @@ export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
   onUpdateLineup,
   onAddEvent,
   onResetSubstitutions,
+  onResetLineupsAndSubstitutions,
 }) => {
   const homeTeamName = match?.home_team || 'Shabab Al Ordon Club';
   const awayTeamName = match?.away_team || 'Al-Faisaly SC';
@@ -270,6 +219,57 @@ export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
   const [subPlayerInNum, setSubPlayerInNum] = useState<number | ''>('');
   const [subMinute, setSubMinute] = useState<number | ''>(Math.floor(timerSeconds / 60) || 1);
   const [subPeriod, setSubPeriod] = useState<number>(period || 1);
+
+  // Reset Lineups & Substitutions Modal State
+  const [isConfirmingResetLineups, setIsConfirmingResetLineups] = useState(false);
+  const [resetScope, setResetScope] = useState<'both' | 'home' | 'away'>('both');
+  const [resetConfirmInput, setResetConfirmInput] = useState('');
+
+  const handleConfirmReset = () => {
+    if (resetConfirmInput.trim().toUpperCase() !== 'BORRAR') return;
+
+    const freshHome: TeamLineupConfig = {
+      formation: '4-3-3',
+      circleStyle: { primaryColor: '#ef4444', secondaryColor: '#ffffff', pattern: 'solid' },
+      starters: Array.from({ length: 11 }, (_, i) => ({
+        id: `h_st_${i + 1}`,
+        number: i + 1,
+        name: '',
+        position: i === 0 ? 'POR' : 'JUG',
+        isStarter: true,
+      })),
+      substitutes: [],
+      customPositions: {},
+    };
+
+    const freshAway: TeamLineupConfig = {
+      formation: '4-3-3',
+      circleStyle: { primaryColor: '#3b82f6', secondaryColor: '#ffffff', pattern: 'solid' },
+      starters: Array.from({ length: 11 }, (_, i) => ({
+        id: `a_st_${i + 1}`,
+        number: i + 1,
+        name: '',
+        position: i === 0 ? 'POR' : 'JUG',
+        isStarter: true,
+      })),
+      substitutes: [],
+      customPositions: {},
+    };
+
+    if (resetScope === 'home' || resetScope === 'both') {
+      setHomeLineup(freshHome);
+    }
+    if (resetScope === 'away' || resetScope === 'both') {
+      setAwayLineup(freshAway);
+    }
+
+    if (onResetLineupsAndSubstitutions) {
+      onResetLineupsAndSubstitutions(resetScope);
+    }
+
+    setIsConfirmingResetLineups(false);
+    setResetConfirmInput('');
+  };
 
   // Filter goal events
   const goalEvents = events.filter(isGoalEvent);
@@ -349,7 +349,7 @@ export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
               <TeamCircleIcon style={homeLineup.circleStyle} number="10" size={20} />
             </div>
 
-            {/* Lineup & Kit Editor Button + Substitution Button */}
+            {/* Lineup & Kit Editor Button + Substitution Button + Reset Button */}
             <div className="flex items-center gap-1.5 mt-0.5">
               <button
                 type="button"
@@ -374,6 +374,20 @@ export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
                 <RefreshCw className="w-3 h-3 text-amber-400" />
                 <span>+ Cambio</span>
               </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setResetScope('home');
+                  setResetConfirmInput('');
+                  setIsConfirmingResetLineups(true);
+                }}
+                className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-300 hover:text-rose-100 bg-rose-500/15 hover:bg-rose-500/30 border border-rose-500/30 px-2 py-0.5 rounded-lg transition w-fit cursor-pointer shadow-sm"
+                title="Resetear alineación y cambios del equipo local"
+              >
+                <RotateCcw className="w-3 h-3 text-rose-400" />
+                <span>Resetear</span>
+              </button>
             </div>
 
             {/* Goal Scorer Chips */}
@@ -392,24 +406,41 @@ export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
           </div>
         </div>
 
-        {/* ── CENTRAL SCOREBOARD ── */}
-        <div className="flex items-center gap-2 sm:gap-4 bg-slate-900/90 border border-slate-700/80 rounded-2xl px-3 sm:px-6 py-2.5 shadow-xl shrink-0 ring-1 ring-amber-500/20">
-          {/* Home Score */}
-          <span className="text-2xl sm:text-3xl md:text-4xl font-black text-amber-400 font-mono tracking-wider drop-shadow-md">
-            {homeScore}
-          </span>
+        {/* ── CENTRAL SCOREBOARD & RESET ACTION ── */}
+        <div className="flex flex-col items-center gap-1.5 shrink-0">
+          <div className="flex items-center gap-2 sm:gap-4 bg-slate-900/90 border border-slate-700/80 rounded-2xl px-3 sm:px-6 py-2 shadow-xl ring-1 ring-amber-500/20">
+            {/* Home Score */}
+            <span className="text-2xl sm:text-3xl md:text-4xl font-black text-amber-400 font-mono tracking-wider drop-shadow-md">
+              {homeScore}
+            </span>
 
-          <div className="flex flex-col items-center justify-center px-2 border-x border-slate-800">
-            <span className="text-[10px] font-extrabold text-slate-400 tracking-wider uppercase">VS</span>
-            <span className="text-[9px] font-bold text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20 mt-0.5">
-              {period === 1 ? '1ª PARTE' : period === 2 ? '2ª PARTE' : `ET ${period - 2}`}
+            <div className="flex flex-col items-center justify-center px-2 border-x border-slate-800">
+              <span className="text-[10px] font-extrabold text-slate-400 tracking-wider uppercase">VS</span>
+              <span className="text-[9px] font-bold text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20 mt-0.5">
+                {period === 1 ? '1ª PARTE' : period === 2 ? '2ª PARTE' : `ET ${period - 2}`}
+              </span>
+            </div>
+
+            {/* Away Score */}
+            <span className="text-2xl sm:text-3xl md:text-4xl font-black text-amber-400 font-mono tracking-wider drop-shadow-md">
+              {awayScore}
             </span>
           </div>
 
-          {/* Away Score */}
-          <span className="text-2xl sm:text-3xl md:text-4xl font-black text-amber-400 font-mono tracking-wider drop-shadow-md">
-            {awayScore}
-          </span>
+          {/* Central Reset Lineups & Substitutions Button */}
+          <button
+            type="button"
+            onClick={() => {
+              setResetScope('both');
+              setResetConfirmInput('');
+              setIsConfirmingResetLineups(true);
+            }}
+            className="inline-flex items-center gap-1.5 text-[10px] font-bold text-rose-300 hover:text-rose-100 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/60 hover:border-rose-500 px-2.5 py-0.5 rounded-full transition-all cursor-pointer shadow-sm group"
+            title="Resetear las alineaciones tácticas y cambios realizados de ambos equipos"
+          >
+            <RotateCcw className="w-2.5 h-2.5 text-rose-400 group-hover:-rotate-90 transition-transform duration-300" />
+            <span>Resetear Alineaciones y Cambios</span>
+          </button>
         </div>
 
         {/* ── AWAY TEAM (VISITANTE) ── */}
@@ -430,8 +461,22 @@ export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
               </h2>
             </div>
 
-            {/* Lineup & Kit Editor Button + Substitution Button */}
+            {/* Lineup & Kit Editor Button + Substitution Button + Reset Button */}
             <div className="flex items-center gap-1.5 mt-0.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setResetScope('away');
+                  setResetConfirmInput('');
+                  setIsConfirmingResetLineups(true);
+                }}
+                className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-300 hover:text-rose-100 bg-rose-500/15 hover:bg-rose-500/30 border border-rose-500/30 px-2 py-0.5 rounded-lg transition w-fit cursor-pointer shadow-sm"
+                title="Resetear alineación y cambios del equipo visitante"
+              >
+                <RotateCcw className="w-3 h-3 text-rose-400" />
+                <span>Resetear</span>
+              </button>
+
               <button
                 type="button"
                 onClick={() => setEditingLineupTeam('away')}
@@ -775,6 +820,115 @@ export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
               </button>
             </div>
           </form>
+        </div>,
+        document.body
+      )}
+
+      {/* ── MODAL DE CONFIRMACIÓN DE SEGURIDAD: RESETEAR ALINEACIONES Y CAMBIOS ("BORRAR") ── */}
+      {isConfirmingResetLineups && mounted && createPortal(
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-slate-950/90 backdrop-blur-md p-4 animate-fade-in">
+          <div className="bg-slate-900 border border-red-500/60 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 text-slate-100 text-center">
+            <div className="w-12 h-12 rounded-2xl bg-red-500/10 border border-red-500/30 text-red-400 mx-auto flex items-center justify-center">
+              <AlertTriangle className="w-6 h-6 text-red-400" />
+            </div>
+
+            <div className="space-y-1">
+              <h3 className="text-base font-black text-white">¿Resetear alineaciones y cambios?</h3>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Esta acción restaurará las alineaciones tácticas a su formación inicial por defecto y eliminará todas las sustituciones registradas en este análisis.
+              </p>
+            </div>
+
+            {/* Selector de Alcance */}
+            <div className="bg-slate-950 p-1.5 rounded-xl border border-slate-800 flex gap-1">
+              <button
+                type="button"
+                onClick={() => setResetScope('both')}
+                className={`flex-1 py-1.5 px-2 rounded-lg text-[11px] font-bold transition cursor-pointer ${
+                  resetScope === 'both'
+                    ? 'bg-rose-600 text-white shadow'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+                }`}
+              >
+                Ambos Equipos
+              </button>
+              <button
+                type="button"
+                onClick={() => setResetScope('home')}
+                className={`flex-1 py-1.5 px-2 rounded-lg text-[11px] font-bold transition cursor-pointer truncate ${
+                  resetScope === 'home'
+                    ? 'bg-amber-600 text-white shadow'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+                }`}
+                title={`Solo Local: ${homeTeamName}`}
+              >
+                Solo Local
+              </button>
+              <button
+                type="button"
+                onClick={() => setResetScope('away')}
+                className={`flex-1 py-1.5 px-2 rounded-lg text-[11px] font-bold transition cursor-pointer truncate ${
+                  resetScope === 'away'
+                    ? 'bg-cyan-600 text-white shadow'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+                }`}
+                title={`Solo Visitante: ${awayTeamName}`}
+              >
+                Solo Visitante
+              </button>
+            </div>
+
+            <div className="space-y-1.5 text-left bg-slate-950 p-3 rounded-xl border border-red-900/40">
+              <label className="block text-[10px] font-extrabold uppercase text-amber-400">
+                🔒 Confirmación Obligatoria de Seguridad:
+              </label>
+              <p className="text-[11px] text-slate-300">
+                Para confirmar el reseteo de{' '}
+                <strong className="text-white">
+                  {resetScope === 'both'
+                    ? 'ambos equipos (alineaciones y cambios)'
+                    : resetScope === 'home'
+                    ? `equipo local (${homeTeamName})`
+                    : `equipo visitante (${awayTeamName})`}
+                </strong>
+                , escribe la palabra <strong className="text-red-400 font-mono">BORRAR</strong>:
+              </p>
+              <input
+                type="text"
+                value={resetConfirmInput}
+                onChange={(e) => setResetConfirmInput(e.target.value)}
+                placeholder='Escribe "BORRAR"'
+                className="w-full p-2.5 rounded-xl bg-slate-900 border border-red-700/60 text-amber-300 font-mono font-black text-center focus:outline-none focus:border-red-500 text-xs"
+                autoFocus
+              />
+            </div>
+
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsConfirmingResetLineups(false);
+                  setResetConfirmInput('');
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={resetConfirmInput.trim().toUpperCase() !== 'BORRAR'}
+                onClick={handleConfirmReset}
+                className={`flex-1 py-2.5 rounded-xl text-white font-black text-xs transition flex items-center justify-center gap-1.5 ${
+                  resetConfirmInput.trim().toUpperCase() === 'BORRAR'
+                    ? 'bg-red-600 hover:bg-red-500 shadow-lg shadow-red-600/40 cursor-pointer'
+                    : 'bg-slate-800 text-slate-500 cursor-not-allowed opacity-60'
+                }`}
+              >
+                <RotateCcw className="w-4 h-4" />
+                <span>Resetear</span>
+              </button>
+            </div>
+          </div>
         </div>,
         document.body
       )}

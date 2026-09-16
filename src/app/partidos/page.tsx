@@ -359,7 +359,7 @@ export default function PartidosPage() {
                           ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
                           : 'bg-slate-800 text-slate-400 border-slate-700'
                       }`}>
-                        {m.status === 'Finalizado' ? `Finalizado (${m.home_score}-${m.away_score})` : 'Programado'}
+                        {m.status === 'Finalizado' ? `Finalizado (${homeScore}-${awayScore})` : 'Programado'}
                       </span>
                     )}
                   </div>

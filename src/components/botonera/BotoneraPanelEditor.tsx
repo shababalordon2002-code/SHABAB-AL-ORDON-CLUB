@@ -2058,7 +2058,7 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                               ...editingButton,
                               pitchDisplayCount: 1,
                               pitchRequired: nextP,
-                              goalRequired: false,
+                              goalRequired: nextP === 'goal_mouth',
                               secondaryPitchRequired: undefined,
                             });
                           }}
@@ -2123,7 +2123,7 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                                     ...editingButton,
                                     pitchRequired: opt.key as any,
                                     pitchDisplayCount: 1,
-                                    goalRequired: false,
+                                    goalRequired: isGoal,
                                     secondaryPitchRequired: undefined,
                                   });
                                 }}
@@ -2161,32 +2161,47 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                         </div>
 
                         {/* Selector Exigencia 1 Campograma */}
-                        <div className="flex items-center justify-between p-2 rounded-lg bg-slate-900 border border-slate-800 text-xs mt-2">
-                          <span className="font-bold text-slate-300">📌 Exigencia de marcado en campograma:</span>
-                          <div className="flex items-center gap-1">
-                            <button
-                              type="button"
-                              onClick={() => setEditingButton({ ...editingButton, pitch1RequiredMode: 'required' })}
-                              className={`px-2.5 py-1 rounded text-[11px] font-bold border transition cursor-pointer ${
-                                (editingButton.pitch1RequiredMode || 'required') === 'required'
-                                  ? 'bg-red-500/20 border-red-400 text-red-300 ring-1 ring-red-500/40 shadow'
-                                  : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
-                              }`}
-                            >
-                              🔴 Obligatorio
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setEditingButton({ ...editingButton, pitch1RequiredMode: 'optional' })}
-                              className={`px-2.5 py-1 rounded text-[11px] font-bold border transition cursor-pointer ${
-                                editingButton.pitch1RequiredMode === 'optional'
-                                  ? 'bg-slate-800 border-slate-600 text-slate-200 shadow'
-                                  : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
-                              }`}
-                            >
-                              ⚪ Opcional
-                            </button>
+                        <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5 mt-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                              <span>{editingButton.pitchRequired === 'goal_mouth' ? '🥅 Exigencia de marcado en Portería:' : '🏟️ Exigencia de marcado en Campograma:'}</span>
+                            </span>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => setEditingButton({ ...editingButton, pitch1RequiredMode: 'required' })}
+                                className={`px-3 py-1 rounded-lg text-[11px] font-bold border transition cursor-pointer flex items-center gap-1 ${
+                                  (editingButton.pitch1RequiredMode || 'required') === 'required'
+                                    ? 'bg-red-500/20 border-red-400 text-red-300 ring-1 ring-red-500/40 shadow'
+                                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                                }`}
+                              >
+                                <span>🔴 Obligatorio</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingButton({ ...editingButton, pitch1RequiredMode: 'optional' })}
+                                className={`px-3 py-1 rounded-lg text-[11px] font-bold border transition cursor-pointer flex items-center gap-1 ${
+                                  editingButton.pitch1RequiredMode === 'optional'
+                                    ? 'bg-slate-800 border-slate-600 text-slate-200 shadow ring-1 ring-slate-500'
+                                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                                }`}
+                              >
+                                <span>⚪ Opcional</span>
+                              </button>
+                            </div>
                           </div>
+                          <p className="text-[10px] text-slate-400">
+                            {(editingButton.pitch1RequiredMode || 'required') === 'required' ? (
+                              <span className="text-amber-400/90 font-medium">
+                                * El marcado de {editingButton.pitchRequired === 'goal_mouth' ? 'la portería' : 'el campograma'} es obligatorio para registrar el evento.
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 font-medium">
+                                ✓ Opcional: el usuario puede marcar {editingButton.pitchRequired === 'goal_mouth' ? 'la portería' : 'el campograma'} o guardar el evento sin marcarlo.
+                              </span>
+                            )}
+                          </p>
                         </div>
                       </div>
                     )}
@@ -2248,32 +2263,41 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                           </div>
 
                           {/* Selector Exigencia 1er Campograma */}
-                          <div className="flex items-center justify-between pt-2 border-t border-slate-800 text-xs">
-                            <span className="text-[11px] font-bold text-slate-300">📌 Marcado 1er Campograma:</span>
-                            <div className="flex items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() => setEditingButton({ ...editingButton, pitch1RequiredMode: 'required' })}
-                                className={`px-2 py-0.5 rounded text-[10px] font-bold border transition cursor-pointer ${
-                                  (editingButton.pitch1RequiredMode || 'required') === 'required'
-                                    ? 'bg-red-500/20 border-red-400 text-red-300 ring-1 ring-red-500/40 shadow'
-                                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
-                                }`}
-                              >
-                                🔴 Obligatorio
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setEditingButton({ ...editingButton, pitch1RequiredMode: 'optional' })}
-                                className={`px-2 py-0.5 rounded text-[10px] font-bold border transition cursor-pointer ${
-                                  editingButton.pitch1RequiredMode === 'optional'
-                                    ? 'bg-slate-800 border-slate-600 text-slate-200 shadow'
-                                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
-                                }`}
-                              >
-                                ⚪ Opcional
-                              </button>
+                          <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800/80 space-y-1.5 mt-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[11px] font-bold text-slate-200">📌 Marcado 1er Campograma:</span>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingButton({ ...editingButton, pitch1RequiredMode: 'required' })}
+                                  className={`px-2.5 py-1 rounded text-[10px] font-bold border transition cursor-pointer ${
+                                    (editingButton.pitch1RequiredMode || 'required') === 'required'
+                                      ? 'bg-red-500/20 border-red-400 text-red-300 ring-1 ring-red-500/40 shadow'
+                                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                                  }`}
+                                >
+                                  🔴 Obligatorio
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingButton({ ...editingButton, pitch1RequiredMode: 'optional' })}
+                                  className={`px-2.5 py-1 rounded text-[10px] font-bold border transition cursor-pointer ${
+                                    editingButton.pitch1RequiredMode === 'optional'
+                                      ? 'bg-slate-800 border-slate-600 text-slate-200 shadow'
+                                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                                  }`}
+                                >
+                                  ⚪ Opcional
+                                </button>
+                              </div>
                             </div>
+                            <p className="text-[9.5px] text-slate-400">
+                              {(editingButton.pitch1RequiredMode || 'required') === 'required' ? (
+                                <span className="text-amber-400/90 font-medium">* Marcado obligatorio para guardar el evento.</span>
+                              ) : (
+                                <span className="text-slate-400 font-medium">✓ Opcional (se puede guardar sin marcar el 1er campograma).</span>
+                              )}
+                            </p>
                           </div>
                         </div>
 
@@ -2329,32 +2353,41 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                           </div>
 
                           {/* Selector Exigencia 2º Campograma */}
-                          <div className="flex items-center justify-between pt-2 border-t border-slate-800 text-xs">
-                            <span className="text-[11px] font-bold text-slate-300">📌 Marcado 2º Campograma:</span>
-                            <div className="flex items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() => setEditingButton({ ...editingButton, pitch2RequiredMode: 'required' })}
-                                className={`px-2 py-0.5 rounded text-[10px] font-bold border transition cursor-pointer ${
-                                  (editingButton.pitch2RequiredMode || 'required') === 'required'
-                                    ? 'bg-red-500/20 border-red-400 text-red-300 ring-1 ring-red-500/40 shadow'
-                                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
-                                }`}
-                              >
-                                🔴 Obligatorio
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setEditingButton({ ...editingButton, pitch2RequiredMode: 'optional' })}
-                                className={`px-2 py-0.5 rounded text-[10px] font-bold border transition cursor-pointer ${
-                                  editingButton.pitch2RequiredMode === 'optional'
-                                    ? 'bg-slate-800 border-slate-600 text-slate-200 shadow'
-                                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
-                                }`}
-                              >
-                                ⚪ Opcional
-                              </button>
+                          <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800/80 space-y-1.5 mt-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[11px] font-bold text-slate-200">📌 Marcado 2º Campograma:</span>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingButton({ ...editingButton, pitch2RequiredMode: 'required' })}
+                                  className={`px-2.5 py-1 rounded text-[10px] font-bold border transition cursor-pointer ${
+                                    (editingButton.pitch2RequiredMode || 'required') === 'required'
+                                      ? 'bg-red-500/20 border-red-400 text-red-300 ring-1 ring-red-500/40 shadow'
+                                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                                  }`}
+                                >
+                                  🔴 Obligatorio
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingButton({ ...editingButton, pitch2RequiredMode: 'optional' })}
+                                  className={`px-2.5 py-1 rounded text-[10px] font-bold border transition cursor-pointer ${
+                                    editingButton.pitch2RequiredMode === 'optional'
+                                      ? 'bg-slate-800 border-slate-600 text-slate-200 shadow'
+                                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                                  }`}
+                                >
+                                  ⚪ Opcional
+                                </button>
+                              </div>
                             </div>
+                            <p className="text-[9.5px] text-slate-400">
+                              {(editingButton.pitch2RequiredMode || 'required') === 'required' ? (
+                                <span className="text-amber-400/90 font-medium">* Marcado obligatorio para guardar el evento.</span>
+                              ) : (
+                                <span className="text-slate-400 font-medium">✓ Opcional (se puede guardar sin marcar el 2º campograma).</span>
+                              )}
+                            </p>
                           </div>
                         </div>
 

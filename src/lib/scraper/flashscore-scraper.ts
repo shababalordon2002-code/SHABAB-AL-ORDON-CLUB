@@ -1,16 +1,16 @@
 import puppeteer from 'puppeteer-core';
 import { Match } from '@/types';
 
-// Fast Vercel-compatible HTTP Fetch Scraper (No heavy Chrome binary required)
+// Fast Vercel-compatible HTTP Fetch Scraper (Parses real Flashscore data feed)
 async function scrapeFlashscoreViaFetch(maxMatches = 20): Promise<Match[]> {
-  console.log("Executing Vercel-native HTTP Fetch Scraper for Flashscore...");
+  console.log("Executing Flashscore feed parser for Flashscore matches & scores...");
   
   const targetUrls = [
     "https://www.flashscore.es/equipo/shabab-al-ordon/ld5M1lKt/resultados/",
     "https://www.flashscore.es/equipo/shabab-al-ordon/ld5M1lKt/partidos/"
   ];
 
-  const scrapedMatches: Match[] = [];
+  const scrapedMatchesMap = new Map<string, Match>();
 
   for (const url of targetUrls) {
     try {
@@ -19,48 +19,87 @@ async function scrapeFlashscoreViaFetch(maxMatches = 20): Promise<Match[]> {
           'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           'Accept-Language': 'es-ES,es;q=0.9',
         },
-        next: { revalidate: 3600 } // Cache for 1 hour
+        cache: 'no-store'
       });
 
       if (!res.ok) continue;
       const html = await res.text();
 
-      // Extract match IDs from HTML string (Flashscore match ID format e.g. g_1_EXAUVBT8 or id="g_1_...")
-      const matchIdMatches = Array.from(html.matchAll(/g_1_([A-Za-z0-9]+)/g));
-      const extractedMids = Array.from(new Set(matchIdMatches.map(m => m[1])));
+      const rawBlocks = html.split('~AA÷').slice(1);
 
-      for (const mid of extractedMids.slice(0, maxMatches)) {
-        if (scrapedMatches.some(m => m.flashscore_mid === mid)) continue;
+      for (const block of rawBlocks) {
+        const fields = block.split('¬');
+        const mid = fields[0];
+        if (!mid || mid.length > 12) continue;
 
-        const matchUrl = `https://www.flashscore.es/partido/${mid}/#/resumen-partido`;
-        
-        // Construct structured match representation
-        scrapedMatches.push({
-          id: `match_fs_${mid}`,
-          flashscore_mid: mid,
-          flashscore_url: matchUrl,
-          home_team: 'Shabab Al Ordon',
-          home_team_logo: '/logo.png',
-          away_team: 'Rival Jordan League',
-          away_team_logo: undefined,
-          date: new Date().toLocaleDateString('es-ES'),
-          time: '17:00',
-          competition: 'Jordan Pro League',
-          round: 'Jornada',
-          season: '2026/2027',
-          home_score: 1,
-          away_score: 1,
-          status: url.includes('resultados') ? 'Finalizado' : 'Programado',
-          event_count: 0,
-          import_status: 'Pendiente'
+        let homeTeam = '';
+        let awayTeam = '';
+        let homeScore: number | null = null;
+        let awayScore: number | null = null;
+        let timestamp = 0;
+        let competition = 'Premier League';
+
+        fields.forEach(field => {
+          if (field.startsWith('AE÷')) homeTeam = field.slice(3).trim();
+          else if (field.startsWith('AF÷')) awayTeam = field.slice(3).trim();
+          else if (field.startsWith('AG÷')) homeScore = parseInt(field.slice(3), 10);
+          else if (field.startsWith('AH÷')) awayScore = parseInt(field.slice(3), 10);
+          else if (field.startsWith('AD÷')) timestamp = parseInt(field.slice(3), 10);
+          else if (field.startsWith('ZK÷')) competition = field.slice(3).trim();
         });
+
+        if (homeTeam && awayTeam) {
+          let dateStr = '';
+          let timeStr = '';
+          if (timestamp > 0) {
+            const d = new Date(timestamp * 1000);
+            const day = String(d.getDate()).padStart(2, '0');
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const year = d.getFullYear();
+            dateStr = `${day}.${month}.${year}`;
+            const hours = String(d.getHours()).padStart(2, '0');
+            const mins = String(d.getMinutes()).padStart(2, '0');
+            timeStr = `${hours}:${mins}`;
+          }
+
+          const isFinished = homeScore !== null && !isNaN(homeScore) && awayScore !== null && !isNaN(awayScore);
+
+          const isShababHome = homeTeam.toLowerCase().includes('shabab') || homeTeam.toLowerCase().includes('ordon');
+          const isShababAway = awayTeam.toLowerCase().includes('shabab') || awayTeam.toLowerCase().includes('ordon');
+
+          const matchObj: Match = {
+            id: `match_fs_${mid}`,
+            flashscore_mid: mid,
+            flashscore_url: `https://www.flashscore.es/partido/${mid}/`,
+            date: dateStr || new Date().toLocaleDateString('es-ES'),
+            time: timeStr || '17:00',
+            competition: competition || 'Premier League',
+            round: '',
+            season: '2026/2027',
+            home_team: homeTeam,
+            home_team_logo: isShababHome ? '/logo.png' : undefined,
+            away_team: awayTeam,
+            away_team_logo: isShababAway ? '/logo.png' : undefined,
+            home_score: isFinished && homeScore !== null ? homeScore : 0,
+            away_score: isFinished && awayScore !== null ? awayScore : 0,
+            status: isFinished || url.includes('resultados') ? 'Finalizado' : 'Programado',
+            event_count: 0,
+            import_status: 'Pendiente'
+          };
+
+          if (!scrapedMatchesMap.has(mid)) {
+            scrapedMatchesMap.set(mid, matchObj);
+          }
+        }
       }
     } catch (e: any) {
       console.warn(`Error fetching ${url}:`, e.message);
     }
   }
 
-  return scrapedMatches;
+  const resultList = Array.from(scrapedMatchesMap.values());
+  console.log(`Flashscore scraper extracted ${resultList.length} matches with real scores.`);
+  return resultList.slice(0, maxMatches);
 }
 
 // Full Puppeteer Scraper for Local / Node Environment
@@ -183,30 +222,43 @@ async function scrapeFlashscoreViaPuppeteer(maxMatches = 20): Promise<Match[]> {
         let awayScore = 0;
         let status: 'Finalizado' | 'En curso' | 'Programado' = 'Programado';
 
-        const detailScoreWrapper = document.querySelector('.detailScore__wrapper');
-        if (detailScoreWrapper) {
-          const spans = Array.from(detailScoreWrapper.querySelectorAll('span'));
-          const numericScores = spans
-            .map(s => (s as HTMLElement).innerText.trim())
-            .filter(txt => /^\d+$/.test(txt));
-
-          if (numericScores.length >= 2) {
-            homeScore = parseInt(numericScores[0], 10);
-            awayScore = parseInt(numericScores[1], 10);
-            status = 'Finalizado';
-          }
+        // 1. Try parsing Flashscore raw feed string in script/HTML
+        const fullHtml = document.body.innerHTML || '';
+        const agMatch = fullHtml.match(/AG÷(\d+)/);
+        const ahMatch = fullHtml.match(/AH÷(\d+)/);
+        if (agMatch && ahMatch) {
+          homeScore = parseInt(agMatch[1], 10);
+          awayScore = parseInt(ahMatch[1], 10);
+          status = 'Finalizado';
         }
 
+        // 2. Try modern Flashscore score elements if feed match was not found
         if (status === 'Programado') {
-          const scoreElem = document.querySelector('.smv__score, .event__score, .detailScore__fullTime');
-          if (scoreElem) {
-            const text = (scoreElem as HTMLElement).innerText.trim();
-            if (text.includes('-')) {
-              const parts = text.split('-').map(s => parseInt(s.trim(), 10));
-              if (!isNaN(parts[0]) && !isNaN(parts[1])) {
-                homeScore = parts[0];
-                awayScore = parts[1];
-                status = 'Finalizado';
+          const detailScoreWrapper =
+            document.querySelector('.detailScore__wrapper') ||
+            document.querySelector('[data-testid*="wcl-scores-score"]') ||
+            document.querySelector('[class*="detailScore"]') ||
+            document.querySelector('.smv__score');
+
+          if (detailScoreWrapper) {
+            const spans = Array.from(detailScoreWrapper.querySelectorAll('span'));
+            const numericScores = spans
+              .map((s) => (s as HTMLElement).innerText.trim())
+              .filter((txt) => /^\d+$/.test(txt));
+
+            if (numericScores.length >= 2) {
+              homeScore = parseInt(numericScores[0], 10);
+              awayScore = parseInt(numericScores[1], 10);
+              status = 'Finalizado';
+            } else {
+              const text = (detailScoreWrapper as HTMLElement).innerText.trim();
+              if (text.includes('-')) {
+                const parts = text.split('-').map((s) => parseInt(s.trim(), 10));
+                if (!isNaN(parts[0]) && !isNaN(parts[1])) {
+                  homeScore = parts[0];
+                  awayScore = parts[1];
+                  status = 'Finalizado';
+                }
               }
             }
           }

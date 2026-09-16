@@ -1,8 +1,9 @@
 import { createClient } from '@/lib/supabase/client';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { MatchAnalysis } from '@/types';
+import { MatchAnalysis, NormalizedEvent } from '@/types';
+import { rowToNormalizedEvent } from '@/lib/services/botonera-service';
 
-// Fetch all Match Analyses (or filtered by matchId) from Supabase
+// Fetch all Match Analyses (or filtered by matchId) from Supabase with full events reconciliation
 export async function getAnalysesFromSupabase(matchId?: string): Promise<MatchAnalysis[]> {
   try {
     const supabase = createClient();
@@ -20,27 +21,70 @@ export async function getAnalysesFromSupabase(matchId?: string): Promise<MatchAn
       return [];
     }
 
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      match_id: row.match_id,
-      title: row.title || 'Análisis de Partido',
-      analyst_name: row.analyst_name || 'Analista SAO',
-      status: row.status || 'completed',
-      video_type: row.video_type || null,
-      video_url: row.video_url || null,
-      video_source_name: row.video_source_name || null,
-      p1_video_start_time: row.p1_video_start_time ?? null,
-      p2_video_start_time: row.p2_video_start_time ?? null,
-      period_adjustments: typeof row.period_adjustments === 'string'
-        ? JSON.parse(row.period_adjustments)
-        : (row.period_adjustments || row.home_lineup?._period_adjustments || null),
-      botonera_template_id: row.botonera_template_id || null,
-      home_lineup: typeof row.home_lineup === 'string' ? JSON.parse(row.home_lineup) : (row.home_lineup || null),
-      away_lineup: typeof row.away_lineup === 'string' ? JSON.parse(row.away_lineup) : (row.away_lineup || null),
-      events: typeof row.events === 'string' ? JSON.parse(row.events) : (row.events || []),
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-    }));
+    // Single source of truth: Also fetch all analysis_events rows from Supabase
+    let eventsByMatch = new Map<string, NormalizedEvent[]>();
+    try {
+      let evQuery = supabase.from('analysis_events').select('*').order('created_at', { ascending: true });
+      if (matchId) {
+        evQuery = evQuery.eq('match_id', matchId);
+      }
+      const { data: evRows, error: evErr } = await evQuery;
+      if (!evErr && evRows && evRows.length > 0) {
+        evRows.forEach((r: any) => {
+          const normEvt = rowToNormalizedEvent(r);
+          if (normEvt && normEvt.match_id) {
+            const list = eventsByMatch.get(normEvt.match_id) || [];
+            list.push(normEvt);
+            eventsByMatch.set(normEvt.match_id, list);
+          }
+        });
+      }
+    } catch (evFetchErr) {
+      console.warn('Non-blocking warning fetching analysis_events for analyses:', evFetchErr);
+    }
+
+    return (data || []).map((row: any) => {
+      const parsedRowEvents: NormalizedEvent[] = typeof row.events === 'string'
+        ? JSON.parse(row.events)
+        : (Array.isArray(row.events) ? row.events : []);
+
+      const tblEvents = eventsByMatch.get(row.match_id) || [];
+
+      // Reconcile: merge tblEvents with parsedRowEvents, unique by event_id
+      const eventMap = new Map<string, NormalizedEvent>();
+      tblEvents.forEach((e) => {
+        if (e && e.event_id) eventMap.set(e.event_id, e);
+      });
+      parsedRowEvents.forEach((e) => {
+        if (e && e.event_id && !eventMap.has(e.event_id)) {
+          eventMap.set(e.event_id, e);
+        }
+      });
+
+      const reconciledEvents = Array.from(eventMap.values());
+
+      return {
+        id: row.id,
+        match_id: row.match_id,
+        title: row.title || 'Análisis de Partido',
+        analyst_name: row.analyst_name || 'Analista SAO',
+        status: row.status || 'completed',
+        video_type: row.video_type || null,
+        video_url: row.video_url || null,
+        video_source_name: row.video_source_name || null,
+        p1_video_start_time: row.p1_video_start_time ?? null,
+        p2_video_start_time: row.p2_video_start_time ?? null,
+        period_adjustments: typeof row.period_adjustments === 'string'
+          ? JSON.parse(row.period_adjustments)
+          : (row.period_adjustments || row.home_lineup?._period_adjustments || null),
+        botonera_template_id: row.botonera_template_id || null,
+        home_lineup: typeof row.home_lineup === 'string' ? JSON.parse(row.home_lineup) : (row.home_lineup || null),
+        away_lineup: typeof row.away_lineup === 'string' ? JSON.parse(row.away_lineup) : (row.away_lineup || null),
+        events: reconciledEvents,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+      };
+    });
   } catch (err: any) {
     console.warn('Could not load match_analyses from Supabase:', err.message);
     return [];
@@ -48,7 +92,10 @@ export async function getAnalysesFromSupabase(matchId?: string): Promise<MatchAn
 }
 
 // Save/Upsert a Match Analysis to Supabase
-export async function saveAnalysisToSupabase(analysis: MatchAnalysis): Promise<boolean> {
+export async function saveAnalysisToSupabase(
+  analysis: MatchAnalysis,
+  options?: { skipEventsTableSync?: boolean }
+): Promise<boolean> {
   if (!analysis || !analysis.id || !analysis.match_id) return false;
 
   try {
@@ -98,82 +145,89 @@ export async function saveAnalysisToSupabase(analysis: MatchAnalysis): Promise<b
       ? { ...resolvedHomeLineup, ...(resolvedAdjustments ? { _period_adjustments: resolvedAdjustments } : {}) }
       : (resolvedAdjustments ? { _period_adjustments: resolvedAdjustments } : null);
 
-    // Single Source of Truth: Supabase analysis_events table + incoming active events
-    const incomingEvents: any[] = (analysis.events && Array.isArray(analysis.events)) ? analysis.events : [];
-    const existingEvents: any[] = (existingAn?.events && Array.isArray(existingAn.events)) ? existingAn.events : [];
+    // Handle events: If analysis.events is explicitly passed as empty array [], clear all events
+    const isExplicitClear = Array.isArray(analysis.events) && analysis.events.length === 0;
 
-    let tableEvents: any[] = [];
-    try {
-      const { data: tblEvts } = await supabase
-        .from('analysis_events')
-        .select('*')
-        .eq('match_id', analysis.match_id);
-      if (tblEvts && tblEvts.length > 0) {
-        tableEvents = tblEvts;
+    let consolidatedEvents: any[] = [];
+    if (isExplicitClear) {
+      // Clear from analysis_events table in Supabase
+      try {
+        await supabase.from('analysis_events').delete().eq('match_id', analysis.match_id);
+      } catch (clearErr) {
+        console.warn('Warning clearing analysis_events table in Supabase:', clearErr);
       }
-    } catch (tblErr) {
-      // Non-blocking
-    }
+      consolidatedEvents = [];
+    } else if (options?.skipEventsTableSync) {
+      // Fast-path: individual events are already maintained in real time via insert/update/deleteAnalysisEventToSupabase
+      consolidatedEvents = (analysis.events && Array.isArray(analysis.events)) ? analysis.events : [];
+    } else {
+      const incomingEvents: any[] = (analysis.events && Array.isArray(analysis.events)) ? analysis.events : [];
+      let tableEvents: any[] = [];
+      try {
+        const { data: tblEvts } = await supabase
+          .from('analysis_events')
+          .select('*')
+          .eq('match_id', analysis.match_id);
+        if (tblEvts && tblEvts.length > 0) {
+          tableEvents = tblEvts;
+        }
+      } catch (tblErr) {
+        // Non-blocking
+      }
 
-    const eventMap = new Map<string, any>();
+      const eventMap = new Map<string, any>();
+      if (tableEvents.length > 0) {
+        tableEvents.forEach((r: any) => {
+          if (r && r.event_id) {
+            const parsedMeta = typeof r.metadata === 'string' ? JSON.parse(r.metadata) : (r.metadata || {});
+            const rNorm = {
+              event_id: r.event_id,
+              source_event_id: r.source_event_id ?? null,
+              match_id: r.match_id,
+              team_id: r.team_id ?? null,
+              team_name: r.team_name ?? null,
+              player_id: r.player_id ?? null,
+              player_name: r.player_name,
+              event_type: r.event_type,
+              category: r.category,
+              subcategory: r.subcategory ?? null,
+              timestamp: r.timestamp ?? null,
+              minute: r.minute ?? null,
+              second: r.second ?? null,
+              duration: r.duration ?? null,
+              period: r.period ?? null,
+              x: r.x ?? null,
+              y: r.y ?? null,
+              end_x: r.end_x ?? null,
+              end_y: r.end_y ?? null,
+              goal_x: r.goal_x ?? parsedMeta?.goal_x ?? null,
+              goal_y: r.goal_y ?? parsedMeta?.goal_y ?? null,
+              goal_zone: r.goal_zone ?? parsedMeta?.goal_zone ?? null,
+              outcome: r.outcome ?? null,
+              metadata: parsedMeta,
+              source: r.source,
+              created_by: r.created_by ?? null,
+              created_by_name: r.created_by_name ?? null,
+              created_at: r.created_at,
+              updated_at: r.updated_at,
+            };
+            eventMap.set(r.event_id, rNorm);
+          }
+        });
+      }
 
-    // 1. If tableEvents exists in Supabase, load them as base truth
-    if (tableEvents.length > 0) {
-      tableEvents.forEach((r: any) => {
-        if (r && r.event_id) {
-          const parsedMeta = typeof r.metadata === 'string' ? JSON.parse(r.metadata) : (r.metadata || {});
-          const rNorm = {
-            event_id: r.event_id,
-            source_event_id: r.source_event_id ?? null,
-            match_id: r.match_id,
-            team_id: r.team_id ?? null,
-            team_name: r.team_name ?? null,
-            player_id: r.player_id ?? null,
-            player_name: r.player_name,
-            event_type: r.event_type,
-            category: r.category,
-            subcategory: r.subcategory ?? null,
-            timestamp: r.timestamp ?? null,
-            minute: r.minute ?? null,
-            second: r.second ?? null,
-            duration: r.duration ?? null,
-            period: r.period ?? null,
-            x: r.x ?? null,
-            y: r.y ?? null,
-            end_x: r.end_x ?? null,
-            end_y: r.end_y ?? null,
-            goal_x: r.goal_x ?? parsedMeta?.goal_x ?? null,
-            goal_y: r.goal_y ?? parsedMeta?.goal_y ?? null,
-            goal_zone: r.goal_zone ?? parsedMeta?.goal_zone ?? null,
-            outcome: r.outcome ?? null,
-            metadata: parsedMeta,
-            source: r.source,
-            created_by: r.created_by ?? null,
-            created_by_name: r.created_by_name ?? null,
-            created_at: r.created_at,
-            updated_at: r.updated_at,
-          };
-          eventMap.set(r.event_id, rNorm);
+      // Apply incoming active events
+      incomingEvents.forEach((e: any) => {
+        if (e && e.event_id) {
+          const prev = eventMap.get(e.event_id);
+          if (!prev || new Date(e.updated_at || 0).getTime() >= new Date(prev.updated_at || 0).getTime()) {
+            eventMap.set(e.event_id, e);
+          }
         }
       });
-    } else if (existingEvents.length > 0 && incomingEvents.length === 0) {
-      // Fallback for legacy data without tableEvents
-      existingEvents.forEach((e: any) => {
-        if (e && e.event_id) eventMap.set(e.event_id, e);
-      });
+
+      consolidatedEvents = Array.from(eventMap.values());
     }
-
-    // 2. Apply incoming active events
-    incomingEvents.forEach((e: any) => {
-      if (e && e.event_id) {
-        const prev = eventMap.get(e.event_id);
-        if (!prev || new Date(e.updated_at || 0).getTime() >= new Date(prev.updated_at || 0).getTime()) {
-          eventMap.set(e.event_id, e);
-        }
-      }
-    });
-
-    const consolidatedEvents = Array.from(eventMap.values());
 
     // Cleanly combine analyst names
     const rawAnalystList = [existingAn?.analyst_name, analysis.analyst_name].filter(Boolean);
@@ -206,7 +260,7 @@ export async function saveAnalysisToSupabase(analysis: MatchAnalysis): Promise<b
     };
 
     // Ensure analysis_events table in Supabase has every event saved row-by-row
-    if (consolidatedEvents.length > 0) {
+    if (!options?.skipEventsTableSync && consolidatedEvents.length > 0) {
       const rowsToUpsert = consolidatedEvents.map((e: any) => {
         const metaWithGoal = {
           ...(e.metadata || {}),
@@ -337,10 +391,17 @@ export async function deleteAnalysisFromSupabase(analysisId: string): Promise<bo
       supabase = createClient();
     }
 
+    const matchId = analysisId.startsWith('analysis_') ? analysisId.replace('analysis_', '') : null;
+
+    if (matchId) {
+      await supabase.from('analysis_events').delete().eq('match_id', matchId);
+      await supabase.from('analysis_sessions').delete().eq('match_id', matchId);
+    }
+
     const { error } = await supabase
       .from('match_analyses')
       .delete()
-      .eq('id', analysisId);
+      .or(`id.eq.${analysisId}${matchId ? `,match_id.eq.${matchId}` : ''}`);
 
     if (error) {
       console.error('Error deleting match_analysis from Supabase:', error.message);
