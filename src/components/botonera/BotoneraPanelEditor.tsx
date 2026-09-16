@@ -2033,10 +2033,11 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                           onClick={() => {
                             setEditingButton({
                               ...editingButton,
-                              pitchDisplayCount: 1,
+                              pitchDisplayCount: 0,
                               pitchRequired: 'none',
                               goalRequired: false,
                               secondaryPitchRequired: undefined,
+                              pitch1RequiredMode: 'optional',
                             });
                           }}
                           className={`py-2 px-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${

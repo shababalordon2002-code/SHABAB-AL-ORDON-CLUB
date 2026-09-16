@@ -571,31 +571,31 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
   const hasGroupDescriptors = button.descriptorGroups && button.descriptorGroups.length > 0;
   const hasDescriptors = hasFlatDescriptors || hasGroupDescriptors;
 
-  const isSinglePitch = button.pitchDisplayCount === 1 || (
+  const hasNoPitch = button.pitchRequired === 'none' || button.pitchDisplayCount === 0;
+
+  const isSinglePitch = !hasNoPitch && (button.pitchDisplayCount === 1 || (
     button.pitchDisplayCount !== 2 &&
     (button.pitchRequired === 'goal_mouth' || !button.secondaryPitchRequired)
-  );
+  ));
 
-  const isDualPitch = button.pitchDisplayCount === 2 || (
+  const isDualPitch = !hasNoPitch && (button.pitchDisplayCount === 2 || (
     !isSinglePitch && Boolean(
       button.pitchRequired === 'pitch_and_goal' ||
       (button.secondaryPitchRequired && button.secondaryPitchRequired !== 'none' && button.pitchRequired && button.pitchRequired !== 'none') ||
       (button.goalRequired && button.pitchRequired && button.pitchRequired !== 'goal_mouth' && button.pitchRequired !== 'none')
     )
-  );
+  ));
 
-  const pitch1Mode = button.pitchRequired || 'point_half';
-  const pitch2Mode = isDualPitch
-    ? (button.secondaryPitchRequired || (button.goalRequired || button.pitchRequired === 'pitch_and_goal' ? 'goal_mouth' : undefined))
-    : undefined;
+  const pitch1Mode = hasNoPitch ? undefined : (button.pitchRequired && button.pitchRequired !== 'none' ? button.pitchRequired : undefined);
+  const pitch2Mode = (hasNoPitch || !isDualPitch) ? undefined : (button.secondaryPitchRequired && button.secondaryPitchRequired !== 'none' ? button.secondaryPitchRequired : undefined);
 
-  const pitch1Opt = PITCH_MODE_OPTIONS.find(o => o.key === pitch1Mode);
+  const pitch1Opt = pitch1Mode ? PITCH_MODE_OPTIONS.find(o => o.key === pitch1Mode) : undefined;
   const pitch2Opt = pitch2Mode ? PITCH_MODE_OPTIONS.find(o => o.key === pitch2Mode) : undefined;
 
-  const isPitch1Mandatory = (button.pitch1RequiredMode || 'required') === 'required';
-  const isPitch2Mandatory = (button.pitch2RequiredMode || 'required') === 'required';
+  const isPitch1Mandatory = !hasNoPitch && Boolean(pitch1Mode) && (button.pitch1RequiredMode || 'required') === 'required';
+  const isPitch2Mandatory = !hasNoPitch && isDualPitch && Boolean(pitch2Mode) && (button.pitch2RequiredMode || 'required') === 'required';
 
-  const hasGoal = isSinglePitch
+  const hasGoal = !hasNoPitch && (isSinglePitch
     ? button.pitchRequired === 'goal_mouth'
     : Boolean(
         button.pitchRequired === 'goal_mouth' ||
@@ -603,17 +603,17 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
         button.goalRequired ||
         button.secondaryPitchRequired === 'goal_mouth' ||
         button.pitchModes?.includes('goal_mouth')
-      );
+      ));
 
-  const hasFieldPitch = isSinglePitch
+  const hasFieldPitch = !hasNoPitch && (isSinglePitch
     ? Boolean(button.pitchRequired && button.pitchRequired !== 'none' && button.pitchRequired !== 'goal_mouth')
     : Boolean(
         (button.pitchRequired && button.pitchRequired !== 'none' && button.pitchRequired !== 'goal_mouth') ||
         (button.secondaryPitchRequired && button.secondaryPitchRequired !== 'none' && button.secondaryPitchRequired !== 'goal_mouth')
-      );
+      ));
 
-  const hasMultiplePitches = isDualPitch && Boolean(pitch2Mode);
-  const hasPitch = (pitch1Mode && pitch1Mode !== 'none') || Boolean(pitch2Mode);
+  const hasMultiplePitches = !hasNoPitch && isDualPitch && Boolean(pitch2Mode);
+  const hasPitch = !hasNoPitch && (Boolean(pitch1Mode) || Boolean(pitch2Mode));
 
   const isVectorPitch = Boolean(
     button.pitchRequired?.startsWith('vector') ||
@@ -781,7 +781,7 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
     if (!hasPitch) return true;
 
     // Check Pitch 1 if mandatory
-    if (isPitch1Mandatory) {
+    if (isPitch1Mandatory && pitch1Mode) {
       if (pitch1Mode === 'goal_mouth') {
         if (goalX === null || goalY === null) return false;
       } else if (pitch1Mode.startsWith('zone')) {

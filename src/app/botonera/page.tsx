@@ -2084,8 +2084,14 @@ export default function BotoneraPage() {
     const hasGroupDescriptors = btn.descriptorGroups && btn.descriptorGroups.length > 0;
     const hasDescriptors = hasFlatDescriptors || hasGroupDescriptors;
     const hasPitch =
-      (btn.pitchRequired && btn.pitchRequired !== 'none') ||
-      Boolean(btn.goalRequired || btn.secondaryPitchRequired || btn.pitchModes?.includes('goal_mouth'));
+      btn.pitchRequired !== 'none' &&
+      btn.pitchDisplayCount !== 0 &&
+      Boolean(
+        btn.pitchRequired ||
+        btn.goalRequired ||
+        (btn.secondaryPitchRequired && (btn.secondaryPitchRequired as string) !== 'none') ||
+        btn.pitchModes?.includes('goal_mouth')
+      );
     const hasPlayerRequirement = btn.playerRequiredMode && btn.playerRequiredMode !== 'none';
 
     // Freeze exact click timestamp and period at the precise moment the button is pressed

@@ -259,7 +259,7 @@ export interface BotoneraButton {
   pitch2RequiredMode?: 'optional' | 'required'; // 'required' (Obligatorio, por defecto) u 'optional' (Opcional)
   pitchModes?: PitchRequiredType[]; // Lista de campogramas activos si hay múltiples
   goalRequired?: boolean; // Habilitar campograma de portería simultáneo
-  pitchDisplayCount?: 1 | 2; // 1 campograma o 2 campogramas
+  pitchDisplayCount?: 0 | 1 | 2; // 0 (ninguno), 1 campograma o 2 campogramas
   dualPitchLayout?: 'simultaneous' | 'tabs'; // Mostrar ambos a la vez o por pestañas
   pitchViewMode?: 'full' | 'half'; // Campo entero vs Medio campo
   playerRequiredMode?: 'none' | 'optional' | 'required'; // 'none' (Desactivado), 'optional' (Opcional), 'required' (Obligatorio)
