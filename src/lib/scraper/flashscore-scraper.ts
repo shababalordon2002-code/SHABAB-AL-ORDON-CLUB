@@ -1,6 +1,27 @@
 import puppeteer from 'puppeteer-core';
 import { Match } from '@/types';
 
+// Helper to filter matches from September 1, 2026 onwards
+export function isMatchOnOrAfterSept2026(dateStr: string, timestampSec?: number): boolean {
+  if (timestampSec && timestampSec > 0) {
+    // 1788220800 is 2026-09-01T00:00:00Z
+    return timestampSec >= 1788220800;
+  }
+  if (!dateStr) return false;
+  const parts = dateStr.split('.');
+  if (parts.length === 3) {
+    const day = parseInt(parts[0], 10);
+    const month = parseInt(parts[1], 10);
+    const year = parseInt(parts[2], 10);
+    if (!isNaN(day) && !isNaN(month) && !isNaN(year)) {
+      if (year > 2026) return true;
+      if (year === 2026) return month >= 9;
+      return false;
+    }
+  }
+  return true;
+}
+
 // Fast Vercel-compatible HTTP Fetch Scraper (Parses real Flashscore data feed)
 async function scrapeFlashscoreViaFetch(maxMatches = 20): Promise<Match[]> {
   console.log("Executing Flashscore feed parser for Flashscore matches & scores...");
@@ -60,6 +81,11 @@ async function scrapeFlashscoreViaFetch(maxMatches = 20): Promise<Match[]> {
             const hours = String(d.getHours()).padStart(2, '0');
             const mins = String(d.getMinutes()).padStart(2, '0');
             timeStr = `${hours}:${mins}`;
+          }
+
+          // Skip matches before September 1, 2026
+          if (!isMatchOnOrAfterSept2026(dateStr, timestamp)) {
+            continue;
           }
 
           const isFinished = homeScore !== null && !isNaN(homeScore) && awayScore !== null && !isNaN(awayScore);
@@ -296,7 +322,9 @@ async function scrapeFlashscoreViaPuppeteer(maxMatches = 20): Promise<Match[]> {
         };
       }, matchHref);
 
-      scrapedMatches.push(matchData);
+      if (isMatchOnOrAfterSept2026(matchData.date)) {
+        scrapedMatches.push(matchData);
+      }
     } catch(err: any) {
       console.error(`Error scraping match ${matchHref}:`, err.message);
     }
