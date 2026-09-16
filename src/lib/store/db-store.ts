@@ -14,6 +14,7 @@ import { saveMatchesToSupabase, getMatchesFromSupabase } from '@/lib/services/ma
 import { getPlayersFromSupabase, savePlayersToSupabase } from '@/lib/services/players-service';
 import { getAnalysesFromSupabase, saveAnalysisToSupabase, deleteAnalysisFromSupabase } from '@/lib/services/analysis-service';
 import { getDashboardsFromSupabase, saveDashboardToSupabase, deleteDashboardFromSupabase } from '@/lib/services/dashboard-service';
+import { isMatchOnOrAfterSept2026 } from '@/lib/scraper/flashscore-scraper';
 
 const STORAGE_KEYS = {
   MATCHES: 'sao_analytics_matches_v1',
@@ -357,7 +358,13 @@ export const dbStore = {
   // Matches
   getMatches(): Match[] {
     const matches: Match[] = getFromStorage(STORAGE_KEYS.MATCHES, SEED_MATCHES);
-    const sanitized = matches.map(sanitizeMatchLogos);
+    const validMatches = matches.filter((m) => {
+      if (m.id.startsWith('match_fs_') && !isMatchOnOrAfterSept2026(m.date)) {
+        return false;
+      }
+      return true;
+    });
+    const sanitized = validMatches.map(sanitizeMatchLogos);
     setToStorage(STORAGE_KEYS.MATCHES, sanitized);
     return sanitized;
   },
@@ -368,7 +375,11 @@ export const dbStore = {
       const allLocal = this.getMatches();
       const localMap = new Map(allLocal.map((m) => [m.id, m]));
       const remoteIds = new Set(remote.map((m) => m.id));
-      const localOnly = allLocal.filter((m) => !remoteIds.has(m.id));
+      const localOnly = allLocal.filter((m) => {
+        if (remoteIds.has(m.id)) return false;
+        if (m.id.startsWith('match_fs_') && !isMatchOnOrAfterSept2026(m.date)) return false;
+        return true;
+      });
 
       const mergedRemote = remote.map((rm) => {
         const local = localMap.get(rm.id);
