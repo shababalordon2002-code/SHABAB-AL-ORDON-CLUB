@@ -98,12 +98,16 @@ export default function BotoneraPage() {
   const [isTimerRunning, setIsTimerRunning] = useState<boolean>(false);
   const [period, setPeriod] = useState<number>(1);
 
+  // Pinned Team Selection State ('both' | 'home' | 'away')
+  const [pinnedTeam, setPinnedTeam] = useState<'both' | 'home' | 'away'>('both');
+
   // Event Tagging Modal State
   const [eventModalData, setEventModalData] = useState<{
     button: BotoneraButton;
     activeDescriptors: string[];
     clickTimestamp: number;
     clickPeriod: number;
+    initialTeamName?: string | null;
   } | null>(null);
 
   // Active Player State
@@ -2098,10 +2102,15 @@ export default function BotoneraPage() {
     const clickTimestamp = timerSeconds;
     const clickPeriod = period;
 
+    const targetMatchObj = selectedMatchId && selectedMatchId !== 'free_session' ? (dbStore.getMatchById(selectedMatchId) || matches.find((m) => m.id === selectedMatchId)) : null;
+    const currentHomeTeamName = targetMatchObj?.home_team || 'Shabab Al Ordon Club';
+    const currentAwayTeamName = targetMatchObj?.away_team || 'Al Ramtha';
+    const pinnedTeamName = pinnedTeam === 'home' ? currentHomeTeamName : (pinnedTeam === 'away' ? currentAwayTeamName : null);
+
     if (hasDescriptors || hasPitch || hasPlayerRequirement) {
-      setEventModalData({ button: btn, activeDescriptors, clickTimestamp, clickPeriod });
+      setEventModalData({ button: btn, activeDescriptors, clickTimestamp, clickPeriod, initialTeamName: pinnedTeamName });
     } else {
-      commitEvent(btn, activeDescriptors, undefined, undefined, undefined, clickTimestamp, clickPeriod);
+      commitEvent(btn, activeDescriptors, undefined, undefined, pinnedTeamName, clickTimestamp, clickPeriod);
     }
   };
 
@@ -3526,62 +3535,90 @@ export default function BotoneraPage() {
             </button>
           </div>
 
-          {template && (
-            <BotoneraPanelEditor
-              template={template}
-              onUpdateTemplate={(tmpl) => {
-                setTemplate(tmpl);
-                dbStore.saveBotoneraTemplate(tmpl);
-              }}
-              onTriggerEvent={handleTriggerEvent}
-              isTimerRunning={isTimerRunning}
-              onToggleTimer={handleToggleTimer}
-            />
-          )}
+          {template && (() => {
+            const currentMatchObj = selectedMatchId && selectedMatchId !== 'free_session' ? (dbStore.getMatchById(selectedMatchId) || matches.find((m) => m.id === selectedMatchId)) : null;
+            const homeName = currentMatchObj?.home_team || 'Shabab Al Ordon Club';
+            const awayName = currentMatchObj?.away_team || 'Al Ramtha';
+            const homeLogo = currentMatchObj?.home_team_logo;
+            const awayLogo = currentMatchObj?.away_team_logo;
+
+            return (
+              <BotoneraPanelEditor
+                template={template}
+                onUpdateTemplate={(tmpl) => {
+                  setTemplate(tmpl);
+                  dbStore.saveBotoneraTemplate(tmpl);
+                }}
+                onTriggerEvent={handleTriggerEvent}
+                isTimerRunning={isTimerRunning}
+                onToggleTimer={handleToggleTimer}
+                pinnedTeam={pinnedTeam}
+                onPinTeamChange={setPinnedTeam}
+                homeTeamName={homeName}
+                awayTeamName={awayName}
+                homeTeamLogo={homeLogo}
+                awayTeamLogo={awayLogo}
+              />
+            );
+          })()}
         </div>
       )}
 
       {/* ----------------- IN-PLACE BOTONERA WHITEBOARD EDIT MODAL ----------------- */}
-      {isEditPanelOpen && template && (
-        <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md overflow-y-auto p-4 md:p-8 animate-fade-in flex flex-col items-center">
-          <div className="w-full max-w-7xl bg-slate-900 border border-amber-500/40 rounded-3xl p-6 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-2xl bg-amber-500/20 text-amber-300">
-                  <Pencil className="w-5 h-5" />
+      {isEditPanelOpen && template && (() => {
+        const currentMatchObj = selectedMatchId && selectedMatchId !== 'free_session' ? (dbStore.getMatchById(selectedMatchId) || matches.find((m) => m.id === selectedMatchId)) : null;
+        const homeName = currentMatchObj?.home_team || 'Shabab Al Ordon Club';
+        const awayName = currentMatchObj?.away_team || 'Al Ramtha';
+        const homeLogo = currentMatchObj?.home_team_logo;
+        const awayLogo = currentMatchObj?.away_team_logo;
+
+        return (
+          <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md overflow-y-auto p-4 md:p-8 animate-fade-in flex flex-col items-center">
+            <div className="w-full max-w-7xl bg-slate-900 border border-amber-500/40 rounded-3xl p-6 shadow-2xl space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-2xl bg-amber-500/20 text-amber-300">
+                    <Pencil className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-slate-100 text-base">
+                      DISEÑADOR DE PIZARRA Y BOTONERA ({template.name})
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      Añade botones, edita textos, colores, categorías y atajos de teclado. Los cambios se aplicarán de inmediato a tu sesión.
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="font-extrabold text-slate-100 text-base">
-                    DISEÑADOR DE PIZARRA Y BOTONERA ({template.name})
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    Añade botones, edita textos, colores, categorías y atajos de teclado. Los cambios se aplicarán de inmediato a tu sesión.
-                  </p>
-                </div>
+
+                <button
+                  onClick={() => setIsEditPanelOpen(false)}
+                  className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-black text-xs transition flex items-center gap-2 shadow-lg shadow-emerald-950/40 cursor-pointer"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>GUARDAR Y CERRAR</span>
+                </button>
               </div>
 
-              <button
-                onClick={() => setIsEditPanelOpen(false)}
-                className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-black text-xs transition flex items-center gap-2 shadow-lg shadow-emerald-950/40 cursor-pointer"
-              >
-                <CheckCircle2 className="w-4 h-4" />
-                <span>GUARDAR Y CERRAR</span>
-              </button>
+              <BotoneraPanelEditor
+                template={template}
+                onUpdateTemplate={(tmpl) => {
+                  setTemplate(tmpl);
+                  dbStore.saveBotoneraTemplate(tmpl);
+                }}
+                onTriggerEvent={handleTriggerEvent}
+                isTimerRunning={isTimerRunning}
+                onToggleTimer={handleToggleTimer}
+                pinnedTeam={pinnedTeam}
+                onPinTeamChange={setPinnedTeam}
+                homeTeamName={homeName}
+                awayTeamName={awayName}
+                homeTeamLogo={homeLogo}
+                awayTeamLogo={awayLogo}
+              />
             </div>
-
-            <BotoneraPanelEditor
-              template={template}
-              onUpdateTemplate={(tmpl) => {
-                setTemplate(tmpl);
-                dbStore.saveBotoneraTemplate(tmpl);
-              }}
-              onTriggerEvent={handleTriggerEvent}
-              isTimerRunning={isTimerRunning}
-              onToggleTimer={handleToggleTimer}
-            />
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ----------------- EVENT TAGGING MODAL (DESCRIPTORS + JUGADOR + PITCH) ----------------- */}
       {eventModalData && (
@@ -3594,6 +3631,7 @@ export default function BotoneraPage() {
           clickTimestamp={eventModalData.clickTimestamp}
           clickPeriod={eventModalData.clickPeriod}
           matchEvents={events}
+          initialTeamName={eventModalData.initialTeamName}
           onSave={(finalDescriptors, pitchData, modalPlayerId, modalTeamName, modalPlayerObj) =>
             commitEvent(
               eventModalData.button,

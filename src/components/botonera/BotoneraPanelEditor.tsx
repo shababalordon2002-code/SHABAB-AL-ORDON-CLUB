@@ -32,6 +32,7 @@ import {
   GripVertical,
   ArrowUp,
   ArrowDown,
+  Pin,
 } from 'lucide-react';
 import { BotoneraButton, BotoneraTemplate } from '@/types';
 import { dbStore } from '@/lib/store/db-store';
@@ -43,6 +44,12 @@ interface BotoneraPanelEditorProps {
   onTriggerEvent: (button: BotoneraButton, selectedDescriptors: string[]) => void;
   isTimerRunning: boolean;
   onToggleTimer: () => void;
+  pinnedTeam?: 'both' | 'home' | 'away';
+  onPinTeamChange?: (team: 'both' | 'home' | 'away') => void;
+  homeTeamName?: string;
+  awayTeamName?: string;
+  homeTeamLogo?: string;
+  awayTeamLogo?: string;
 }
 
 const COLOR_MAP: Record<string, { bg: string; border: string; text: string; hover: string; ring: string }> = {
@@ -466,6 +473,12 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
   onTriggerEvent,
   isTimerRunning,
   onToggleTimer,
+  pinnedTeam = 'both',
+  onPinTeamChange,
+  homeTeamName,
+  awayTeamName,
+  homeTeamLogo,
+  awayTeamLogo,
 }) => {
   const canvasRef = useRef<HTMLDivElement>(null);
 
@@ -1118,6 +1131,73 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
           >
             <Move className="w-3.5 h-3.5" />
             <span>{isEditMode ? '✔ Finalizar Edición Pizarra' : '🎨 Mover & Editar en Pizarra (Estilo PowerPoint)'}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* TEAM PINNING CONTROL BAR */}
+      <div className="flex flex-wrap items-center justify-between gap-2.5 p-2.5 rounded-xl bg-slate-950 border border-slate-800 shadow-inner">
+        <div className="flex items-center gap-2 text-xs">
+          <span className="font-extrabold text-slate-200 flex items-center gap-1.5">
+            <Pin className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <span>Equipo a analizar (Fijado):</span>
+          </span>
+          <span className="text-[11px] text-slate-400 hidden sm:inline">
+            {pinnedTeam === 'both'
+              ? '⚠️ De serie: Se registrarán eventos con ambos equipos (Libre)'
+              : `📌 Fijado a ${pinnedTeam === 'home' ? (homeTeamName || 'Local') : (awayTeamName || 'Visitante')}: Todos los eventos se asignarán directamente a este equipo.`}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800 shrink-0">
+          <button
+            type="button"
+            onClick={() => onPinTeamChange?.('both')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+              pinnedTeam === 'both'
+                ? 'bg-slate-800 text-white border border-slate-600 shadow ring-1 ring-slate-500/40'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-850'
+            }`}
+            title="De serie: Permite elegir cualquiera de los dos equipos o asignación libre"
+          >
+            <Shield className="w-3.5 h-3.5 text-slate-400" />
+            <span>Ambos Equipos (Libre)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onPinTeamChange?.('home')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+              pinnedTeam === 'home'
+                ? 'bg-red-600/30 text-red-200 border border-red-500/80 shadow ring-2 ring-red-500/50'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-850'
+            }`}
+            title={`Fijar equipo a ${homeTeamName || 'Local'}`}
+          >
+            {homeTeamLogo ? (
+              <img src={homeTeamLogo} alt="" className="w-3.5 h-3.5 object-contain rounded bg-slate-950 p-0.5" />
+            ) : (
+              <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
+            )}
+            <span className="truncate max-w-[140px]">{homeTeamName || 'Local'} (Fijado)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onPinTeamChange?.('away')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+              pinnedTeam === 'away'
+                ? 'bg-blue-600/30 text-blue-200 border border-blue-400/80 shadow ring-2 ring-blue-500/50'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-850'
+            }`}
+            title={`Fijar equipo a ${awayTeamName || 'Visitante'}`}
+          >
+            {awayTeamLogo ? (
+              <img src={awayTeamLogo} alt="" className="w-3.5 h-3.5 object-contain rounded bg-slate-950 p-0.5" />
+            ) : (
+              <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />
+            )}
+            <span className="truncate max-w-[140px]">{awayTeamName || 'Visitante'} (Fijado)</span>
           </button>
         </div>
       </div>
