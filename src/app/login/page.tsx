@@ -46,7 +46,8 @@ export default function LoginPage() {
         }
 
         if (data.session) {
-          window.location.href = '/';
+          router.push('/');
+          router.refresh();
         }
       } else {
         // Sign Up with auto-confirmation via admin endpoint if service role key is present

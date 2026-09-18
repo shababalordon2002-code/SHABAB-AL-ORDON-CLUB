@@ -27,8 +27,9 @@ export async function middleware(request: NextRequest) {
   });
 
   const {
-    data: { user },
-  } = await supabase.auth.getUser();
+    data: { session },
+  } = await supabase.auth.getSession();
+  const user = session?.user;
 
   const isLoginPage = request.nextUrl.pathname.startsWith('/login');
   const isRegistroPage = request.nextUrl.pathname.startsWith('/registro');
