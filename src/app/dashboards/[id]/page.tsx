@@ -96,7 +96,7 @@ function DashboardDetailContent({ params }: { params: Promise<{ id: string }> })
     };
 
     const channel = supabase
-      .channel(`dashboard-detail-live-${dashboardId}`)
+      .channel(`dashboard-detail-live-${dashboardId}:${Math.random().toString(36).substring(2, 9)}_${Date.now()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'match_analyses' }, debouncedReload)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'match_dashboards' }, debouncedReload)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, debouncedReload)

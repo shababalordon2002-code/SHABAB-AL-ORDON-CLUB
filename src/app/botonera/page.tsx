@@ -6,6 +6,7 @@ import {
   getBotoneraTemplatesFromSupabase,
   getAnalysisEventsFromSupabase,
   insertAnalysisEventToSupabase,
+  batchUpsertAnalysisEventsToSupabase,
   updateAnalysisEventInSupabase,
   deleteAnalysisEventFromSupabase,
   clearAnalysisEventsFromSupabase,
@@ -75,17 +76,18 @@ export default function BotoneraPage() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [selectedMatchId, setSelectedMatchId] = useState<string>('free_session');
 
-  // Saved Analyses & Visor modal state (Instant load from local store for 0ms latency)
-  const [savedAnalyses, setSavedAnalyses] = useState<MatchAnalysis[]>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        return dbStore.getAnalyses();
-      } catch {
-        return [];
-      }
+  // Saved Analyses & Visor modal state. Starts empty (deterministic for SSR) and is
+  // filled from the local store right after mount — reading it inside the useState
+  // initializer branched on `typeof window`, which diverged from the server-rendered
+  // markup and caused a hydration mismatch.
+  const [savedAnalyses, setSavedAnalyses] = useState<MatchAnalysis[]>([]);
+  useEffect(() => {
+    try {
+      setSavedAnalyses(dbStore.getAnalyses());
+    } catch {
+      // keep the empty default
     }
-    return [];
-  });
+  }, []);
   const [activeVisorAnalysis, setActiveVisorAnalysis] = useState<MatchAnalysis | null>(null);
   const [deleteConfirmAnalysis, setDeleteConfirmAnalysis] = useState<MatchAnalysis | null>(null);
   const [editingAnalysisId, setEditingAnalysisId] = useState<string | null>(null);
@@ -682,7 +684,7 @@ export default function BotoneraPage() {
     };
 
     const channel = supabase
-      .channel('botonera-global-analyses-realtime')
+      .channel(`botonera-global-analyses-realtime:${Math.random().toString(36).substring(2, 9)}_${Date.now()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'match_analyses' }, debouncedSync)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'analysis_events' }, debouncedSync)
       .subscribe();
@@ -1107,6 +1109,16 @@ export default function BotoneraPage() {
     setIsSessionConfigured(true);
   };
 
+  // Fail-safe watchdog: ensure isSyncingToSupabase overlay can never get stuck on screen
+  useEffect(() => {
+    if (isSyncingToSupabase) {
+      const timer = setTimeout(() => {
+        setIsSyncingToSupabase(false);
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [isSyncingToSupabase]);
+
   const flushSessionToSupabase = async (): Promise<boolean> => {
     if (!isSessionConfigured) return true;
     setIsSyncingToSupabase(true);
@@ -1147,6 +1159,7 @@ export default function BotoneraPage() {
         video_source_name: resolvedVideoSourceName,
         p1_video_start_time: resolvedP1,
         p2_video_start_time: resolvedP2,
+        period_adjustments: periodAdjustmentsRef.current,
         botonera_template_id: resolvedTemplateId,
         home_lineup: targetMatch?.home_lineup || existingObj?.home_lineup || null,
         away_lineup: targetMatch?.away_lineup || existingObj?.away_lineup || null,
@@ -1155,16 +1168,17 @@ export default function BotoneraPage() {
         updated_at: new Date().toISOString(),
       };
 
-      // Guaranteed awaited save to Supabase
-      const ok = await dbStore.saveAnalysisAsync(newAnalysis);
+      // Guaranteed fast save bounded by a 3.5s timeout so network stalls never freeze the screen
+      const savePromise = Promise.allSettled([
+        dbStore.saveAnalysisAsync(newAnalysis),
+        selectedMatchId && selectedMatchId !== 'free_session' && normalizedEvts.length > 0
+          ? batchUpsertAnalysisEventsToSupabase(targetId, normalizedEvts)
+          : Promise.resolve(true),
+      ]);
+      const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 3500));
+      await Promise.race([savePromise, timeoutPromise]);
 
-      // Ensure each row in analysis_events is also synced
-      if (selectedMatchId && selectedMatchId !== 'free_session' && normalizedEvts.length > 0) {
-        await Promise.allSettled(
-          normalizedEvts.map((evt) => insertAnalysisEventToSupabase(targetId, evt))
-        );
-      }
-      return ok;
+      return true;
     } catch (err) {
       console.error('Error during flushSessionToSupabase:', err);
       return false;
@@ -1179,18 +1193,22 @@ export default function BotoneraPage() {
     );
     if (!ok) return;
 
-    // Await complete flush to Supabase before changing screen mode or resetting state!
-    await flushSessionToSupabase();
+    try {
+      await flushSessionToSupabase();
+    } catch (e) {
+      console.warn('Non-blocking error flushing before exit:', e);
+    } finally {
+      setIsSyncingToSupabase(false);
+    }
 
-    // Refresh list of saved analyses from DB
-    const freshAnalyses = await dbStore.syncAnalysesFromSupabase();
-    setSavedAnalyses(freshAnalyses);
+    const currentMatchId = selectedMatchId;
 
-    // Reset session states & transition back to Botonera Landing Dashboard
+    // Reset session states & transition back to Botonera Landing Dashboard immediately
     setIsTimerRunning(false);
     setIsSessionConfigured(false);
     setPageMode(null);
     setEvents([]);
+    setSelectedMatchId('');
     setVideoType(null);
     setVideoSourceName(null);
     setVideoUrl(null);
@@ -1198,6 +1216,22 @@ export default function BotoneraPage() {
     if (popoutWinRef.current) closeVideoPopOut();
     setIsVideoPoppedOut(false);
     setEditingAnalysisId(null);
+    dbStore.clearActiveBotoneraSession();
+    if (currentMatchId && currentMatchId !== 'free_session') {
+      deleteAnalysisSessionFromSupabase(currentMatchId).catch(() => {});
+    }
+
+    // Clean URL query parameters so returning to /botonera shows the clean main menu
+    if (typeof window !== 'undefined' && window.history) {
+      const url = new URL(window.location.href);
+      url.search = '';
+      window.history.replaceState({}, '', url.pathname);
+    }
+
+    // Refresh list of saved analyses in background without blocking UI exit
+    dbStore.syncAnalysesFromSupabase().then((freshAnalyses) => {
+      if (freshAnalyses) setSavedAnalyses(freshAnalyses);
+    }).catch(() => {});
   };
 
   // Prevent accidental tab closing when match recording is active
@@ -1812,62 +1846,75 @@ export default function BotoneraPage() {
     dbStore.clearActiveBotoneraSession();
   };
 
-  const handleUpdatePeriodOffset = (p: number, newTimeSec: number) => {
-    setPeriodVideoOffsets((prev) => {
-      const updatedOffsets = { ...prev, [p]: newTimeSec };
+  /** Persists a just-edited/cleared period offset to Supabase. Called outside of any
+   * setState updater — updaters must stay pure and can run twice in React 18 dev/strict
+   * mode, which would double-fire this entire save cascade for the same match row. */
+  const persistPeriodOffsets = (updatedOffsets: Record<number, number>) => {
+    if (!selectedMatchId || selectedMatchId === 'free_session') return;
 
-      if (selectedMatchId && selectedMatchId !== 'free_session') {
-        const m = dbStore.getMatchById(selectedMatchId);
-        if (m) {
-          dbStore.saveMatch({
-            ...m,
-            p1_video_start_time: updatedOffsets[1] ?? m.p1_video_start_time ?? null,
-            p2_video_start_time: updatedOffsets[2] ?? m.p2_video_start_time ?? null,
-            period_adjustments: periodAdjustmentsRef.current,
-            video_type: videoType || m.video_type,
-            video_url: videoUrl || m.video_url,
-            video_source_name: videoSourceName || m.video_source_name,
-            botonera_template_id: template?.id || m.botonera_template_id,
-          });
-        }
-        const existingAns = dbStore.getAnalyses(selectedMatchId);
-        const masterAn = existingAns.length > 0 ? existingAns[0] : null;
-        if (masterAn) {
-          dbStore.saveAnalysis({
-            ...masterAn,
-            p1_video_start_time: updatedOffsets[1] ?? masterAn.p1_video_start_time ?? null,
-            p2_video_start_time: updatedOffsets[2] ?? masterAn.p2_video_start_time ?? null,
-            period_adjustments: periodAdjustmentsRef.current,
-            video_type: videoType || masterAn.video_type,
-            video_url: videoUrl || masterAn.video_url,
-            video_source_name: videoSourceName || masterAn.video_source_name,
-            botonera_template_id: template?.id || masterAn.botonera_template_id,
-          });
-        } else if (m) {
-          const currentAnalyst = profile?.full_name || user?.email || 'Analista SAO';
-          dbStore.saveAnalysis({
-            id: `analysis_${selectedMatchId}`,
-            match_id: selectedMatchId,
-            title: `Análisis ${m.home_team} vs ${m.away_team}`,
-            analyst_name: currentAnalyst,
-            status: 'in_progress',
-            video_type: videoType || m.video_type || 'link',
-            video_url: videoUrl || m.video_url || null,
-            video_source_name: videoSourceName || m.video_source_name || null,
-            p1_video_start_time: updatedOffsets[1] ?? null,
-            p2_video_start_time: updatedOffsets[2] ?? null,
-            period_adjustments: periodAdjustmentsRef.current,
-            botonera_template_id: template?.id || m.botonera_template_id || null,
-            home_lineup: m.home_lineup || null,
-            away_lineup: m.away_lineup || null,
-            events: [],
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          });
-        }
-      }
-      return updatedOffsets;
-    });
+    const m = dbStore.getMatchById(selectedMatchId);
+    if (m) {
+      dbStore.saveMatch({
+        ...m,
+        p1_video_start_time: updatedOffsets[1] ?? null,
+        p2_video_start_time: updatedOffsets[2] ?? null,
+        period_adjustments: periodAdjustmentsRef.current,
+        video_type: videoType || m.video_type,
+        video_url: videoUrl || m.video_url,
+        video_source_name: videoSourceName || m.video_source_name,
+        botonera_template_id: template?.id || m.botonera_template_id,
+      });
+    }
+    const existingAns = dbStore.getAnalyses(selectedMatchId);
+    const masterAn = existingAns.length > 0 ? existingAns[0] : null;
+    if (masterAn) {
+      dbStore.saveAnalysis({
+        ...masterAn,
+        p1_video_start_time: updatedOffsets[1] ?? null,
+        p2_video_start_time: updatedOffsets[2] ?? null,
+        period_adjustments: periodAdjustmentsRef.current,
+        video_type: videoType || masterAn.video_type,
+        video_url: videoUrl || masterAn.video_url,
+        video_source_name: videoSourceName || masterAn.video_source_name,
+        botonera_template_id: template?.id || masterAn.botonera_template_id,
+      });
+    } else if (m) {
+      const currentAnalyst = profile?.full_name || user?.email || 'Analista SAO';
+      dbStore.saveAnalysis({
+        id: `analysis_${selectedMatchId}`,
+        match_id: selectedMatchId,
+        title: `Análisis ${m.home_team} vs ${m.away_team}`,
+        analyst_name: currentAnalyst,
+        status: 'in_progress',
+        video_type: videoType || m.video_type || 'link',
+        video_url: videoUrl || m.video_url || null,
+        video_source_name: videoSourceName || m.video_source_name || null,
+        p1_video_start_time: updatedOffsets[1] ?? null,
+        p2_video_start_time: updatedOffsets[2] ?? null,
+        period_adjustments: periodAdjustmentsRef.current,
+        botonera_template_id: template?.id || m.botonera_template_id || null,
+        home_lineup: m.home_lineup || null,
+        away_lineup: m.away_lineup || null,
+        events: [],
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+    }
+    const activeSess = dbStore.getActiveBotoneraSession();
+    if (activeSess) {
+      dbStore.saveActiveBotoneraSession({
+        ...activeSess,
+        p1VideoStartSeconds: updatedOffsets[1] ?? null,
+        p2VideoStartSeconds: updatedOffsets[2] ?? null,
+      });
+    }
+  };
+
+  const handleUpdatePeriodOffset = (p: number, newTimeSec: number) => {
+    const updatedOffsets = { ...periodVideoOffsetsRef.current, [p]: newTimeSec };
+    setPeriodVideoOffsets(updatedOffsets);
+    periodVideoOffsetsRef.current = updatedOffsets;
+    persistPeriodOffsets(updatedOffsets);
 
     // Editing the start of the period being tagged re-bases the chrono right away
     if (p === period && (videoEl || iframeEl || popoutWinRef.current)) {
@@ -1877,33 +1924,11 @@ export default function BotoneraPage() {
 
   /** Removes a period start marker (chrono falls back to its own clock for that period). */
   const handleClearPeriodOffset = (p: number) => {
-    setPeriodVideoOffsets((prev) => {
-      const updatedOffsets = { ...prev };
-      delete updatedOffsets[p];
-
-      if (selectedMatchId && selectedMatchId !== 'free_session') {
-        const m = dbStore.getMatchById(selectedMatchId);
-        if (m) {
-          dbStore.saveMatch({
-            ...m,
-            p1_video_start_time: updatedOffsets[1] ?? null,
-            p2_video_start_time: updatedOffsets[2] ?? null,
-            period_adjustments: periodAdjustmentsRef.current,
-          });
-        }
-        const existingAns = dbStore.getAnalyses(selectedMatchId);
-        const masterAn = existingAns.length > 0 ? existingAns[0] : null;
-        if (masterAn) {
-          dbStore.saveAnalysis({
-            ...masterAn,
-            p1_video_start_time: updatedOffsets[1] ?? null,
-            p2_video_start_time: updatedOffsets[2] ?? null,
-            period_adjustments: periodAdjustmentsRef.current,
-          });
-        }
-      }
-      return updatedOffsets;
-    });
+    const updatedOffsets = { ...periodVideoOffsetsRef.current };
+    delete updatedOffsets[p];
+    setPeriodVideoOffsets(updatedOffsets);
+    periodVideoOffsetsRef.current = updatedOffsets;
+    persistPeriodOffsets(updatedOffsets);
   };
 
   /** Al pulsar uno de los 4 botones [ ▶ 1ª Parte ], [ ▶ 2ª Parte ], etc.:
@@ -2827,14 +2852,33 @@ export default function BotoneraPage() {
                   <span className="sm:hidden">AUTO</span>
                 </div>
 
-                {/* Salir / Cerrar Sesión (sin obligar a guardar manualmente porque ya está guardado) */}
+                {/* Salir / Volver al Menú sin cerrar la sesión */}
+                <button
+                  onClick={() => {
+                    setIsSyncingToSupabase(false);
+                    setPageMode(null);
+                    if (typeof window !== 'undefined' && window.history) {
+                      const url = new URL(window.location.href);
+                      url.search = '';
+                      window.history.replaceState({}, '', url.pathname);
+                    }
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-2 sm:px-3.5 sm:py-2.5 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-all cursor-pointer"
+                  title="Volver al Menú de Botonera (la sesión sigue activa en segundo plano)"
+                >
+                  <Home className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="hidden sm:inline">Menú Botonera Live</span>
+                  <span className="sm:hidden">Menú</span>
+                </button>
+
+                {/* Salir / Finalizar Sesión */}
                 <button
                   onClick={handleEndSession}
-                  className="flex items-center gap-1.5 px-3 py-2 sm:px-3.5 sm:py-2.5 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-all"
-                  title="Cerrar la sesión de análisis (todo queda guardado automáticamente)"
+                  className="flex items-center gap-1.5 px-3 py-2 sm:px-3.5 sm:py-2.5 rounded-xl text-xs font-bold bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 hover:text-rose-100 border border-rose-800/50 transition-all cursor-pointer"
+                  title="Finalizar la sesión de análisis y guardar todo"
                 >
-                  <LogOut className="w-3.5 h-3.5 text-slate-400" />
-                  <span className="hidden sm:inline">Cerrar Sesión</span>
+                  <LogOut className="w-3.5 h-3.5 text-rose-400" />
+                  <span className="hidden sm:inline">Finalizar Sesión</span>
                   <span className="sm:hidden">Salir</span>
                 </button>
               </>
@@ -2843,7 +2887,7 @@ export default function BotoneraPage() {
             {!isSessionConfigured && (
               <button
                 onClick={() => setPageMode(null)}
-                className="flex items-center gap-2 px-3 py-2 sm:px-4 sm:py-2.5 rounded-xl text-xs font-black bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all"
+                className="flex items-center gap-2 px-3 py-2 sm:px-4 sm:py-2.5 rounded-xl text-xs font-black bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all cursor-pointer"
               >
                 <Home className="w-4 h-4" />
                 <span>Volver a Elegir</span>
@@ -3887,6 +3931,12 @@ export default function BotoneraPage() {
                 Asegurando que todos los eventos, cortes y configuraciones estén guardados al 100% en el servidor.
               </p>
             </div>
+            <button
+              onClick={() => setIsSyncingToSupabase(false)}
+              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold border border-slate-700 transition-colors cursor-pointer"
+            >
+              Cerrar y Continuar
+            </button>
           </div>
         </div>
       )}

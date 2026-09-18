@@ -49,11 +49,23 @@ const OPTIONAL_MATCH_COLUMNS = [
   'away_lineup',
 ] as const;
 
+// Guards against out-of-order concurrent saves for the same match: several callers
+// fire this fire-and-forget in parallel, and a slower call finishing after a newer
+// one would overwrite fresh data (e.g. a just-edited period offset) with stale data.
+const _matchSaveSeq: Record<string, number> = {};
+
 // Upsert matches into Supabase 'matches' table
 export async function saveMatchesToSupabase(matches: Match[]): Promise<boolean> {
   const filteredMatches = (matches || []).filter(m => isMatchOnOrAfterSept2026(m.date));
   if (filteredMatches.length === 0) return true;
   matches = filteredMatches;
+
+  const mySeqs = new Map<string, number>();
+  matches.forEach((m) => {
+    const seq = (_matchSaveSeq[m.id] || 0) + 1;
+    _matchSaveSeq[m.id] = seq;
+    mySeqs.set(m.id, seq);
+  });
 
   try {
     let supabase: any;
@@ -97,8 +109,10 @@ export async function saveMatchesToSupabase(matches: Match[]): Promise<boolean> 
       const resolvedVideoUrl = (m.video_url && m.video_url.trim()) || ex?.video_url || an?.video_url || null;
       const resolvedVideoType = m.video_type || ex?.video_type || an?.video_type || (resolvedVideoUrl ? (resolvedVideoUrl.includes('http') ? 'link' : 'local') : null);
       const resolvedVideoSourceName = m.video_source_name || ex?.video_source_name || an?.video_source_name || null;
-      const resolvedP1 = m.p1_video_start_time != null ? m.p1_video_start_time : (ex?.p1_video_start_time ?? an?.p1_video_start_time ?? null);
-      const resolvedP2 = m.p2_video_start_time != null ? m.p2_video_start_time : (ex?.p2_video_start_time ?? an?.p2_video_start_time ?? null);
+      // `undefined` means "field not touched" -> preserve existing value (a fuego).
+      // Explicit `null` means the caller intentionally cleared the period start -> persist the clear.
+      const resolvedP1 = m.p1_video_start_time !== undefined ? m.p1_video_start_time : (ex?.p1_video_start_time ?? an?.p1_video_start_time ?? null);
+      const resolvedP2 = m.p2_video_start_time !== undefined ? m.p2_video_start_time : (ex?.p2_video_start_time ?? an?.p2_video_start_time ?? null);
       const resolvedAdjustments = m.period_adjustments !== undefined
         ? m.period_adjustments
         : (ex?.period_adjustments ?? an?.period_adjustments ?? ex?.home_lineup?._period_adjustments ?? an?.home_lineup?._period_adjustments ?? null);
@@ -142,9 +156,14 @@ export async function saveMatchesToSupabase(matches: Match[]): Promise<boolean> 
       };
     });
 
+    // Drop rows for which a newer save started while we were reading/resolving above,
+    // so this slower call can't land after (and overwrite) the newer one with stale data.
+    const freshRows = rows.filter((row) => _matchSaveSeq[row.id] === mySeqs.get(row.id));
+    if (freshRows.length === 0) return true;
+
     let { error } = await supabase
       .from('matches')
-      .upsert(rows, { onConflict: 'id' });
+      .upsert(freshRows, { onConflict: 'id' });
 
     // Esquema antiguo sin las columnas de vídeo/botonera/alineaciones → reintento sin ellas
     if (error && /Could not find the '.+' column/.test(error.message)) {
@@ -154,7 +173,7 @@ export async function saveMatchesToSupabase(matches: Match[]): Promise<boolean> 
         'Mientras tanto se guarda el partido omitiendo las columnas no encontradas.'
       );
 
-      const strippedRows = rows.map((row) => {
+      const strippedRows = freshRows.map((row) => {
         const copy: Record<string, any> = { ...row };
         OPTIONAL_MATCH_COLUMNS.forEach((col) => delete copy[col]);
         return copy;

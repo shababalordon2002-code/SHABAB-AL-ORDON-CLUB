@@ -1,6 +1,7 @@
 import { Match, Player, PlayerMapping, Team, Competition, ImportLog, NormalizedEvent, BotoneraTemplate, ActiveBotoneraSession, MatchAnalysis, MatchDashboard, DashboardGlobalConfig } from '@/types';
 import {
   saveBotoneraTemplateToSupabase,
+  saveBotoneraTemplatesToSupabase,
   deleteBotoneraTemplateFromSupabase,
   getBotoneraTemplatesFromSupabase,
   saveAnalysisSessionToSupabase,
@@ -760,9 +761,7 @@ export const dbStore = {
     }
     const current = this.getBotoneraTemplates();
     if (current && current.length > 0) {
-      current.forEach(t => {
-        saveBotoneraTemplateToSupabase(t).catch(() => {});
-      });
+      saveBotoneraTemplatesToSupabase(current).catch(() => {});
     }
     return current;
   },
@@ -799,9 +798,7 @@ export const dbStore = {
 
   resetBotoneraTemplates(): BotoneraTemplate[] {
     setToStorage(STORAGE_KEYS.BOTONERA_TEMPLATES, SEED_BOTONERA_TEMPLATES);
-    SEED_BOTONERA_TEMPLATES.forEach(t => {
-      saveBotoneraTemplateToSupabase(t).catch(() => {});
-    });
+    saveBotoneraTemplatesToSupabase(SEED_BOTONERA_TEMPLATES).catch(() => {});
     return SEED_BOTONERA_TEMPLATES;
   },
 

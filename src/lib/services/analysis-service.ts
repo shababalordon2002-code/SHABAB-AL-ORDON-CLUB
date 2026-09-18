@@ -91,12 +91,20 @@ export async function getAnalysesFromSupabase(matchId?: string): Promise<MatchAn
   }
 }
 
+// Guards against out-of-order concurrent saves for the same match: several callers
+// fire this fire-and-forget in parallel, and a slower call finishing after a newer
+// one would overwrite fresh data (e.g. a just-edited period offset) with stale data.
+const _analysisSaveSeq: Record<string, number> = {};
+
 // Save/Upsert a Match Analysis to Supabase
 export async function saveAnalysisToSupabase(
   analysis: MatchAnalysis,
   options?: { skipEventsTableSync?: boolean }
 ): Promise<boolean> {
   if (!analysis || !analysis.id || !analysis.match_id) return false;
+
+  const mySeq = (_analysisSaveSeq[analysis.match_id] || 0) + 1;
+  _analysisSaveSeq[analysis.match_id] = mySeq;
 
   try {
     let supabase: any;
@@ -131,8 +139,10 @@ export async function saveAnalysisToSupabase(
     const resolvedVideoUrl = (analysis.video_url && analysis.video_url.trim()) || existingAn?.video_url || existingMatch?.video_url || null;
     const resolvedVideoType = analysis.video_type || existingAn?.video_type || existingMatch?.video_type || (resolvedVideoUrl ? (resolvedVideoUrl.includes('http') ? 'link' : 'local') : null);
     const resolvedVideoSourceName = analysis.video_source_name || existingAn?.video_source_name || existingMatch?.video_source_name || null;
-    const resolvedP1 = analysis.p1_video_start_time != null ? analysis.p1_video_start_time : (existingAn?.p1_video_start_time ?? existingMatch?.p1_video_start_time ?? null);
-    const resolvedP2 = analysis.p2_video_start_time != null ? analysis.p2_video_start_time : (existingAn?.p2_video_start_time ?? existingMatch?.p2_video_start_time ?? null);
+    // `undefined` means "field not touched" -> preserve existing value (a fuego).
+    // Explicit `null` means the caller intentionally cleared the period start -> persist the clear.
+    const resolvedP1 = analysis.p1_video_start_time !== undefined ? analysis.p1_video_start_time : (existingAn?.p1_video_start_time ?? existingMatch?.p1_video_start_time ?? null);
+    const resolvedP2 = analysis.p2_video_start_time !== undefined ? analysis.p2_video_start_time : (existingAn?.p2_video_start_time ?? existingMatch?.p2_video_start_time ?? null);
     const resolvedAdjustments = analysis.period_adjustments !== undefined
       ? analysis.period_adjustments
       : (existingAn?.period_adjustments ?? existingMatch?.period_adjustments ?? existingAn?.home_lineup?._period_adjustments ?? existingMatch?.home_lineup?._period_adjustments ?? null);
@@ -311,6 +321,12 @@ export async function saveAnalysisToSupabase(
           console.warn('Non-blocking error upserting analysis_events batch:', eventUpsertErr);
         }
       }
+    }
+
+    // A newer save for this same match started while we were reading/resolving above:
+    // abandon this write so it can't land after (and overwrite) the newer one with stale data.
+    if (_analysisSaveSeq[analysis.match_id] !== mySeq) {
+      return true;
     }
 
     let { error } = await supabase

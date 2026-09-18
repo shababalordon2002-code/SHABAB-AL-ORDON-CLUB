@@ -156,7 +156,7 @@ export default function DashboardsPage() {
       debounceTimer = setTimeout(syncAll, 500);
     };
     const channel = supabase
-      .channel('dashboards-page-live')
+      .channel(`dashboards-page-live:${Math.random().toString(36).substring(2, 9)}_${Date.now()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'match_analyses' }, debouncedSync)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'match_dashboards' }, debouncedSync)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, debouncedSync)

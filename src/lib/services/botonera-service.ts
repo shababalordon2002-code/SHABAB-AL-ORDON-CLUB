@@ -38,6 +38,7 @@ export async function getBotoneraTemplatesFromSupabase(): Promise<BotoneraTempla
 
 // Save/Upsert a Botonera template to Supabase 'botonera_templates' table
 export async function saveBotoneraTemplateToSupabase(template: BotoneraTemplate): Promise<boolean> {
+  if (!template || !template.id) return false;
   try {
     let supabase: any;
     try {
@@ -56,18 +57,75 @@ export async function saveBotoneraTemplateToSupabase(template: BotoneraTemplate)
       updated_at: new Date().toISOString(),
     };
 
-    const { error } = await supabase
+    let { error } = await supabase
       .from('botonera_templates')
       .upsert([row], { onConflict: 'id' });
 
+    // Retry once if a transient connection pool timeout occurs
+    if (error && error.message.includes('connection pool')) {
+      await new Promise((res) => setTimeout(res, 500));
+      const retryResult = await supabase
+        .from('botonera_templates')
+        .upsert([row], { onConflict: 'id' });
+      error = retryResult.error;
+    }
+
     if (error) {
-      console.error('Error upserting botonera_template to Supabase:', error.message);
+      if (!error.message.includes('relation "public.botonera_templates" does not exist')) {
+        console.warn('Warning upserting botonera_template to Supabase:', error.message);
+      }
       return false;
     }
 
     return true;
   } catch (err: any) {
-    console.error('Error saving botonera_template to Supabase:', err.message);
+    console.warn('Warning saving botonera_template to Supabase:', err.message);
+    return false;
+  }
+}
+
+// Save/Upsert multiple Botonera templates in a single batch query (avoids connection pool exhaustion)
+export async function saveBotoneraTemplatesToSupabase(templates: BotoneraTemplate[]): Promise<boolean> {
+  if (!templates || templates.length === 0) return true;
+  try {
+    let supabase: any;
+    try {
+      supabase = createAdminClient();
+    } catch {
+      supabase = createClient();
+    }
+
+    const rows = templates.map((t) => ({
+      id: t.id,
+      name: t.name,
+      description: t.description || '',
+      is_default: t.isDefault || false,
+      grid_cols: t.gridCols || 4,
+      buttons: t.buttons,
+      updated_at: new Date().toISOString(),
+    }));
+
+    let { error } = await supabase
+      .from('botonera_templates')
+      .upsert(rows, { onConflict: 'id' });
+
+    if (error && error.message.includes('connection pool')) {
+      await new Promise((res) => setTimeout(res, 600));
+      const retryResult = await supabase
+        .from('botonera_templates')
+        .upsert(rows, { onConflict: 'id' });
+      error = retryResult.error;
+    }
+
+    if (error) {
+      if (!error.message.includes('relation "public.botonera_templates" does not exist')) {
+        console.warn('Warning upserting botonera_templates batch to Supabase:', error.message);
+      }
+      return false;
+    }
+    return true;
+  } catch (err: any) {
+    console.warn('Warning saving botonera_templates batch to Supabase:', err.message);
     return false;
   }
 }
@@ -195,9 +253,18 @@ export async function getAllActiveSessionsFromSupabase(): Promise<Record<string,
   }
 }
 
+// Guards against out-of-order concurrent saves for the same match: several callers
+// (manual edits, the active-session sync effect) fire this fire-and-forget in parallel,
+// and a slower call finishing after a newer one would overwrite fresh data with stale data.
+const _sessionSaveSeq: Record<string, number> = {};
+
 // Save/Upsert Active Analysis Session to Supabase
 export async function saveAnalysisSessionToSupabase(session: ActiveBotoneraSession): Promise<boolean> {
   if (!session || !session.selectedMatchId) return false;
+
+  const matchId = session.selectedMatchId;
+  const mySeq = (_sessionSaveSeq[matchId] || 0) + 1;
+  _sessionSaveSeq[matchId] = mySeq;
 
   try {
     let supabase: any;
@@ -230,8 +297,10 @@ export async function saveAnalysisSessionToSupabase(session: ActiveBotoneraSessi
     const resolvedVideoUrl = (session.videoUrl && session.videoUrl.trim()) || existingSess?.video_url || existingMatch?.video_url || null;
     const resolvedVideoType = session.videoType || existingSess?.video_type || existingMatch?.video_type || (resolvedVideoUrl ? (resolvedVideoUrl.includes('http') ? 'link' : 'local') : null);
     const resolvedVideoSourceName = session.videoSourceName || existingSess?.video_source_name || existingMatch?.video_source_name || null;
-    const resolvedP1 = session.p1VideoStartSeconds != null ? session.p1VideoStartSeconds : (existingSess?.p1_video_start_seconds ?? existingMatch?.p1_video_start_time ?? null);
-    const resolvedP2 = session.p2VideoStartSeconds != null ? session.p2VideoStartSeconds : (existingSess?.p2_video_start_seconds ?? existingMatch?.p2_video_start_time ?? null);
+    // `undefined` means "field not touched" -> preserve existing value (a fuego).
+    // Explicit `null` means the caller intentionally cleared the period start -> persist the clear.
+    const resolvedP1 = session.p1VideoStartSeconds !== undefined ? session.p1VideoStartSeconds : (existingSess?.p1_video_start_seconds ?? existingMatch?.p1_video_start_time ?? null);
+    const resolvedP2 = session.p2VideoStartSeconds !== undefined ? session.p2VideoStartSeconds : (existingSess?.p2_video_start_seconds ?? existingMatch?.p2_video_start_time ?? null);
     const resolvedAdjustments = session.periodAdjustments !== undefined
       ? session.periodAdjustments
       : (existingSess?.period_adjustments ?? existingMatch?.period_adjustments ?? existingSess?.home_lineup?._period_adjustments ?? existingMatch?.home_lineup?._period_adjustments ?? null);
@@ -264,6 +333,12 @@ export async function saveAnalysisSessionToSupabase(session: ActiveBotoneraSessi
       away_lineup: resolvedAwayLineup,
       updated_at: new Date().toISOString(),
     };
+
+    // A newer save for this same match started while we were reading/resolving above:
+    // abandon this write so it can't land after (and overwrite) the newer one with stale data.
+    if (_sessionSaveSeq[matchId] !== mySeq) {
+      return true;
+    }
 
     let { error } = await supabase
       .from('analysis_sessions')
@@ -454,6 +529,40 @@ export async function insertAnalysisEventToSupabase(matchId: string, event: Norm
   }
 }
 
+// Batch upsert multiple events in a single HTTP request (fast, robust, avoids connection limit bottlenecks)
+export async function batchUpsertAnalysisEventsToSupabase(matchId: string, events: NormalizedEvent[]): Promise<boolean> {
+  if (!events || events.length === 0) return true;
+  try {
+    let supabase: any;
+    try {
+      supabase = createAdminClient();
+    } catch {
+      supabase = createClient();
+    }
+    const rows = events.map((e) => ({
+      ...normalizedEventToRow(matchId, e),
+      created_at: e.created_at || new Date().toISOString(),
+    }));
+
+    // Chunk in groups of 100
+    const chunkSize = 100;
+    for (let i = 0; i < rows.length; i += chunkSize) {
+      const chunk = rows.slice(i, i + chunkSize);
+      const { error } = await supabase
+        .from('analysis_events')
+        .upsert(chunk, { onConflict: 'event_id' });
+
+      if (error) {
+        console.warn('Error in batchUpsertAnalysisEventsToSupabase chunk:', error.message);
+      }
+    }
+    return true;
+  } catch (err: any) {
+    console.warn('Error batch upserting analysis events to Supabase:', err.message);
+    return false;
+  }
+}
+
 // Update a single event in place (does NOT touch other analysts' events)
 export async function updateAnalysisEventInSupabase(matchId: string, event: NormalizedEvent): Promise<boolean> {
   try {
@@ -559,8 +668,9 @@ export function subscribeToAnalysisEvents(
   }
 ): () => void {
   const supabase = createClient();
+  const channelTopic = `analysis_events:${matchId}:${Math.random().toString(36).substring(2, 9)}_${Date.now()}`;
   const channel = supabase
-    .channel(`analysis_events:${matchId}`)
+    .channel(channelTopic)
     .on(
       'postgres_changes',
       { event: 'INSERT', schema: 'public', table: 'analysis_events', filter: `match_id=eq.${matchId}` },
@@ -590,7 +700,8 @@ export function subscribeToAnalysisPresence(
   onSync: (analysts: { userId: string; userName: string }[]) => void
 ): () => void {
   const supabase = createClient();
-  const channel = supabase.channel(`analysis_presence:${matchId}`, {
+  const channelTopic = `analysis_presence:${matchId}:${Math.random().toString(36).substring(2, 9)}_${Date.now()}`;
+  const channel = supabase.channel(channelTopic, {
     config: { presence: { key: presenceInfo.userId } },
   });
 
@@ -657,8 +768,9 @@ export function subscribeToAnalysisSession(
   }) => void
 ): () => void {
   const supabase = createClient();
+  const channelTopic = `analysis_session_sync:${matchId}:${Math.random().toString(36).substring(2, 9)}_${Date.now()}`;
   const channel = supabase
-    .channel(`analysis_session_sync:${matchId}`)
+    .channel(channelTopic)
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'analysis_sessions', filter: `match_id=eq.${matchId}` },
