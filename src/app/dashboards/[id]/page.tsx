@@ -60,6 +60,7 @@ function DashboardDetailContent({ params }: { params: Promise<{ id: string }> })
         if (!unsubEvents) {
           unsubEvents = subscribeToAnalysisEvents(targetMatchId, {
             onInsert: (newEvent) => {
+              if (!newEvent || !newEvent.event_id || dbStore.isEventDeleted(newEvent.event_id)) return;
               setEvents((prev) => {
                 if (prev.some((e) => e.event_id === newEvent.event_id)) return prev;
                 return [...prev, newEvent].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
@@ -67,10 +68,13 @@ function DashboardDetailContent({ params }: { params: Promise<{ id: string }> })
               dbStore.saveNormalizedEvents([newEvent], false, targetMatchId);
             },
             onUpdate: (updatedEvent) => {
+              if (!updatedEvent || !updatedEvent.event_id || dbStore.isEventDeleted(updatedEvent.event_id)) return;
               setEvents((prev) => prev.map((e) => (e.event_id === updatedEvent.event_id ? updatedEvent : e)));
               dbStore.saveNormalizedEvents([updatedEvent], false, targetMatchId);
             },
             onDelete: (deletedEventId) => {
+              if (!deletedEventId) return;
+              dbStore.markEventDeleted(deletedEventId);
               setEvents((prev) => prev.filter((e) => e.event_id !== deletedEventId));
               dbStore.deleteNormalizedEvent(deletedEventId);
             },

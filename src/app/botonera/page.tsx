@@ -164,6 +164,12 @@ export default function BotoneraPage() {
   // IDs de eventos que este mismo cliente acaba de escribir, para no re-aplicarlos cuando
   // los recibimos de vuelta por el canal realtime (eco de nuestra propia escritura)
   const ownWritesRef = useRef<Set<string>>(new Set());
+  // IDs de eventos eliminados por el analista, para asegurar que NUNCA resuciten
+  const deletedEventIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const persisted = dbStore.getDeletedEventIds();
+    persisted.forEach((id) => deletedEventIdsRef.current.add(id));
+  }, []);
   // Cola de sincronización en segundo plano: un evento que no pudo subirse a Supabase
   // (tras los reintentos inmediatos de withRetry) NUNCA se abandona ni requiere que el
   // analista haga nada. Se queda aquí y un intervalo + el evento 'online' lo siguen
@@ -594,14 +600,17 @@ export default function BotoneraPage() {
         const existingAns = activeSession.selectedMatchId ? dbStore.getAnalyses(activeSession.selectedMatchId) : [];
         const analysisFallback = existingAns.length > 0 ? existingAns[0] : null;
 
+        const deletedIds = dbStore.getDeletedEventIds();
         if (activeSession.events && activeSession.events.length > 0) {
-          setEvents(activeSession.events);
+          const clean = activeSession.events.filter((e) => e && e.event_id && !deletedIds.has(e.event_id) && !deletedEventIdsRef.current.has(e.event_id));
+          setEvents(clean);
         } else if (analysisFallback?.events && analysisFallback.events.length > 0) {
-          setEvents(analysisFallback.events);
+          const clean = analysisFallback.events.filter((e) => e && e.event_id && !deletedIds.has(e.event_id) && !deletedEventIdsRef.current.has(e.event_id));
+          setEvents(clean);
         } else if (activeSession.selectedMatchId) {
           const matchEvts = dbStore.getNormalizedEvents(activeSession.selectedMatchId);
           if (matchEvts.length > 0) {
-            setEvents(matchEvts);
+            setEvents(matchEvts.filter((e) => e && e.event_id && !deletedIds.has(e.event_id) && !deletedEventIdsRef.current.has(e.event_id)));
           }
         }
 
@@ -685,13 +694,22 @@ export default function BotoneraPage() {
 
     getAnalysisEventsFromSupabase(selectedMatchId).then((remoteEvents) => {
       if (cancelled || !remoteEvents) return;
+      const deletedIds = dbStore.getDeletedEventIds();
       setEvents((prev) => {
-        const remoteIds = new Set(remoteEvents.map((e) => e.event_id));
+        const cleanRemote = remoteEvents.filter(
+          (e) => e && e.event_id && !deletedEventIdsRef.current.has(e.event_id) && !deletedIds.has(e.event_id)
+        );
+        const remoteIds = new Set(cleanRemote.map((e) => e.event_id));
         // Conserva eventos locales propios aún no confirmados en Supabase
         const pendingLocal = prev.filter(
-          (e) => ownWritesRef.current.has(e.event_id) && !remoteIds.has(e.event_id)
+          (e) =>
+            e && e.event_id &&
+            ownWritesRef.current.has(e.event_id) &&
+            !remoteIds.has(e.event_id) &&
+            !deletedEventIdsRef.current.has(e.event_id) &&
+            !deletedIds.has(e.event_id)
         );
-        const merged = [...remoteEvents, ...pendingLocal].sort((a, b) => {
+        const merged = [...cleanRemote, ...pendingLocal].sort((a, b) => {
           const pa = a.period ?? 1;
           const pb = b.period ?? 1;
           if (pa !== pb) return pb - pa;
@@ -706,6 +724,9 @@ export default function BotoneraPage() {
 
     const unsubscribeEvents = subscribeToAnalysisEvents(selectedMatchId, {
       onInsert: (evt) => {
+        if (!evt || !evt.event_id) return;
+        if (deletedEventIdsRef.current.has(evt.event_id) || dbStore.isEventDeleted(evt.event_id)) return;
+
         if (ownWritesRef.current.has(evt.event_id)) {
           ownWritesRef.current.delete(evt.event_id);
           return;
@@ -717,6 +738,9 @@ export default function BotoneraPage() {
         dbStore.saveNormalizedEvents([evt], false, selectedMatchId);
       },
       onUpdate: (evt) => {
+        if (!evt || !evt.event_id) return;
+        if (deletedEventIdsRef.current.has(evt.event_id) || dbStore.isEventDeleted(evt.event_id)) return;
+
         if (ownWritesRef.current.has(evt.event_id)) {
           ownWritesRef.current.delete(evt.event_id);
           return;
@@ -726,21 +750,31 @@ export default function BotoneraPage() {
       },
       onDelete: (eventId) => {
         if (!eventId) return;
-        if (ownWritesRef.current.has(eventId)) {
-          ownWritesRef.current.delete(eventId);
-          return;
-        }
+        deletedEventIdsRef.current.add(eventId);
+        dbStore.markEventDeleted(eventId);
+        ownWritesRef.current.delete(eventId);
         setEvents((prev) => prev.filter((e) => e.event_id !== eventId));
         dbStore.deleteNormalizedEvent(eventId);
       },
       onReconnected: () => {
         getAnalysisEventsFromSupabase(selectedMatchId).then((remoteEvents) => {
           if (cancelled || !remoteEvents) return;
+          const deletedIds = dbStore.getDeletedEventIds();
           setEvents((prev) => {
             const map = new Map<string, NormalizedEvent>();
-            remoteEvents.forEach((e) => map.set(e.event_id, e));
+            remoteEvents.forEach((e) => {
+              if (e && e.event_id && !deletedEventIdsRef.current.has(e.event_id) && !deletedIds.has(e.event_id)) {
+                map.set(e.event_id, e);
+              }
+            });
             prev.forEach((e) => {
-              if (!map.has(e.event_id) && ownWritesRef.current.has(e.event_id)) {
+              if (
+                e && e.event_id &&
+                !map.has(e.event_id) &&
+                ownWritesRef.current.has(e.event_id) &&
+                !deletedEventIdsRef.current.has(e.event_id) &&
+                !deletedIds.has(e.event_id)
+              ) {
                 map.set(e.event_id, e);
               }
             });
@@ -1143,8 +1177,12 @@ export default function BotoneraPage() {
       const existingObj = existingAnalyses.find((a) => a.match_id === targetId || a.id === masterAnalysisId);
       const existingEventsCount = existingObj?.events?.length || 0;
 
-      // CRITICAL DATA LOSS PREVENTION: Never overwrite existing events with an empty array!
-      if (events.length === 0 && existingEventsCount > 0) {
+      // CRITICAL DATA LOSS PREVENTION: Never overwrite existing events with an empty array UNLESS user explicitly cleared/deleted them!
+      const isExplicitEmpty = events.length === 0 && (
+        deletedEventIdsRef.current.size > 0 ||
+        dbStore.getTrashEvents().some((t) => t.match_id === targetId)
+      );
+      if (events.length === 0 && existingEventsCount > 0 && !isExplicitEmpty) {
         console.warn(`[AutoSave] Blocked saving empty events over ${existingEventsCount} existing events for ${targetId}`);
         return;
       }
@@ -1152,6 +1190,8 @@ export default function BotoneraPage() {
       const normalizedEvts = events.map((e) => ({ ...e, match_id: targetId }));
       if (normalizedEvts.length > 0) {
         dbStore.saveNormalizedEvents(normalizedEvts, true, targetId);
+      } else if (isExplicitEmpty) {
+        dbStore.saveNormalizedEvents([], true, targetId);
       }
 
       const currentAnalyst = profile?.full_name || user?.email || 'Analista Principal (SAO)';
@@ -1183,13 +1223,13 @@ export default function BotoneraPage() {
         botonera_template_id: resolvedTemplateId,
         home_lineup: targetMatch?.home_lineup || existingObj?.home_lineup || null,
         away_lineup: targetMatch?.away_lineup || existingObj?.away_lineup || null,
-        events: normalizedEvts.length > 0 ? normalizedEvts : (existingObj?.events || []),
+        events: normalizedEvts,
         created_at: existingObj?.created_at || new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
 
       dbStore.saveAnalysis(newAnalysis);
-      saveAnalysisToSupabase(newAnalysis).catch((err) => {
+      saveAnalysisToSupabase(newAnalysis, { skipEventsTableSync: true }).catch((err) => {
         console.warn('Could not auto-save analysis to Supabase:', err);
       });
       if (targetMatch) {
@@ -1247,7 +1287,11 @@ export default function BotoneraPage() {
       return;
     }
     if (!isSessionConfigured) return;
-    if (events.length === 0 && !hasVideoSync && Object.keys(periodAdjustments).length === 0) return;
+    const isExplicitEmpty = events.length === 0 && (
+      deletedEventIdsRef.current.size > 0 ||
+      dbStore.getTrashEvents().some((t) => t.match_id === selectedMatchId)
+    );
+    if (events.length === 0 && !isExplicitEmpty && !hasVideoSync && Object.keys(periodAdjustments).length === 0) return;
 
     const timer = setTimeout(() => {
       autoSaveToMatch(true);
@@ -1668,11 +1712,15 @@ export default function BotoneraPage() {
       setEditingAnalysisId(targetAnalysis.id);
     }
     if (matchId !== 'free_session') {
+      const deletedIds = dbStore.getDeletedEventIds();
       const matchEvents = dbStore.getNormalizedEvents(matchId);
-      const targetEvents = (targetAnalysis?.events && targetAnalysis.events.length > 0)
+      const rawTargetEvents = (targetAnalysis?.events && targetAnalysis.events.length > 0)
         ? targetAnalysis.events
         : matchEvents;
-      setEvents(targetEvents);
+      const cleanTargetEvents = (rawTargetEvents || []).filter(
+        (e) => e && e.event_id && !deletedIds.has(e.event_id) && !deletedEventIdsRef.current.has(e.event_id)
+      );
+      setEvents(cleanTargetEvents);
 
       const targetMatch = dbStore.getMatchById(matchId);
 
@@ -1717,7 +1765,11 @@ export default function BotoneraPage() {
   const handleEditAnalysisInBotonera = (an: MatchAnalysis) => {
     setEditingAnalysisId(an.id);
     setSelectedMatchId(an.match_id);
-    setEvents(an.events || []);
+    const deletedIds = dbStore.getDeletedEventIds();
+    const cleanEvents = (an.events || []).filter(
+      (e) => e && e.event_id && !deletedIds.has(e.event_id) && !deletedEventIdsRef.current.has(e.event_id)
+    );
+    setEvents(cleanEvents);
 
     const targetMatch = dbStore.getMatchById(an.match_id) || matches.find((m) => m.id === an.match_id);
 
@@ -2622,34 +2674,67 @@ export default function BotoneraPage() {
   };
 
   const handleDeleteEvent = (eventId: string) => {
+    if (!eventId) return;
     const targetId = (selectedMatchId && selectedMatchId !== 'free_session') ? selectedMatchId : (selectedMatchId || 'free_session');
 
-    // 1. Mark as own write to prevent echo loop
-    ownWritesRef.current.add(eventId);
+    // 1. Mark as deleted so it is NEVER restored by real-time subscriptions, effects, or reload
+    deletedEventIdsRef.current.add(eventId);
+    ownWritesRef.current.delete(eventId);
+    dbStore.markEventDeleted(eventId);
 
     // 2. Pure state update in UI - removed immediately (0ms)
-    setEvents((prev) => {
-      const target = prev.find((e) => e.event_id === eventId);
-      if (target) {
-        dbStore.backupDeletedEvents([target]);
-      }
-      return prev.filter((e) => e.event_id !== eventId);
-    });
+    let target = events.find((e) => e.event_id === eventId);
+    if (!target) {
+      target = dbStore.getNormalizedEvents().find((e) => e.event_id === eventId);
+    }
+    if (target) {
+      dbStore.backupDeletedEvents([target]);
+    }
+    setEvents((prev) => prev.filter((e) => e.event_id !== eventId));
 
-    // 3. Delete from local storage
-    dbStore.deleteNormalizedEvent(eventId);
+    // 3. Delete from local storage (events, active session, analyses)
+    dbStore.deleteNormalizedEvent(eventId, target);
 
-    // 4. Asynchronous delete from Supabase analysis_events table
     if (targetId) {
+      // 4. Update master MatchAnalysis record immediately in local store & Supabase
+      const masterAnalysisId = `analysis_${targetId}`;
+      const analyses = dbStore.getAnalyses(targetId);
+      const existingObj = analyses.find((a) => a.match_id === targetId || a.id === masterAnalysisId);
+      if (existingObj) {
+        const remainingAnalysisEvents = (existingObj.events || []).filter((e) => e.event_id !== eventId);
+        const updatedAnalysis: MatchAnalysis = {
+          ...existingObj,
+          events: remainingAnalysisEvents,
+          updated_at: new Date().toISOString(),
+        };
+        dbStore.saveAnalysis(updatedAnalysis);
+        saveAnalysisToSupabase(updatedAnalysis, { skipEventsTableSync: true }).catch(() => {});
+        setSavedAnalyses(dbStore.getAnalyses());
+      }
+
+      // 5. Update active session in local store & Supabase
+      const activeSess = dbStore.getActiveBotoneraSession();
+      if (activeSess && activeSess.events) {
+        const remainingSessionEvents = activeSess.events.filter((e) => e.event_id !== eventId);
+        const updatedSession: ActiveBotoneraSession = {
+          ...activeSess,
+          events: remainingSessionEvents,
+          lastUpdatedTimestamp: Date.now(),
+        };
+        dbStore.saveActiveBotoneraSession(updatedSession, true);
+        saveAnalysisSessionToSupabase(updatedSession).catch(() => {});
+      }
+
+      // 6. Asynchronous delete from Supabase analysis_events, match_analyses, and analysis_sessions
       const deleterName = profile?.full_name || user?.email || 'Analista';
-      withRetry(() => deleteAnalysisEventFromSupabase(eventId, deleterName), { label: `delete event ${eventId}` })
+      withRetry(() => deleteAnalysisEventFromSupabase(eventId, deleterName, targetId), { label: `delete event ${eventId}` })
         .then(() => clearSyncFailed(eventId))
         .catch((err) => {
           console.warn('Could not sync event deletion to Supabase after retries, queued for auto-retry:', err);
           markSyncFailed(eventId, { kind: 'delete', eventId, deleterName });
         });
 
-      // Update match event count & scores
+      // 7. Update match event count & scores
       const targetMatch = dbStore.getMatchById(targetId) || matches.find((m) => m.id === targetId);
       if (targetMatch) {
         const remainingEvts = dbStore.getNormalizedEvents(targetId);
@@ -2689,15 +2774,19 @@ export default function BotoneraPage() {
     setEvents((prev) => prev.filter((e) => !targetIds.has(e.event_id)));
 
     // 2. Remove from local store
-    targets.forEach((e) => dbStore.deleteNormalizedEvent(e.event_id));
+    targets.forEach((e) => {
+      deletedEventIdsRef.current.add(e.event_id);
+      ownWritesRef.current.delete(e.event_id);
+      dbStore.markEventDeleted(e.event_id);
+      dbStore.deleteNormalizedEvent(e.event_id, e);
+    });
 
     // 3. Delete from Supabase analysis_events
     const targetId = (selectedMatchId && selectedMatchId !== 'free_session') ? selectedMatchId : (selectedMatchId || 'free_session');
     if (targetId) {
       const deleterName = profile?.full_name || user?.email || 'Analista';
       targets.forEach((e) => {
-        ownWritesRef.current.add(e.event_id);
-        deleteAnalysisEventFromSupabase(e.event_id, deleterName).catch((err) =>
+        deleteAnalysisEventFromSupabase(e.event_id, deleterName, targetId).catch((err) =>
           console.warn('Could not sync substitution reset to Supabase:', err)
         );
       });
@@ -2735,14 +2824,18 @@ export default function BotoneraPage() {
     setEvents((prev) => prev.filter((e) => !subIdsToDelete.has(e.event_id)));
 
     // 2. Remove from local store
-    subsToDelete.forEach((s) => dbStore.deleteNormalizedEvent(s.event_id));
+    subsToDelete.forEach((s) => {
+      deletedEventIdsRef.current.add(s.event_id);
+      ownWritesRef.current.delete(s.event_id);
+      dbStore.markEventDeleted(s.event_id);
+      dbStore.deleteNormalizedEvent(s.event_id, s);
+    });
 
     // Delete substitutions from Supabase analysis_events table immediately
     if (targetId) {
       const deleterName = profile?.full_name || user?.email || 'Analista';
       subsToDelete.forEach((s) => {
-        ownWritesRef.current.add(s.event_id);
-        deleteAnalysisEventFromSupabase(s.event_id, deleterName).catch((err) =>
+        deleteAnalysisEventFromSupabase(s.event_id, deleterName, targetId).catch((err) =>
           console.warn('Could not sync substitution deletion to Supabase:', err)
         );
       });

@@ -229,6 +229,22 @@ export async function saveAnalysisToSupabase(
     // Events safety: ONLY delete from analysis_events table if explicitClear is intentionally requested by user action
     const isExplicitClear = options?.explicitClear === true;
 
+    // Query analysis_events_trash to guarantee deleted events are NEVER consolidated or revived
+    const trashEventIds = new Set<string>();
+    try {
+      const { data: trashRows } = await supabase
+        .from('analysis_events_trash')
+        .select('event_id')
+        .eq('match_id', analysis.match_id);
+      if (trashRows && trashRows.length > 0) {
+        trashRows.forEach((t: any) => {
+          if (t && t.event_id) trashEventIds.add(t.event_id);
+        });
+      }
+    } catch {
+      // Non-blocking
+    }
+
     let consolidatedEvents: any[] = [];
     if (isExplicitClear) {
       // User explicitly requested to clear all events
@@ -240,9 +256,13 @@ export async function saveAnalysisToSupabase(
       consolidatedEvents = [];
     } else if (options?.skipEventsTableSync) {
       // Fast-path: individual events are already maintained in real time via insert/update/deleteAnalysisEventToSupabase
-      consolidatedEvents = (analysis.events && Array.isArray(analysis.events)) ? analysis.events : [];
+      consolidatedEvents = (analysis.events && Array.isArray(analysis.events))
+        ? analysis.events.filter((e: any) => e && e.event_id && !trashEventIds.has(e.event_id))
+        : [];
     } else {
-      const incomingEvents: any[] = (analysis.events && Array.isArray(analysis.events)) ? analysis.events : [];
+      const incomingEvents: any[] = (analysis.events && Array.isArray(analysis.events))
+        ? analysis.events.filter((e: any) => e && e.event_id && !trashEventIds.has(e.event_id))
+        : [];
       let tableEvents: any[] = [];
       try {
         const { data: tblEvts } = await supabase
@@ -259,7 +279,7 @@ export async function saveAnalysisToSupabase(
       const eventMap = new Map<string, any>();
       if (tableEvents.length > 0) {
         tableEvents.forEach((r: any) => {
-          if (r && r.event_id) {
+          if (r && r.event_id && !trashEventIds.has(r.event_id)) {
             const parsedMeta = typeof r.metadata === 'string' ? JSON.parse(r.metadata) : (r.metadata || {});
             const rNorm = {
               event_id: r.event_id,
@@ -299,7 +319,7 @@ export async function saveAnalysisToSupabase(
 
       // Apply incoming active events
       incomingEvents.forEach((e: any) => {
-        if (e && e.event_id) {
+        if (e && e.event_id && !trashEventIds.has(e.event_id)) {
           const prev = eventMap.get(e.event_id);
           if (!prev || new Date(e.updated_at || 0).getTime() >= new Date(prev.updated_at || 0).getTime()) {
             eventMap.set(e.event_id, e);
@@ -321,6 +341,8 @@ export async function saveAnalysisToSupabase(
       )
     ).join(', ') || analysis.analyst_name || 'Analista SAO';
 
+    const cleanFinalEvents = consolidatedEvents.filter((e: any) => e && e.event_id && !trashEventIds.has(e.event_id));
+
     const row: Record<string, any> = {
       id: targetId,
       match_id: analysis.match_id,
@@ -336,13 +358,13 @@ export async function saveAnalysisToSupabase(
       botonera_template_id: resolvedTemplateId,
       home_lineup: safeHomeLineup,
       away_lineup: resolvedAwayLineup,
-      events: consolidatedEvents,
+      events: cleanFinalEvents,
       updated_at: new Date().toISOString(),
     };
 
     // Ensure analysis_events table in Supabase has every event saved row-by-row
-    if (!options?.skipEventsTableSync && consolidatedEvents.length > 0) {
-      const rowsToUpsert = consolidatedEvents.map((e: any) => {
+    if (!options?.skipEventsTableSync && cleanFinalEvents.length > 0) {
+      const rowsToUpsert = cleanFinalEvents.map((e: any) => {
         const metaWithGoal = {
           ...(e.metadata || {}),
           goal_x: e.goal_x ?? e.metadata?.goal_x ?? null,

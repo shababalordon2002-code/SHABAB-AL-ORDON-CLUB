@@ -30,6 +30,7 @@ const STORAGE_KEYS = {
   MATCH_ANALYSES: 'sao_analytics_match_analyses_v1',
   MATCH_DASHBOARDS: 'sao_analytics_match_dashboards_v1',
   TRASH_EVENTS: 'sao_analytics_trash_events_v1',
+  DELETED_EVENT_IDS: 'sao_analytics_deleted_event_ids_v1',
   DASHBOARD_CONFIG: 'sao_analytics_dashboard_config_v1',
 };
 
@@ -593,12 +594,35 @@ export const dbStore = {
   },
 
   // Normalized Events
+  getDeletedEventIds(): Set<string> {
+    const list = getFromStorage<string[]>(STORAGE_KEYS.DELETED_EVENT_IDS, []);
+    const trash = this.getTrashEvents();
+    const set = new Set<string>(list);
+    trash.forEach((t) => {
+      if (t && t.event_id) set.add(t.event_id);
+    });
+    return set;
+  },
+
+  markEventDeleted(eventId: string): void {
+    if (!eventId) return;
+    const current = getFromStorage<string[]>(STORAGE_KEYS.DELETED_EVENT_IDS, []);
+    if (!current.includes(eventId)) {
+      current.push(eventId);
+      setToStorage(STORAGE_KEYS.DELETED_EVENT_IDS, current.slice(-1000));
+    }
+  },
+
+  isEventDeleted(eventId: string): boolean {
+    if (!eventId) return false;
+    return this.getDeletedEventIds().has(eventId);
+  },
+
   getNormalizedEvents(matchId?: string): NormalizedEvent[] {
     const storageEvents: NormalizedEvent[] = getFromStorage(STORAGE_KEYS.EVENTS, []);
-    const trash = this.getTrashEvents();
-    const trashSet = new Set(trash.map((t) => t.event_id));
+    const deletedIds = this.getDeletedEventIds();
 
-    const validEvents = storageEvents.filter((e) => e && e.event_id && !trashSet.has(e.event_id));
+    const validEvents = storageEvents.filter((e) => e && e.event_id && !deletedIds.has(e.event_id));
     if (matchId) {
       const matchOnly = validEvents.filter((e) => e.match_id === matchId);
       return this.deduplicateEventsByTime(matchOnly);
@@ -620,39 +644,44 @@ export const dbStore = {
   },
 
   saveNormalizedEvents(newEvents: NormalizedEvent[], replaceMatchEvents = false, overrideMatchId?: string): void {
-    if (!newEvents || newEvents.length === 0) return;
-    let allEvents = getFromStorage<NormalizedEvent[]>(STORAGE_KEYS.EVENTS, []);
-    const trash = this.getTrashEvents();
-    const trashSet = new Set(trash.map((t) => t.event_id));
-    allEvents = allEvents.filter((e) => !trashSet.has(e.event_id));
-
     const targetMatchId = overrideMatchId || newEvents[0]?.match_id;
+    let allEvents = getFromStorage<NormalizedEvent[]>(STORAGE_KEYS.EVENTS, []);
+    const deletedIds = this.getDeletedEventIds();
+    allEvents = allEvents.filter((e) => e && e.event_id && !deletedIds.has(e.event_id));
+
     if (replaceMatchEvents && targetMatchId) {
-      // Explicit replace (e.g. user manually cleared all events)
+      // Explicit replace (e.g. user manually cleared all events or replaced them)
       const otherMatches = allEvents.filter((e) => e.match_id !== targetMatchId);
-      allEvents = [...newEvents, ...otherMatches];
-    } else {
-      // Safe merge by event_id: never lose events from other analysts
-      const byId = new Map<string, NormalizedEvent>();
-      allEvents.forEach((e) => {
-        if (e && e.event_id) byId.set(e.event_id, e);
-      });
-      newEvents.forEach((e) => {
-        if (e && e.event_id) {
-          const existing = byId.get(e.event_id);
-          if (!existing) {
-            byId.set(e.event_id, e);
-          } else {
-            const exTime = new Date(existing.updated_at || existing.created_at || 0).getTime();
-            const curTime = new Date(e.updated_at || e.created_at || 0).getTime();
-            if (curTime >= exTime) {
-              byId.set(e.event_id, e);
-            }
-          }
-        }
-      });
-      allEvents = Array.from(byId.values());
+      const cleanNew = (newEvents || []).filter((e) => e && e.event_id && !deletedIds.has(e.event_id));
+      allEvents = [...cleanNew, ...otherMatches];
+      setToStorage(STORAGE_KEYS.EVENTS, allEvents);
+      return;
     }
+
+    if (!newEvents || newEvents.length === 0) return;
+
+    // Filter incoming events against deletedIds to guarantee deleted events are never re-saved
+    const cleanNewEvents = newEvents.filter((e) => e && e.event_id && !deletedIds.has(e.event_id));
+    if (cleanNewEvents.length === 0) return;
+
+    // Safe merge by event_id: never lose events from other analysts
+    const byId = new Map<string, NormalizedEvent>();
+    allEvents.forEach((e) => {
+      if (e && e.event_id) byId.set(e.event_id, e);
+    });
+    cleanNewEvents.forEach((e) => {
+      const existing = byId.get(e.event_id);
+      if (!existing) {
+        byId.set(e.event_id, e);
+      } else {
+        const exTime = new Date(existing.updated_at || existing.created_at || 0).getTime();
+        const curTime = new Date(e.updated_at || e.created_at || 0).getTime();
+        if (curTime >= exTime) {
+          byId.set(e.event_id, e);
+        }
+      }
+    });
+    allEvents = Array.from(byId.values());
     setToStorage(STORAGE_KEYS.EVENTS, allEvents);
   },
 
@@ -662,14 +691,56 @@ export const dbStore = {
     setToStorage(STORAGE_KEYS.EVENTS, filtered);
   },
 
-  deleteNormalizedEvent(eventId: string): void {
-    const allEvents = this.getNormalizedEvents();
-    const target = allEvents.find(e => e.event_id === eventId);
+  deleteNormalizedEvent(eventId: string, targetEventHint?: NormalizedEvent): void {
+    if (!eventId) return;
+
+    // 1. Mark in permanent deleted set so it can NEVER be resurrected
+    this.markEventDeleted(eventId);
+
+    // 2. Backup to trash if target can be found
+    const allEvents = getFromStorage<NormalizedEvent[]>(STORAGE_KEYS.EVENTS, []);
+    const active = this.getActiveBotoneraSession();
+    const allAnalyses = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, []);
+
+    const target =
+      targetEventHint ||
+      allEvents.find((e) => e.event_id === eventId) ||
+      active?.events?.find((e) => e.event_id === eventId) ||
+      allAnalyses.flatMap((a) => a.events || []).find((e) => e.event_id === eventId);
+
     if (target) {
       this.backupDeletedEvents([target]);
     }
-    const filtered = allEvents.filter(e => e.event_id !== eventId);
-    setToStorage(STORAGE_KEYS.EVENTS, filtered);
+
+    // 3. Remove from EVENTS in localStorage
+    const filteredEvents = allEvents.filter((e) => e.event_id !== eventId);
+    setToStorage(STORAGE_KEYS.EVENTS, filteredEvents);
+
+    // 4. Also remove from active session in localStorage
+    if (active && active.events && active.events.some((e) => e.event_id === eventId)) {
+      setToStorage(STORAGE_KEYS.BOTONERA_ACTIVE_SESSION, {
+        ...active,
+        events: active.events.filter((e) => e.event_id !== eventId),
+        lastUpdatedTimestamp: Date.now(),
+      });
+    }
+
+    // 5. Also remove from saved analyses in localStorage
+    let analysesChanged = false;
+    const updatedAnalyses = allAnalyses.map((a) => {
+      if (a.events && a.events.some((e) => e.event_id === eventId)) {
+        analysesChanged = true;
+        return {
+          ...a,
+          events: a.events.filter((e) => e.event_id !== eventId),
+          updated_at: new Date().toISOString(),
+        };
+      }
+      return a;
+    });
+    if (analysesChanged) {
+      setToStorage(STORAGE_KEYS.MATCH_ANALYSES, updatedAnalyses);
+    }
   },
 
   // Trash & Recovery Backup (protection against accidental deletion)
@@ -680,7 +751,10 @@ export const dbStore = {
   backupDeletedEvents(eventsToBackup: NormalizedEvent[]): void {
     if (!eventsToBackup || eventsToBackup.length === 0) return;
     const currentTrash = this.getTrashEvents();
-    const merged = [...eventsToBackup, ...currentTrash].slice(0, 500);
+    const existingIds = new Set(currentTrash.map((t) => t.event_id));
+    const newItems = eventsToBackup.filter((e) => e && e.event_id && !existingIds.has(e.event_id));
+    if (newItems.length === 0) return;
+    const merged = [...newItems, ...currentTrash].slice(0, 500);
     setToStorage(STORAGE_KEYS.TRASH_EVENTS, merged);
   },
 
@@ -688,10 +762,16 @@ export const dbStore = {
     const trash = this.getTrashEvents();
     if (trash.length === 0) return [];
 
-    const toRestore = matchId ? trash.filter(e => e.match_id === matchId) : trash;
+    const toRestore = matchId ? trash.filter((e) => e.match_id === matchId) : trash;
     if (toRestore.length > 0) {
+      // Remove from permanent deleted set
+      const restoredIds = new Set(toRestore.map((r) => r.event_id));
+      const currentDeleted = getFromStorage<string[]>(STORAGE_KEYS.DELETED_EVENT_IDS, []);
+      const updatedDeleted = currentDeleted.filter((id) => !restoredIds.has(id));
+      setToStorage(STORAGE_KEYS.DELETED_EVENT_IDS, updatedDeleted);
+
       this.saveNormalizedEvents(toRestore, false);
-      const remainingTrash = trash.filter(e => !toRestore.some(r => r.event_id === e.event_id));
+      const remainingTrash = trash.filter((e) => !restoredIds.has(e.event_id));
       setToStorage(STORAGE_KEYS.TRASH_EVENTS, remainingTrash);
     }
     return toRestore;
@@ -950,7 +1030,8 @@ export const dbStore = {
 
     groupMap.forEach((group, mId) => {
       const matchObj = matchMap.get(mId);
-      const allEventsRaw = group.flatMap((a) => a.events || []);
+      const deletedIds = this.getDeletedEventIds();
+      const allEventsRaw = group.flatMap((a) => a.events || []).filter((e) => e && e.event_id && !deletedIds.has(e.event_id));
       const cleanEvents = this.deduplicateEventsByTime(allEventsRaw);
 
       if (group.length === 1) {
@@ -1232,14 +1313,16 @@ export const dbStore = {
 
     let updated: MatchAnalysis;
 
+    const deletedIds = this.getDeletedEventIds();
+
     if (idx >= 0 && existing) {
       const combinedAnalystNames = this.sanitizeAnalystNames([existing.analyst_name, normalizedAnalysis.analyst_name]);
       // If incoming events is provided (including empty array when user cleared events), use them.
       let targetEvents: NormalizedEvent[];
       if (normalizedAnalysis.events !== undefined) {
-        targetEvents = normalizedAnalysis.events;
+        targetEvents = normalizedAnalysis.events.filter((e) => e && e.event_id && !deletedIds.has(e.event_id));
       } else {
-        targetEvents = existing.events || [];
+        targetEvents = (existing.events || []).filter((e) => e && e.event_id && !deletedIds.has(e.event_id));
       }
 
       updated = {
@@ -1262,10 +1345,12 @@ export const dbStore = {
       };
       all[idx] = updated;
     } else {
+      const cleanEvents = (normalizedAnalysis.events || []).filter((e) => e && e.event_id && !deletedIds.has(e.event_id));
       updated = {
         ...normalizedAnalysis,
         id: targetId,
         analyst_name: this.sanitizeAnalystNames([normalizedAnalysis.analyst_name]),
+        events: cleanEvents,
         video_type: resolvedVideoType,
         video_url: resolvedVideoUrl,
         video_source_name: resolvedVideoSourceName,
@@ -1294,8 +1379,8 @@ export const dbStore = {
     const deduplicated = Array.from(matchMap.values());
     setToStorage(STORAGE_KEYS.MATCH_ANALYSES, deduplicated);
 
-    // Sync analysis asynchronously to Supabase
-    saveAnalysisToSupabase(updated).catch(err => {
+    // Sync analysis asynchronously to Supabase without reviving deleted events from analysis_events table
+    saveAnalysisToSupabase(updated, { skipEventsTableSync: true }).catch(err => {
       console.warn("Could not sync analysis to Supabase:", err);
     });
 

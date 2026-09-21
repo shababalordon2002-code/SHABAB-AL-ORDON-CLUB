@@ -57,12 +57,19 @@ export const AnalysisVisor: React.FC<AnalysisVisorProps> = ({
     const fetchLatest = () => {
       getAnalysisEventsFromSupabase(analysis.match_id).then((remoteEvents) => {
         if (cancelled) return;
+        const deletedIds = dbStore.getDeletedEventIds();
         if (remoteEvents && remoteEvents.length > 0) {
           setLiveEvents((prev) => {
             const map = new Map<string, NormalizedEvent>();
-            remoteEvents.forEach((e) => map.set(e.event_id, e));
+            remoteEvents.forEach((e) => {
+              if (e && e.event_id && !deletedIds.has(e.event_id)) {
+                map.set(e.event_id, e);
+              }
+            });
             prev.forEach((e) => {
-              if (!map.has(e.event_id)) map.set(e.event_id, e);
+              if (e && e.event_id && !map.has(e.event_id) && !deletedIds.has(e.event_id)) {
+                map.set(e.event_id, e);
+              }
             });
             return Array.from(map.values()).sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
           });
@@ -74,12 +81,16 @@ export const AnalysisVisor: React.FC<AnalysisVisorProps> = ({
 
     const unsubscribe = subscribeToAnalysisEvents(analysis.match_id, {
       onInsert: (evt) => {
+        if (!evt || !evt.event_id || dbStore.isEventDeleted(evt.event_id)) return;
         setLiveEvents((prev) => (prev.some((e) => e.event_id === evt.event_id) ? prev : [...prev, evt].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0))));
       },
       onUpdate: (evt) => {
+        if (!evt || !evt.event_id || dbStore.isEventDeleted(evt.event_id)) return;
         setLiveEvents((prev) => prev.map((e) => (e.event_id === evt.event_id ? evt : e)));
       },
       onDelete: (eventId) => {
+        if (!eventId) return;
+        dbStore.markEventDeleted(eventId);
         setLiveEvents((prev) => prev.filter((e) => e.event_id !== eventId));
       },
       onReconnected: () => {

@@ -650,7 +650,12 @@ export async function updateAnalysisEventInSupabase(matchId: string, event: Norm
 }
 
 // Delete a single event with safety backup (never lost in oblivion)
-export async function deleteAnalysisEventFromSupabase(eventId: string, deletedByName?: string): Promise<boolean> {
+export async function deleteAnalysisEventFromSupabase(
+  eventId: string,
+  deletedByName?: string,
+  matchIdHint?: string
+): Promise<boolean> {
+  if (!eventId) return false;
   try {
     let supabase: any;
     try {
@@ -659,35 +664,95 @@ export async function deleteAnalysisEventFromSupabase(eventId: string, deletedBy
       supabase = createClient();
     }
 
-    // Safety backup to analysis_events_trash before deleting
+    let resolvedMatchId = matchIdHint || null;
+
+    // 1. Safety backup to analysis_events_trash before deleting
     try {
       const { data: eventRow } = await supabase
         .from('analysis_events')
         .select('*')
         .eq('event_id', eventId)
-        .single();
+        .maybeSingle();
 
       if (eventRow) {
+        resolvedMatchId = eventRow.match_id || resolvedMatchId;
         await supabase
           .from('analysis_events_trash')
-          .insert([{
+          .upsert([{
             event_id: eventId,
-            match_id: eventRow.match_id,
+            match_id: resolvedMatchId || 'unknown',
             event_data: eventRow,
             deleted_by: deletedByName || eventRow.created_by_name || 'Analista',
             deleted_at: new Date().toISOString()
-          }])
+          }], { onConflict: 'event_id' })
+          .catch(() => {});
+      } else {
+        await supabase
+          .from('analysis_events_trash')
+          .upsert([{
+            event_id: eventId,
+            match_id: resolvedMatchId || 'unknown',
+            event_data: { event_id: eventId, match_id: resolvedMatchId },
+            deleted_by: deletedByName || 'Analista',
+            deleted_at: new Date().toISOString()
+          }], { onConflict: 'event_id' })
           .catch(() => {});
       }
     } catch {
       // Non-blocking
     }
 
+    // 2. Delete from analysis_events table
     const { error } = await supabase.from('analysis_events').delete().eq('event_id', eventId);
     if (error) {
       console.error('Error deleting analysis_event from Supabase:', error.message);
-      return false;
     }
+
+    // 3. Atomically remove the event from match_analyses table in Supabase
+    try {
+      let query = supabase.from('match_analyses').select('id, events');
+      if (resolvedMatchId) {
+        query = query.or(`match_id.eq.${resolvedMatchId},id.eq.analysis_${resolvedMatchId}`);
+      }
+      const { data: maList } = await query;
+      if (maList && maList.length > 0) {
+        for (const ma of maList) {
+          if (Array.isArray(ma.events) && ma.events.some((e: any) => e && e.event_id === eventId)) {
+            const clean = ma.events.filter((e: any) => e && e.event_id !== eventId);
+            await supabase
+              .from('match_analyses')
+              .update({ events: clean, updated_at: new Date().toISOString() })
+              .eq('id', ma.id);
+          }
+        }
+      }
+    } catch (maErr) {
+      console.warn('Could not clean match_analyses in Supabase:', maErr);
+    }
+
+    // 4. Atomically remove the event from analysis_sessions table in Supabase
+    try {
+      let query = supabase.from('analysis_sessions').select('id, events');
+      if (resolvedMatchId) {
+        query = query.eq('match_id', resolvedMatchId);
+      }
+      const { data: sessList } = await query;
+      if (sessList && sessList.length > 0) {
+        for (const s of sessList) {
+          const rawEvents = typeof s.events === 'string' ? JSON.parse(s.events) : (s.events || []);
+          if (Array.isArray(rawEvents) && rawEvents.some((e: any) => e && e.event_id === eventId)) {
+            const clean = rawEvents.filter((e: any) => e && e.event_id !== eventId);
+            await supabase
+              .from('analysis_sessions')
+              .update({ events: clean, last_updated_timestamp: Date.now() })
+              .eq('id', s.id);
+          }
+        }
+      }
+    } catch (sErr) {
+      console.warn('Could not clean analysis_sessions in Supabase:', sErr);
+    }
+
     return true;
   } catch (err: any) {
     console.error('Error deleting analysis_event from Supabase:', err.message);
