@@ -2,6 +2,31 @@ import { createClient } from '@/lib/supabase/client';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { BotoneraTemplate, ActiveBotoneraSession, NormalizedEvent } from '@/types';
 
+// ==================== SYNC RETRY HELPER ====================
+// Wraps a Supabase write so a transient failure (offline, dropped connection, etc.)
+// doesn't silently vanish as a single console.warn. Retries with backoff, and only
+// reports final failure to the caller so the UI can surface it instead of losing the event.
+export async function withRetry<T>(
+  fn: () => Promise<T>,
+  opts: { retries?: number; baseDelayMs?: number; label?: string } = {}
+): Promise<T> {
+  const { retries = 3, baseDelayMs = 600, label = 'sync' } = opts;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (attempt < retries) {
+        const delay = baseDelayMs * Math.pow(2, attempt);
+        console.warn(`${label}: attempt ${attempt + 1} failed, retrying in ${delay}ms`, err);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+  throw lastErr;
+}
+
 // ==================== BOTONERA TEMPLATES IN SUPABASE ====================
 
 // Fetch all Botonera templates from Supabase 'botonera_templates' table
@@ -180,6 +205,22 @@ export async function getAnalysisSessionFromSupabase(matchId?: string): Promise<
     }
 
     const row = data[0];
+    const parsedHomeLineup = typeof row.home_lineup === 'string' ? JSON.parse(row.home_lineup) : (row.home_lineup || null);
+    const parsedAwayLineup = typeof row.away_lineup === 'string' ? JSON.parse(row.away_lineup) : (row.away_lineup || null);
+
+    // Si no se pide un partido concreto (ej. Header comprobando si hay alguien analizando en vivo),
+    // debe ser una sesión verdaderamente activa: el crono debe estar en marcha O haber tenido
+    // actividad en los últimos 90 segundos. Si está parada o cerrada, no hay nadie analizando.
+    if (!matchId) {
+      const rowTime = row.last_updated_timestamp
+        ? Number(row.last_updated_timestamp)
+        : (row.updated_at ? new Date(row.updated_at).getTime() : 0);
+      const isRecentlyActive = rowTime && Date.now() - rowTime < 90 * 1000;
+      if (!row.is_timer_running && !isRecentlyActive) {
+        return null;
+      }
+    }
+
     return {
       selectedMatchId: row.match_id,
       period: row.period || 1,
@@ -189,6 +230,8 @@ export async function getAnalysisSessionFromSupabase(matchId?: string): Promise<
       lastUpdatedTimestamp: row.last_updated_timestamp ? Number(row.last_updated_timestamp) : Date.now(),
       events: typeof row.events === 'string' ? JSON.parse(row.events) : (row.events || []),
       isConfigured: row.is_configured ?? true,
+      analystName: row.analyst_name || parsedHomeLineup?._analyst_name || null,
+      matchTitle: row.match_title || parsedHomeLineup?._match_title || null,
       videoType: row.video_type || null,
       videoSourceName: row.video_source_name || null,
       videoUrl: row.video_url || null,
@@ -196,10 +239,10 @@ export async function getAnalysisSessionFromSupabase(matchId?: string): Promise<
       p2VideoStartSeconds: row.p2_video_start_seconds ?? null,
       periodAdjustments: typeof row.period_adjustments === 'string'
         ? JSON.parse(row.period_adjustments)
-        : (row.period_adjustments || row.home_lineup?._period_adjustments || null),
+        : (row.period_adjustments || parsedHomeLineup?._period_adjustments || null),
       botoneraTemplateId: row.botonera_template_id || null,
-      home_lineup: typeof row.home_lineup === 'string' ? JSON.parse(row.home_lineup) : (row.home_lineup || null),
-      away_lineup: typeof row.away_lineup === 'string' ? JSON.parse(row.away_lineup) : (row.away_lineup || null),
+      home_lineup: parsedHomeLineup,
+      away_lineup: parsedAwayLineup,
     };
   } catch (err: any) {
     console.warn('Could not fetch analysis session from Supabase:', err.message);
@@ -225,6 +268,8 @@ export async function getAllActiveSessionsFromSupabase(): Promise<Record<string,
 
     const result: Record<string, ActiveBotoneraSession> = {};
     for (const row of data) {
+      const parsedHomeLineup = typeof row.home_lineup === 'string' ? JSON.parse(row.home_lineup) : (row.home_lineup || null);
+      const parsedAwayLineup = typeof row.away_lineup === 'string' ? JSON.parse(row.away_lineup) : (row.away_lineup || null);
       result[row.match_id] = {
         selectedMatchId: row.match_id,
         period: row.period || 1,
@@ -234,6 +279,8 @@ export async function getAllActiveSessionsFromSupabase(): Promise<Record<string,
         lastUpdatedTimestamp: row.last_updated_timestamp ? Number(row.last_updated_timestamp) : Date.now(),
         events: typeof row.events === 'string' ? JSON.parse(row.events) : (row.events || []),
         isConfigured: row.is_configured ?? true,
+        analystName: row.analyst_name || parsedHomeLineup?._analyst_name || null,
+        matchTitle: row.match_title || parsedHomeLineup?._match_title || null,
         videoType: row.video_type || null,
         videoSourceName: row.video_source_name || null,
         videoUrl: row.video_url || null,
@@ -241,10 +288,10 @@ export async function getAllActiveSessionsFromSupabase(): Promise<Record<string,
         p2VideoStartSeconds: row.p2_video_start_seconds ?? null,
         periodAdjustments: typeof row.period_adjustments === 'string'
           ? JSON.parse(row.period_adjustments)
-          : (row.period_adjustments || row.home_lineup?._period_adjustments || null),
+          : (row.period_adjustments || parsedHomeLineup?._period_adjustments || null),
         botoneraTemplateId: row.botonera_template_id || null,
-        home_lineup: typeof row.home_lineup === 'string' ? JSON.parse(row.home_lineup) : (row.home_lineup || null),
-        away_lineup: typeof row.away_lineup === 'string' ? JSON.parse(row.away_lineup) : (row.away_lineup || null),
+        home_lineup: parsedHomeLineup,
+        away_lineup: parsedAwayLineup,
       };
     }
     return result;
@@ -308,10 +355,22 @@ export async function saveAnalysisSessionToSupabase(session: ActiveBotoneraSessi
     const resolvedHomeLineup = session.home_lineup || existingSess?.home_lineup || existingMatch?.home_lineup || null;
     const resolvedAwayLineup = session.away_lineup || existingSess?.away_lineup || existingMatch?.away_lineup || null;
 
+    const resolvedAnalystName = session.analystName || existingSess?.analyst_name || existingSess?.home_lineup?._analyst_name || null;
+    const resolvedMatchTitle = session.matchTitle || existingSess?.match_title || existingSess?.home_lineup?._match_title || null;
+
     // Dual protection: fallback inside home_lineup JSONB
     const safeHomeLineup = resolvedHomeLineup
-      ? { ...resolvedHomeLineup, ...(resolvedAdjustments ? { _period_adjustments: resolvedAdjustments } : {}) }
-      : (resolvedAdjustments ? { _period_adjustments: resolvedAdjustments } : null);
+      ? {
+          ...resolvedHomeLineup,
+          ...(resolvedAdjustments ? { _period_adjustments: resolvedAdjustments } : {}),
+          ...(resolvedAnalystName ? { _analyst_name: resolvedAnalystName } : {}),
+          ...(resolvedMatchTitle ? { _match_title: resolvedMatchTitle } : {}),
+        }
+      : {
+          ...(resolvedAdjustments ? { _period_adjustments: resolvedAdjustments } : {}),
+          ...(resolvedAnalystName ? { _analyst_name: resolvedAnalystName } : {}),
+          ...(resolvedMatchTitle ? { _match_title: resolvedMatchTitle } : {}),
+        };
 
     const row: Record<string, any> = {
       match_id: session.selectedMatchId,
@@ -665,28 +724,76 @@ export function subscribeToAnalysisEvents(
     onInsert?: (event: NormalizedEvent) => void;
     onUpdate?: (event: NormalizedEvent) => void;
     onDelete?: (eventId: string) => void;
+    onStatusChange?: (status: 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR') => void;
+    onReconnected?: () => void;
   }
 ): () => void {
   const supabase = createClient();
   const channelTopic = `analysis_events:${matchId}:${Math.random().toString(36).substring(2, 9)}_${Date.now()}`;
+  let wasConnected = false;
+  const recentlyDeleted = new Set<string>();
+
   const channel = supabase
     .channel(channelTopic)
     .on(
       'postgres_changes',
       { event: 'INSERT', schema: 'public', table: 'analysis_events', filter: `match_id=eq.${matchId}` },
-      (payload: any) => handlers.onInsert?.(rowToNormalizedEvent(payload.new))
+      (payload: any) => {
+        const evt = rowToNormalizedEvent(payload.new);
+        if (evt && evt.event_id) {
+          handlers.onInsert?.(evt);
+        }
+      }
     )
     .on(
       'postgres_changes',
       { event: 'UPDATE', schema: 'public', table: 'analysis_events', filter: `match_id=eq.${matchId}` },
-      (payload: any) => handlers.onUpdate?.(rowToNormalizedEvent(payload.new))
+      (payload: any) => {
+        const evt = rowToNormalizedEvent(payload.new);
+        if (evt && evt.event_id) {
+          handlers.onUpdate?.(evt);
+        }
+      }
     )
+    // 1. Primary DELETE handler with filter on match_id (works when REPLICA IDENTITY FULL is enabled)
     .on(
       'postgres_changes',
       { event: 'DELETE', schema: 'public', table: 'analysis_events', filter: `match_id=eq.${matchId}` },
-      (payload: any) => handlers.onDelete?.(payload.old?.event_id)
+      (payload: any) => {
+        const eventId = payload.old?.event_id;
+        if (eventId && !recentlyDeleted.has(eventId)) {
+          recentlyDeleted.add(eventId);
+          setTimeout(() => recentlyDeleted.delete(eventId), 3000);
+          handlers.onDelete?.(eventId);
+        }
+      }
     )
-    .subscribe();
+    // 2. Fallback DELETE handler without filter (ensures DELETE is never missed if REPLICA IDENTITY FULL is not yet applied)
+    .on(
+      'postgres_changes',
+      { event: 'DELETE', schema: 'public', table: 'analysis_events' },
+      (payload: any) => {
+        const eventId = payload.old?.event_id;
+        if (eventId && !recentlyDeleted.has(eventId)) {
+          recentlyDeleted.add(eventId);
+          setTimeout(() => recentlyDeleted.delete(eventId), 3000);
+          handlers.onDelete?.(eventId);
+        }
+      }
+    )
+    .subscribe((status: string, err?: any) => {
+      if (err) {
+        console.warn(`[Realtime: ${channelTopic}] Status error:`, status, err);
+      }
+      if (status === 'SUBSCRIBED') {
+        if (wasConnected) {
+          // Reconnection detected after transient drop
+          handlers.onReconnected?.();
+        }
+        wasConnected = true;
+      }
+      handlers.onStatusChange?.(status as any);
+    });
 
   return () => {
     supabase.removeChannel(channel);
@@ -707,9 +814,9 @@ export function subscribeToAnalysisPresence(
 
   channel
     .on('presence', { event: 'sync' }, () => {
-      const state = channel.presenceState<{ userId: string; userName: string }>();
+      const state: Record<string, any[]> = channel.presenceState();
       const analysts = Object.values(state)
-        .map((entries) => entries[0])
+        .map((entries: any[]) => entries[0])
         .filter(Boolean)
         .map((e: any) => ({ userId: e.userId, userName: e.userName }));
       onSync(analysts);
@@ -792,6 +899,167 @@ export function subscribeToAnalysisSession(
           videoType: row.video_type || null,
           videoSourceName: row.video_source_name || null,
         });
+      }
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+
+// ==================== ANALYSIS VIDEO (single source of truth) ====================
+// Dedicated table for each analysis's video (YouTube link or local video) and its
+// match-time sync settings (period start offsets + mid-period adjustments). Replaces
+// the old fallback chain across analysis_sessions / match_analyses / matches, which is
+// why some analyses used to show their video and others silently didn't depending on
+// which of those three tables happened to hold the value.
+
+export interface AnalysisVideoConfig {
+  matchId: string;
+  videoType: 'link' | 'local' | null;
+  videoUrl: string | null;
+  videoSourceName: string | null;
+  p1VideoStartSeconds: number | null;
+  p2VideoStartSeconds: number | null;
+  periodAdjustments: Record<string, { matchTimeSec: number; videoTimeSec: number }> | null;
+  updatedAt?: string;
+}
+
+function rowToAnalysisVideoConfig(row: any): AnalysisVideoConfig {
+  return {
+    matchId: row.match_id,
+    videoType: row.video_type || null,
+    videoUrl: row.video_url || null,
+    videoSourceName: row.video_source_name || null,
+    p1VideoStartSeconds: row.p1_video_start_seconds ?? null,
+    p2VideoStartSeconds: row.p2_video_start_seconds ?? null,
+    periodAdjustments: typeof row.period_adjustments === 'string'
+      ? JSON.parse(row.period_adjustments)
+      : (row.period_adjustments || null),
+    updatedAt: row.updated_at,
+  };
+}
+
+// Bulk-fetch video configs for many matches at once (used when listing all analyses),
+// keyed by match_id. Avoids an N+1 query per analysis card.
+export async function getAnalysisVideosMapFromSupabase(matchId?: string): Promise<Map<string, AnalysisVideoConfig>> {
+  const map = new Map<string, AnalysisVideoConfig>();
+  try {
+    const supabase = createClient();
+    let query = supabase.from('analysis_videos').select('*');
+    if (matchId) query = query.eq('match_id', matchId);
+    const { data, error } = await query;
+    if (error) {
+      if (!error.message.includes('relation "public.analysis_videos" does not exist')) {
+        console.warn('Supabase fetch analysis_videos error:', error.message);
+      }
+      return map;
+    }
+    (data || []).forEach((row: any) => map.set(row.match_id, rowToAnalysisVideoConfig(row)));
+    return map;
+  } catch (err: any) {
+    console.warn('Could not bulk-load analysis_videos from Supabase:', err?.message || err);
+    return map;
+  }
+}
+
+// Fetch the video config for a match. Returns null if this match has no row yet
+// (e.g. migration 0016 hasn't run, or no video was ever set) — callers should fall
+// back to the legacy chain in that case, never treat it as "no video exists".
+export async function getAnalysisVideoFromSupabase(matchId: string): Promise<AnalysisVideoConfig | null> {
+  if (!matchId) return null;
+  try {
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from('analysis_videos')
+      .select('*')
+      .eq('match_id', matchId)
+      .maybeSingle();
+
+    if (error) {
+      if (!error.message.includes('relation "public.analysis_videos" does not exist')) {
+        console.warn('Supabase fetch analysis_videos error:', error.message);
+      }
+      return null;
+    }
+    if (!data) return null;
+    return rowToAnalysisVideoConfig(data);
+  } catch (err: any) {
+    console.warn('Could not load analysis_videos from Supabase:', err?.message || err);
+    return null;
+  }
+}
+
+// Upsert the video config for a match. Fields left as `undefined` are NOT sent, so a
+// caller updating only e.g. the period adjustment never clobbers a previously saved
+// video URL — each field is independently "sticky" unless explicitly passed.
+export async function upsertAnalysisVideoToSupabase(
+  matchId: string,
+  fields: Partial<{
+    videoType: 'link' | 'local' | null;
+    videoUrl: string | null;
+    videoSourceName: string | null;
+    p1VideoStartSeconds: number | null;
+    p2VideoStartSeconds: number | null;
+    periodAdjustments: Record<string, any> | null;
+  }>,
+  updatedBy?: string | null,
+  updatedByName?: string | null
+): Promise<boolean> {
+  if (!matchId) return false;
+  try {
+    const supabase = createClient();
+    const row: Record<string, any> = { match_id: matchId, updated_at: new Date().toISOString() };
+    if ('videoType' in fields) row.video_type = fields.videoType;
+    if ('videoUrl' in fields) row.video_url = fields.videoUrl;
+    if ('videoSourceName' in fields) row.video_source_name = fields.videoSourceName;
+    if ('p1VideoStartSeconds' in fields) row.p1_video_start_seconds = fields.p1VideoStartSeconds;
+    if ('p2VideoStartSeconds' in fields) row.p2_video_start_seconds = fields.p2VideoStartSeconds;
+    if ('periodAdjustments' in fields) row.period_adjustments = fields.periodAdjustments;
+    if (updatedBy) row.updated_by = updatedBy;
+    if (updatedByName) row.updated_by_name = updatedByName;
+
+    // Merge with whatever is already stored so a partial update (e.g. only the video URL)
+    // never wipes fields it didn't touch (e.g. an already-saved period adjustment).
+    const { data: existing } = await supabase
+      .from('analysis_videos')
+      .select('*')
+      .eq('match_id', matchId)
+      .maybeSingle();
+
+    const merged = existing ? { ...existing, ...row } : row;
+
+    const { error } = await supabase.from('analysis_videos').upsert([merged], { onConflict: 'match_id' });
+    if (error) {
+      if (!error.message.includes('relation "public.analysis_videos" does not exist')) {
+        console.warn('Warning upserting analysis_videos to Supabase:', error.message);
+      }
+      return false;
+    }
+    return true;
+  } catch (err: any) {
+    console.warn('Could not save analysis_videos to Supabase:', err?.message || err);
+    return false;
+  }
+}
+
+// Realtime subscription so a video/timing change made by one analyst reflects instantly
+// for every other client working on the same match (botonera, dashboard, visor).
+export function subscribeToAnalysisVideo(
+  matchId: string,
+  onUpdate: (config: AnalysisVideoConfig) => void
+): () => void {
+  const supabase = createClient();
+  const channelTopic = `analysis_video:${matchId}:${Math.random().toString(36).substring(2, 9)}_${Date.now()}`;
+  const channel = supabase
+    .channel(channelTopic)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'analysis_videos', filter: `match_id=eq.${matchId}` },
+      (payload: any) => {
+        if (!payload.new) return;
+        onUpdate(rowToAnalysisVideoConfig(payload.new));
       }
     )
     .subscribe();

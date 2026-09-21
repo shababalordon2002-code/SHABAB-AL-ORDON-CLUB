@@ -14,7 +14,7 @@ import { BotoneraPitchCanvas, type EventPitchMarker } from '@/components/botoner
 import { BotoneraGoalCanvas, type GoalPointMarker, GOAL_ZONES } from '@/components/botonera/BotoneraGoalCanvas';
 import { TeamLogo } from '@/components/player/PlayerBadge';
 import { dbStore } from '@/lib/store/db-store';
-import { calculateEventVideoTime, resolveEventPeriod } from '@/lib/analytics/video-utils';
+import { calculateEventVideoTime, resolveEventPeriod, extractYouTubeVideoId } from '@/lib/analytics/video-utils';
 import {
   BarChart3,
   Calendar,
@@ -243,21 +243,44 @@ export const StandardMatchDashboard: React.FC<StandardMatchDashboardProps> = ({
   // Resolve effective match properties (merging video start offsets & video url from dbStore analyses if present)
   const effectiveMatch = useMemo(() => {
     const analyses = dbStore.getAnalyses(match.id);
-    const mainAnalysis = analyses.length > 0 ? analyses[0] : null;
+    const mainAnalysis = analyses.find((a) => a.video_url && a.video_url.trim()) || (analyses.length > 0 ? analyses[0] : null);
+
+    const activeSession = dbStore.getActiveBotoneraSession();
+    const isCurrentActive = activeSession && activeSession.selectedMatchId === match.id;
+    const liveVideoUrl = isCurrentActive && activeSession.videoUrl && activeSession.videoUrl.trim() ? activeSession.videoUrl : null;
+    const liveVideoType = isCurrentActive && activeSession.videoType ? activeSession.videoType : null;
+    const liveP1 = isCurrentActive && activeSession.p1VideoStartSeconds != null ? activeSession.p1VideoStartSeconds : null;
+    const liveP2 = isCurrentActive && activeSession.p2VideoStartSeconds != null ? activeSession.p2VideoStartSeconds : null;
+    const liveAdjustments = isCurrentActive && activeSession.periodAdjustments ? activeSession.periodAdjustments : null;
 
     const p1 =
-      match.p1_video_start_time ??
+      liveP1 ??
       mainAnalysis?.p1_video_start_time ??
+      match.p1_video_start_time ??
       null;
 
     const p2 =
-      match.p2_video_start_time ??
+      liveP2 ??
       mainAnalysis?.p2_video_start_time ??
+      match.p2_video_start_time ??
       null;
 
     const vUrl =
-      match.video_url ||
+      liveVideoUrl ||
       mainAnalysis?.video_url ||
+      match.video_url ||
+      null;
+
+    const vType =
+      liveVideoType ||
+      mainAnalysis?.video_type ||
+      match.video_type ||
+      (vUrl ? (vUrl.includes('http') ? 'link' : 'local') : undefined);
+
+    const vAdjustments =
+      liveAdjustments ??
+      mainAnalysis?.period_adjustments ??
+      match.period_adjustments ??
       null;
 
     return {
@@ -265,6 +288,8 @@ export const StandardMatchDashboard: React.FC<StandardMatchDashboardProps> = ({
       p1_video_start_time: p1,
       p2_video_start_time: p2,
       video_url: vUrl,
+      video_type: vType,
+      period_adjustments: vAdjustments,
     };
   }, [match]);
 
@@ -1976,10 +2001,7 @@ function generateDominanceDifferentialPaths(
 };
 
 function extractYouTubeId(url: string | null | undefined): string {
-  if (!url) return '';
-  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
-  const match = url.match(regExp);
-  return match && match[2].length === 11 ? match[2] : url;
+  return extractYouTubeVideoId(url) || '';
 }
 
 /* ── PLAYER DETAIL MODAL COMPONENT (MUESTRA EVENTOS Y DATOS DEL JUGADOR AL CLICAR) ── */
@@ -2265,11 +2287,17 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({
 
   const effectiveMatch = useMemo(() => {
     const analyses = dbStore.getAnalyses(match.id);
-    const mainAnalysis = analyses.length > 0 ? analyses[0] : null;
+    const mainAnalysis = analyses.find((a) => a.video_url && a.video_url.trim()) || (analyses.length > 0 ? analyses[0] : null);
 
-    const p1 = match.p1_video_start_time ?? mainAnalysis?.p1_video_start_time ?? null;
-    const p2 = match.p2_video_start_time ?? mainAnalysis?.p2_video_start_time ?? null;
-    const vUrl = match.video_url || mainAnalysis?.video_url || null;
+    const activeSession = dbStore.getActiveBotoneraSession();
+    const isCurrentActive = activeSession && activeSession.selectedMatchId === match.id;
+    const liveVideoUrl = isCurrentActive && activeSession.videoUrl && activeSession.videoUrl.trim() ? activeSession.videoUrl : null;
+    const liveP1 = isCurrentActive && activeSession.p1VideoStartSeconds != null ? activeSession.p1VideoStartSeconds : null;
+    const liveP2 = isCurrentActive && activeSession.p2VideoStartSeconds != null ? activeSession.p2VideoStartSeconds : null;
+
+    const p1 = liveP1 ?? mainAnalysis?.p1_video_start_time ?? match.p1_video_start_time ?? null;
+    const p2 = liveP2 ?? mainAnalysis?.p2_video_start_time ?? match.p2_video_start_time ?? null;
+    const vUrl = liveVideoUrl || mainAnalysis?.video_url || match.video_url || null;
 
     return {
       ...match,

@@ -19,6 +19,14 @@ function getValidAnonKey() {
   return FALLBACK_ANON;
 }
 
+let browserClientSingleton: ReturnType<typeof createBrowserClient> | null = null;
+
 export function createClient() {
-  return createBrowserClient(getValidUrl(), getValidAnonKey());
+  if (typeof window === 'undefined') {
+    return createBrowserClient(getValidUrl(), getValidAnonKey());
+  }
+  if (!browserClientSingleton) {
+    browserClientSingleton = createBrowserClient(getValidUrl(), getValidAnonKey());
+  }
+  return browserClientSingleton;
 }

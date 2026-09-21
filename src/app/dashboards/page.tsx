@@ -40,21 +40,14 @@ import { AdminDashboardConfigModal } from '@/components/dashboards/AdminDashboar
 import { TacticalLineupPitch } from '@/components/pitch/TacticalLineupPitch';
 import { calculateMatchScoresFromEvents } from '@/lib/analytics/dashboard-engine';
 
+import { getYouTubeThumbnailUrl } from '@/lib/analytics/video-utils';
+
 interface MatchBlock {
   match: Match;
   events: NormalizedEvent[];
   analyses: MatchAnalysis[];
   dashboards: MatchDashboard[];
 }
-
-const getYouTubeThumbnail = (url?: string | null) => {
-  if (!url) return null;
-  const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
-  if (match && match[1]) {
-    return `https://img.youtube.com/vi/${match[1]}/hqdefault.jpg`;
-  }
-  return null;
-};
 
 export default function DashboardsPage() {
   const router = useRouter();
@@ -310,9 +303,12 @@ export default function DashboardsPage() {
           const liveSession = activeSessionsMap[block.match.id];
           const isLiveTagging = dashboardConfig.showLiveBadge && liveSession && liveSession.isTimerRunning;
           const currentEventsCount = block.events.length || (liveSession?.events?.length || 0);
-          const primaryAnalysis = block.analyses[0];
-          const resolvedVideoUrl = primaryAnalysis?.video_url || block.match.video_url;
-          const youtubeThumb = getYouTubeThumbnail(resolvedVideoUrl);
+          const analysisWithVideo = block.analyses.find((a) => a.video_url && a.video_url.trim()) || block.analyses[0];
+          const resolvedVideoUrl = (analysisWithVideo?.video_url && analysisWithVideo.video_url.trim()) || (liveSession?.videoUrl && liveSession.videoUrl.trim()) || (block.match.video_url && block.match.video_url.trim()) || null;
+          const resolvedVideoType = analysisWithVideo?.video_type || liveSession?.videoType || block.match.video_type;
+          const resolvedP1 = analysisWithVideo?.p1_video_start_time ?? liveSession?.p1VideoStartSeconds ?? block.match.p1_video_start_time ?? null;
+          const resolvedP2 = analysisWithVideo?.p2_video_start_time ?? liveSession?.p2VideoStartSeconds ?? block.match.p2_video_start_time ?? null;
+          const youtubeThumb = getYouTubeThumbnailUrl(resolvedVideoUrl);
 
           const openVisorForMatch = () => {
             if (block.analyses.length > 1) {
@@ -320,21 +316,29 @@ export default function DashboardsPage() {
               return;
             }
 
-            const analysis = block.analyses[0] || {
-              id: `analysis_${block.match.id}`,
-              match_id: block.match.id,
-              title: `Análisis ${block.match.home_team} vs ${block.match.away_team}`,
-              analyst_name: 'Analista Principal (SAO)',
-              status: 'completed' as const,
-              video_type: block.match.video_type || (block.match.video_url ? (block.match.video_url.includes('http') ? 'link' : 'local') : undefined),
-              video_url: block.match.video_url,
-              video_source_name: block.match.video_source_name,
-              p1_video_start_time: block.match.p1_video_start_time,
-              p2_video_start_time: block.match.p2_video_start_time,
-              events: block.events,
-              created_at: block.match.date || new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            };
+            const analysis = analysisWithVideo
+              ? {
+                  ...analysisWithVideo,
+                  video_url: resolvedVideoUrl,
+                  video_type: resolvedVideoType,
+                  p1_video_start_time: resolvedP1,
+                  p2_video_start_time: resolvedP2,
+                }
+              : {
+                  id: `analysis_${block.match.id}`,
+                  match_id: block.match.id,
+                  title: `Análisis ${block.match.home_team} vs ${block.match.away_team}`,
+                  analyst_name: 'Analista Principal (SAO)',
+                  status: 'completed' as const,
+                  video_type: resolvedVideoType || (resolvedVideoUrl ? (resolvedVideoUrl.includes('http') ? 'link' : 'local') : undefined),
+                  video_url: resolvedVideoUrl,
+                  video_source_name: liveSession?.videoSourceName || block.match.video_source_name,
+                  p1_video_start_time: resolvedP1,
+                  p2_video_start_time: resolvedP2,
+                  events: block.events,
+                  created_at: block.match.date || new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                };
             setActiveVisor({ match: block.match, analysis });
           };
 

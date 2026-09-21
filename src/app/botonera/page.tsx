@@ -15,6 +15,9 @@ import {
   subscribeToAnalysisEvents,
   subscribeToAnalysisPresence,
   subscribeToAnalysisSession,
+  subscribeToAnalysisVideo,
+  upsertAnalysisVideoToSupabase,
+  withRetry,
 } from '@/lib/services/botonera-service';
 import { saveAnalysisToSupabase, deleteAnalysisFromSupabase } from '@/lib/services/analysis-service';
 import { saveMatchesToSupabase } from '@/lib/services/matches-service';
@@ -37,7 +40,40 @@ import { BotoneraStopwatch, PERIOD_BASE_SECONDS } from '@/components/botonera/Bo
 import { BotoneraEventModal } from '@/components/botonera/BotoneraEventModal';
 import { BotoneraLiveScoreboard } from '@/components/botonera/BotoneraLiveScoreboard';
 import { AnalysisVisor } from '@/components/analysis/AnalysisVisor';
-import { Compass, Flame, Sliders, PlayCircle, Trophy, CheckCircle2, FileCode2, Save, Radio, Pencil, Ban, X, Home, FolderOpen, Eye, Edit3, Trash2, AlertTriangle, User, Video, LogOut, Sparkles } from 'lucide-react';
+import { Compass, Flame, Sliders, PlayCircle, Trophy, CheckCircle2, FileCode2, Save, Radio, Pencil, Ban, X, Home, FolderOpen, Eye, Edit3, Trash2, AlertTriangle, User, Video, LogOut, Sparkles, Link2 } from 'lucide-react';
+
+/**
+ * Helper to extract and format competition and round for analysis cards.
+ */
+function getAnalysisLeagueAndRound(an: MatchAnalysis, m?: Match | null) {
+  let competition = m?.competition?.trim() || '';
+  if (!competition || competition.toLowerCase() === 'premier league') {
+    competition = 'Jordan Pro League';
+  }
+
+  let round = m?.round?.trim() || '';
+  if (!round) {
+    const normTitle = (an.title || '').toLowerCase();
+    const mId = an.match_id || '';
+    if (mId === 'match_fs_EXAUVBT8' || normTitle.includes('al ramtha')) {
+      round = 'Jornada 1';
+    } else if (mId === 'match_fs_ITiecmAk' || normTitle.includes('al jazeera')) {
+      round = 'Jornada 2';
+    } else if (mId === 'match_fs_GpPxUooR' || normTitle.includes('al hussein')) {
+      round = 'Jornada 3';
+    } else if (mId === 'match_demo_1' || normTitle.includes('faisaly')) {
+      round = 'Jornada Previa';
+    }
+  }
+
+  if (round && /^\d+$/.test(round)) {
+    round = `Jornada ${round}`;
+  } else if (round && !round.toLowerCase().includes('jornada') && !round.toLowerCase().includes('round')) {
+    round = `Jornada ${round}`;
+  }
+
+  return { competition, round };
+}
 
 /**
  * Calculates features string for window.open to ensure the pop-out window
@@ -91,6 +127,7 @@ export default function BotoneraPage() {
   const [activeVisorAnalysis, setActiveVisorAnalysis] = useState<MatchAnalysis | null>(null);
   const [deleteConfirmAnalysis, setDeleteConfirmAnalysis] = useState<MatchAnalysis | null>(null);
   const [editingAnalysisId, setEditingAnalysisId] = useState<string | null>(null);
+  const [isExitStatusModalOpen, setIsExitStatusModalOpen] = useState<boolean>(false);
 
   // Botonera Template State (Static initial state for SSR / Hydration safety)
   const [template, setTemplate] = useState<BotoneraTemplate>(SEED_BOTONERA_TEMPLATES[0]);
@@ -127,6 +164,71 @@ export default function BotoneraPage() {
   // IDs de eventos que este mismo cliente acaba de escribir, para no re-aplicarlos cuando
   // los recibimos de vuelta por el canal realtime (eco de nuestra propia escritura)
   const ownWritesRef = useRef<Set<string>>(new Set());
+  // Cola de sincronización en segundo plano: un evento que no pudo subirse a Supabase
+  // (tras los reintentos inmediatos de withRetry) NUNCA se abandona ni requiere que el
+  // analista haga nada. Se queda aquí y un intervalo + el evento 'online' lo siguen
+  // reintentando solos hasta que se confirma en Supabase. El analista solo ve un indicador
+  // pasivo ("sincronizando…"); nunca un botón que tenga que pulsar.
+  type PendingSyncOp =
+    | { kind: 'insert'; targetId: string; event: NormalizedEvent }
+    | { kind: 'update'; targetId: string; event: NormalizedEvent }
+    | { kind: 'delete'; eventId: string; deleterName: string };
+  const pendingSyncQueueRef = useRef<Map<string, PendingSyncOp>>(new Map());
+  const [failedSyncEventIds, setFailedSyncEventIds] = useState<Set<string>>(new Set());
+
+  const markSyncFailed = useCallback((eventId: string, op: PendingSyncOp) => {
+    pendingSyncQueueRef.current.set(eventId, op);
+    setFailedSyncEventIds((prev) => {
+      if (prev.has(eventId)) return prev;
+      const next = new Set(prev);
+      next.add(eventId);
+      return next;
+    });
+  }, []);
+  const clearSyncFailed = useCallback((eventId: string) => {
+    pendingSyncQueueRef.current.delete(eventId);
+    setFailedSyncEventIds((prev) => {
+      if (!prev.has(eventId)) return prev;
+      const next = new Set(prev);
+      next.delete(eventId);
+      return next;
+    });
+  }, []);
+
+  // Vacía la cola de reintentos pendientes: se llama periódicamente, al recuperar
+  // conexión y al volver a la pestaña. Cada evento pendiente se reintenta de forma
+  // independiente; el que falle sigue en la cola para el próximo ciclo automático.
+  const flushPendingSyncQueue = useCallback(() => {
+    const entries = Array.from(pendingSyncQueueRef.current.entries());
+    entries.forEach(([id, op]) => {
+      let action: Promise<any>;
+      if (op.kind === 'insert') {
+        action = insertAnalysisEventToSupabase(op.targetId, op.event);
+      } else if (op.kind === 'update') {
+        action = updateAnalysisEventInSupabase(op.targetId, op.event);
+      } else {
+        action = deleteAnalysisEventFromSupabase(op.eventId, op.deleterName);
+      }
+      action
+        .then(() => clearSyncFailed(id))
+        .catch((err) => console.warn(`Reintento automático en segundo plano aún falla para ${id}:`, err));
+    });
+  }, [clearSyncFailed]);
+
+  useEffect(() => {
+    const interval = setInterval(flushPendingSyncQueue, 8000);
+    const onOnline = () => flushPendingSyncQueue();
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') flushPendingSyncQueue();
+    };
+    window.addEventListener('online', onOnline);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('online', onOnline);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [flushPendingSyncQueue]);
 
   // Registration Setup Wizard State & Pop-out Video mode
   const [isSessionConfigured, setIsSessionConfigured] = useState<boolean>(false);
@@ -582,19 +684,22 @@ export default function BotoneraPage() {
     let cancelled = false;
 
     getAnalysisEventsFromSupabase(selectedMatchId).then((remoteEvents) => {
-      if (cancelled) return;
+      if (cancelled || !remoteEvents) return;
       setEvents((prev) => {
         const remoteIds = new Set(remoteEvents.map((e) => e.event_id));
-        // Conserva eventos locales aún no confirmados en Supabase (escrituras propias pendientes)
+        // Conserva eventos locales propios aún no confirmados en Supabase
         const pendingLocal = prev.filter(
           (e) => ownWritesRef.current.has(e.event_id) && !remoteIds.has(e.event_id)
         );
         const merged = [...remoteEvents, ...pendingLocal].sort((a, b) => {
-          const ta = a.timestamp ?? Date.parse(a.created_at || '') ?? 0;
-          const tb = b.timestamp ?? Date.parse(b.created_at || '') ?? 0;
-          return ta - tb;
+          const pa = a.period ?? 1;
+          const pb = b.period ?? 1;
+          if (pa !== pb) return pb - pa;
+          const ta = a.timestamp ?? 0;
+          const tb = b.timestamp ?? 0;
+          return tb - ta;
         });
-        dbStore.saveNormalizedEvents(merged, true, selectedMatchId);
+        dbStore.saveNormalizedEvents(merged, false, selectedMatchId);
         return merged;
       });
     });
@@ -606,21 +711,18 @@ export default function BotoneraPage() {
           return;
         }
         setEvents((prev) => {
-          const next = prev.some((e) => e.event_id === evt.event_id) ? prev : [evt, ...prev];
-          dbStore.saveNormalizedEvents([evt], false);
-          return next;
+          if (prev.some((e) => e.event_id === evt.event_id)) return prev;
+          return [evt, ...prev];
         });
+        dbStore.saveNormalizedEvents([evt], false, selectedMatchId);
       },
       onUpdate: (evt) => {
         if (ownWritesRef.current.has(evt.event_id)) {
           ownWritesRef.current.delete(evt.event_id);
           return;
         }
-        setEvents((prev) => {
-          const next = prev.map((e) => (e.event_id === evt.event_id ? evt : e));
-          dbStore.saveNormalizedEvents([evt], false);
-          return next;
-        });
+        setEvents((prev) => prev.map((e) => (e.event_id === evt.event_id ? evt : e)));
+        dbStore.saveNormalizedEvents([evt], false, selectedMatchId);
       },
       onDelete: (eventId) => {
         if (!eventId) return;
@@ -628,10 +730,29 @@ export default function BotoneraPage() {
           ownWritesRef.current.delete(eventId);
           return;
         }
-        setEvents((prev) => {
-          const next = prev.filter((e) => e.event_id !== eventId);
-          dbStore.saveNormalizedEvents(next, true, selectedMatchId);
-          return next;
+        setEvents((prev) => prev.filter((e) => e.event_id !== eventId));
+        dbStore.deleteNormalizedEvent(eventId);
+      },
+      onReconnected: () => {
+        getAnalysisEventsFromSupabase(selectedMatchId).then((remoteEvents) => {
+          if (cancelled || !remoteEvents) return;
+          setEvents((prev) => {
+            const map = new Map<string, NormalizedEvent>();
+            remoteEvents.forEach((e) => map.set(e.event_id, e));
+            prev.forEach((e) => {
+              if (!map.has(e.event_id) && ownWritesRef.current.has(e.event_id)) {
+                map.set(e.event_id, e);
+              }
+            });
+            return Array.from(map.values()).sort((a, b) => {
+              const pa = a.period ?? 1;
+              const pb = b.period ?? 1;
+              if (pa !== pb) return pb - pa;
+              const ta = a.timestamp ?? 0;
+              const tb = b.timestamp ?? 0;
+              return tb - ta;
+            });
+          });
         });
       },
     });
@@ -659,11 +780,32 @@ export default function BotoneraPage() {
       }
     });
 
+    const unsubscribeVideo = subscribeToAnalysisVideo(selectedMatchId, (cfg) => {
+      if (cfg.videoUrl) {
+        setVideoUrl(cfg.videoUrl);
+        setVideoType(cfg.videoType || 'link');
+        if (cfg.videoSourceName) setVideoSourceName(cfg.videoSourceName);
+      }
+      if (cfg.p1VideoStartSeconds != null || cfg.p2VideoStartSeconds != null) {
+        setPeriodVideoOffsets((prev) => {
+          const next = { ...prev };
+          if (cfg.p1VideoStartSeconds != null) next[1] = cfg.p1VideoStartSeconds;
+          if (cfg.p2VideoStartSeconds != null) next[2] = cfg.p2VideoStartSeconds;
+          return next;
+        });
+      }
+      if (cfg.periodAdjustments !== undefined) {
+        setPeriodAdjustments(cfg.periodAdjustments || {});
+        periodAdjustmentsRef.current = cfg.periodAdjustments || {};
+      }
+    });
+
     return () => {
       cancelled = true;
       unsubscribeEvents();
       unsubscribePresence();
       unsubscribeSession();
+      unsubscribeVideo();
     };
   }, [selectedMatchId, user, profile]);
 
@@ -687,6 +829,8 @@ export default function BotoneraPage() {
       .channel(`botonera-global-analyses-realtime:${Math.random().toString(36).substring(2, 9)}_${Date.now()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'match_analyses' }, debouncedSync)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'analysis_events' }, debouncedSync)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'analysis_videos' }, debouncedSync)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, debouncedSync)
       .subscribe();
 
     return () => {
@@ -833,8 +977,8 @@ export default function BotoneraPage() {
 
   // Sync Active Tagging Session State to LocalStorage / dbStore / Supabase
   useEffect(() => {
-    // Prevent unconfigured blank state from wiping active session on initial mount
-    if (!isSessionConfigured && (!selectedMatchId || selectedMatchId === 'free_session') && events.length === 0) {
+    // Solo sincronizar sesión activa cuando el analista está efectivamente dentro del modo análisis con la sesión configurada
+    if (pageMode !== 'analysis' || !isSessionConfigured) {
       return;
     }
 
@@ -852,6 +996,9 @@ export default function BotoneraPage() {
     const resolvedP1 = periodVideoOffsets[1] ?? targetAnalysis?.p1_video_start_time ?? targetMatch?.p1_video_start_time ?? null;
     const resolvedP2 = periodVideoOffsets[2] ?? targetAnalysis?.p2_video_start_time ?? targetMatch?.p2_video_start_time ?? null;
 
+    const currentAnalystName = profile?.full_name || user?.email?.split('@')[0] || targetAnalysis?.analyst_name || 'Analista Principal';
+    const matchTitle = targetMatch ? `${targetMatch.home_team} vs ${targetMatch.away_team}` : 'Etiquetado en Vivo';
+
     dbStore.saveActiveBotoneraSession({
       selectedMatchId,
       period,
@@ -861,6 +1008,8 @@ export default function BotoneraPage() {
       lastUpdatedTimestamp: Date.now(),
       events,
       isConfigured: isSessionConfigured,
+      analystName: currentAnalystName,
+      matchTitle: matchTitle,
       videoType: resolvedVideoType,
       videoSourceName: resolvedVideoSourceName,
       videoUrl: resolvedVideoUrl,
@@ -872,6 +1021,7 @@ export default function BotoneraPage() {
       away_lineup: targetMatch?.away_lineup || selectedMatch?.away_lineup || (selectedMatchId ? dbStore.getMatchById(selectedMatchId)?.away_lineup : null) || null,
     });
   }, [
+    pageMode,
     timerSeconds,
     isTimerRunning,
     period,
@@ -886,6 +1036,94 @@ export default function BotoneraPage() {
     template,
     matches,
   ]);
+
+  /**
+   * Persists video parameters, period start times, and period adjustments
+   * simultaneously to dbStore (local) and Supabase (analysis_videos, match_analyses, matches, analysis_sessions)
+   * so sync settings are NEVER lost or overwritten.
+   */
+  const persistVideoAndTimingSync = useCallback(
+    async (
+      targetId: string,
+      updates: {
+        videoUrl?: string | null;
+        videoType?: BotoneraProjectVideoType | null;
+        videoSourceName?: string | null;
+        p1VideoStartSeconds?: number | null;
+        p2VideoStartSeconds?: number | null;
+        periodAdjustments?: Record<number, { matchTimeSec: number; videoTimeSec: number }> | null;
+      }
+    ) => {
+      if (!targetId || targetId === 'free_session') return;
+
+      const m = dbStore.getMatchById(targetId) || matches.find((match) => match.id === targetId);
+      const existingAns = dbStore.getAnalyses(targetId);
+      const masterAn = existingAns.length > 0 ? existingAns[0] : null;
+
+      const newVideoUrl = updates.videoUrl !== undefined ? updates.videoUrl : (videoUrl || masterAn?.video_url || m?.video_url || null);
+      const newVideoType = updates.videoType !== undefined ? updates.videoType : (videoType || masterAn?.video_type || m?.video_type || (newVideoUrl ? (newVideoUrl.includes('http') ? 'link' : 'local') : 'link'));
+      const newVideoSource = updates.videoSourceName !== undefined ? updates.videoSourceName : (videoSourceName || masterAn?.video_source_name || m?.video_source_name || (newVideoUrl ? 'Vídeo del Partido' : null));
+      const newP1 = updates.p1VideoStartSeconds !== undefined ? updates.p1VideoStartSeconds : (periodVideoOffsetsRef.current[1] ?? masterAn?.p1_video_start_time ?? m?.p1_video_start_time ?? null);
+      const newP2 = updates.p2VideoStartSeconds !== undefined ? updates.p2VideoStartSeconds : (periodVideoOffsetsRef.current[2] ?? masterAn?.p2_video_start_time ?? m?.p2_video_start_time ?? null);
+      const newAdjustments = updates.periodAdjustments !== undefined ? updates.periodAdjustments : periodAdjustmentsRef.current;
+
+      // 1. Update Match in local store
+      if (m) {
+        dbStore.saveMatch({
+          ...m,
+          video_url: newVideoUrl || undefined,
+          video_type: newVideoType,
+          video_source_name: newVideoSource || undefined,
+          p1_video_start_time: newP1,
+          p2_video_start_time: newP2,
+          period_adjustments: newAdjustments,
+        });
+      }
+
+      // 2. Update Analysis in local store
+      if (masterAn) {
+        dbStore.saveAnalysis({
+          ...masterAn,
+          video_url: newVideoUrl,
+          video_type: newVideoType,
+          video_source_name: newVideoSource,
+          p1_video_start_time: newP1,
+          p2_video_start_time: newP2,
+          period_adjustments: newAdjustments,
+        });
+      }
+
+      // 3. Update active session in local store if it matches
+      const activeSess = dbStore.getActiveBotoneraSession();
+      if (activeSess && (activeSess.selectedMatchId === targetId || !activeSess.selectedMatchId)) {
+        dbStore.saveActiveBotoneraSession({
+          ...activeSess,
+          selectedMatchId: targetId,
+          videoUrl: newVideoUrl,
+          videoType: newVideoType,
+          videoSourceName: newVideoSource,
+          p1VideoStartSeconds: newP1,
+          p2VideoStartSeconds: newP2,
+          periodAdjustments: newAdjustments || {},
+        });
+      }
+
+      // 4. Immediately sync to Supabase analysis_videos table
+      upsertAnalysisVideoToSupabase(targetId, {
+        videoType: newVideoType === 'none' ? null : (newVideoType as 'link' | 'local' | null),
+        videoUrl: newVideoUrl,
+        videoSourceName: newVideoSource,
+        p1VideoStartSeconds: newP1,
+        p2VideoStartSeconds: newP2,
+        periodAdjustments: newAdjustments,
+      }).catch((err) => console.warn('Non-blocking: could not upsert analysis_videos:', err));
+
+      // 5. Update local React states
+      setMatches(dbStore.getMatches());
+      setSavedAnalyses(dbStore.getAnalyses());
+    },
+    [matches, videoUrl, videoType, videoSourceName]
+  );
 
   /**
    * Continuous Real-time Persistence:
@@ -1065,6 +1303,32 @@ export default function BotoneraPage() {
     const existingAns = config.matchId !== 'free_session' ? dbStore.getAnalyses(config.matchId) : [];
     const targetAnalysis = existingAns.length > 0 ? existingAns[0] : null;
     const existingEvents = (targetAnalysis?.events && targetAnalysis.events.length > 0) ? targetAnalysis.events : [];
+    const targetMatch = config.matchId !== 'free_session' ? (dbStore.getMatchById(config.matchId) || matches.find(m => m.id === config.matchId)) : null;
+
+    // Detect if this session uses a DIFFERENT video than previously linked to this match
+    const isDifferentVideo = config.videoType === 'link'
+      ? (Boolean(config.videoUrl) && config.videoUrl !== targetMatch?.video_url && config.videoUrl !== targetAnalysis?.video_url)
+      : (config.videoType === 'local' && (Boolean(targetMatch?.video_url) || Boolean(targetAnalysis?.video_url)));
+
+    // Resolve existing offsets & adjustments so they are only preserved if it is the SAME video
+    const existingP1 = !isDifferentVideo ? (targetAnalysis?.p1_video_start_time ?? targetMatch?.p1_video_start_time ?? null) : null;
+    const existingP2 = !isDifferentVideo ? (targetAnalysis?.p2_video_start_time ?? targetMatch?.p2_video_start_time ?? null) : null;
+    const initialOffsets: Record<number, number> = {};
+    if (existingP1 != null) initialOffsets[1] = existingP1;
+    if (existingP2 != null) initialOffsets[2] = existingP2;
+
+    const initialAdjustments = (!isDifferentVideo && targetAnalysis?.period_adjustments && Object.keys(targetAnalysis.period_adjustments).length > 0)
+      ? targetAnalysis.period_adjustments
+      : (!isDifferentVideo && targetMatch?.period_adjustments && Object.keys(targetMatch.period_adjustments).length > 0)
+        ? targetMatch.period_adjustments
+        : {};
+
+    // CRITICAL: Respect the user's wizard config strictly. Never pull old match video URL if user chose local or none!
+    const resolvedVideoType = config.videoType;
+    const resolvedVideoUrl = resolvedVideoType === 'link' ? config.videoUrl : null;
+    const resolvedVideoSourceName = resolvedVideoType === 'local'
+      ? (config.videoSourceName || config.videoFile?.name || 'Archivo Local')
+      : (resolvedVideoType === 'link' ? (config.videoSourceName || (resolvedVideoUrl ? 'Vídeo Enlace' : null)) : null);
 
     // Reset session states, preserving existing analysis events if already present for this match
     dbStore.clearActiveBotoneraSession(config.matchId);
@@ -1073,19 +1337,23 @@ export default function BotoneraPage() {
     setTimerSeconds(0);
     setIsTimerRunning(false);
     setPeriod(1);
-    setPeriodVideoOffsets({});
+    setPeriodVideoOffsets(initialOffsets);
+    periodVideoOffsetsRef.current = initialOffsets;
+    setPeriodAdjustments(initialAdjustments);
+    periodAdjustmentsRef.current = initialAdjustments;
     setSelectedPlayerId(null);
 
     setSelectedMatchId(config.matchId);
-    setVideoType(config.videoType);
-    setVideoSourceName(config.videoSourceName);
-    setVideoUrl(config.videoUrl);
+    setVideoType(resolvedVideoType);
+    setVideoSourceName(resolvedVideoSourceName);
+    setVideoUrl(resolvedVideoUrl);
     setVideoFile(config.videoFile);
 
     const chosenTemplate = dbStore.getBotoneraTemplates().find((t) => t.id === config.templateId);
     if (chosenTemplate) setTemplate(chosenTemplate);
 
-    const targetMatch = config.matchId !== 'free_session' ? (dbStore.getMatchById(config.matchId) || matches.find(m => m.id === config.matchId)) : null;
+    const currentAnalystName = profile?.full_name || user?.email?.split('@')[0] || targetAnalysis?.analyst_name || 'Analista Principal';
+    const matchTitle = targetMatch ? `${targetMatch.home_team} vs ${targetMatch.away_team}` : 'Etiquetado en Vivo';
 
     dbStore.saveActiveBotoneraSession({
       selectedMatchId: config.matchId,
@@ -1096,15 +1364,30 @@ export default function BotoneraPage() {
       lastUpdatedTimestamp: Date.now(),
       events: existingEvents,
       isConfigured: true,
-      videoType: config.videoType,
-      videoSourceName: config.videoSourceName,
-      videoUrl: config.videoUrl,
-      p1VideoStartSeconds: null,
-      p2VideoStartSeconds: null,
+      analystName: currentAnalystName,
+      matchTitle: matchTitle,
+      videoType: resolvedVideoType,
+      videoSourceName: resolvedVideoSourceName,
+      videoUrl: resolvedVideoUrl,
+      p1VideoStartSeconds: initialOffsets[1] ?? null,
+      p2VideoStartSeconds: initialOffsets[2] ?? null,
+      periodAdjustments: initialAdjustments,
       botoneraTemplateId: config.templateId,
       home_lineup: targetMatch?.home_lineup || null,
       away_lineup: targetMatch?.away_lineup || null,
     });
+
+    // Immediately persist new video and sync settings to match and Supabase
+    if (config.matchId !== 'free_session') {
+      persistVideoAndTimingSync(config.matchId, {
+        videoUrl: resolvedVideoUrl,
+        videoType: resolvedVideoType,
+        videoSourceName: resolvedVideoSourceName,
+        p1VideoStartSeconds: initialOffsets[1] ?? null,
+        p2VideoStartSeconds: initialOffsets[2] ?? null,
+        periodAdjustments: initialAdjustments,
+      });
+    }
 
     setIsSessionConfigured(true);
   };
@@ -1119,7 +1402,7 @@ export default function BotoneraPage() {
     }
   }, [isSyncingToSupabase]);
 
-  const flushSessionToSupabase = async (): Promise<boolean> => {
+  const flushSessionToSupabase = async (overrideStatus?: 'completed' | 'in_progress'): Promise<boolean> => {
     if (!isSessionConfigured) return true;
     setIsSyncingToSupabase(true);
     try {
@@ -1148,12 +1431,14 @@ export default function BotoneraPage() {
       const resolvedP2 = periodVideoOffsets[2] ?? existingObj?.p2_video_start_time ?? targetMatch?.p2_video_start_time ?? null;
       const resolvedTemplateId = template?.id || existingObj?.botonera_template_id || targetMatch?.botonera_template_id || null;
 
+      const finalStatus = overrideStatus || (existingObj?.status || 'in_progress') as 'completed' | 'in_progress';
+
       const newAnalysis: MatchAnalysis = {
         id: masterAnalysisId,
         match_id: targetId,
         title: `Análisis ${targetMatch ? targetMatch.home_team + ' vs ' + targetMatch.away_team : 'Etiquetado en Vivo'}`,
         analyst_name: combinedAnalystNames,
-        status: (existingObj?.status || 'in_progress') as 'completed' | 'in_progress',
+        status: finalStatus,
         video_type: resolvedVideoType,
         video_url: resolvedVideoUrl,
         video_source_name: resolvedVideoSourceName,
@@ -1167,6 +1452,14 @@ export default function BotoneraPage() {
         created_at: existingObj?.created_at || new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
+
+      if (targetMatch) {
+        dbStore.saveMatch({
+          ...targetMatch,
+          status: finalStatus === 'completed' ? 'Finalizado' : (targetMatch.status === 'Finalizado' ? 'En curso' : targetMatch.status),
+          event_count: (newAnalysis.events || []).length,
+        });
+      }
 
       // Guaranteed fast save bounded by a 3.5s timeout so network stalls never freeze the screen
       const savePromise = Promise.allSettled([
@@ -1187,14 +1480,18 @@ export default function BotoneraPage() {
     }
   };
 
-  const handleEndSession = async () => {
-    const ok = confirm(
-      '¿Deseas cerrar la sesión de análisis? Se volcarán y confirmarán todos tus datos y cortes en Supabase antes de salir.'
-    );
-    if (!ok) return;
+  /** Abre el modal para preguntar explícitamente al usuario si el partido ha finalizado o continúa en progreso al salir */
+  const handleEndSession = () => {
+    setIsExitStatusModalOpen(true);
+  };
+
+  /** Cierra la sesión guardando la elección del usuario (Finalizado o En progreso) en dbStore y Supabase */
+  const handleEndSessionWithStatus = async (statusChoice: 'completed' | 'in_progress') => {
+    setIsExitStatusModalOpen(false);
+    setIsSyncingToSupabase(true);
 
     try {
-      await flushSessionToSupabase();
+      await flushSessionToSupabase(statusChoice);
     } catch (e) {
       console.warn('Non-blocking error flushing before exit:', e);
     } finally {
@@ -1232,6 +1529,38 @@ export default function BotoneraPage() {
     dbStore.syncAnalysesFromSupabase().then((freshAnalyses) => {
       if (freshAnalyses) setSavedAnalyses(freshAnalyses);
     }).catch(() => {});
+    setMatches(dbStore.getMatches());
+  };
+
+  /** Permite alternar el estado de un análisis entre Finalizado y En progreso con un solo clic */
+  const handleToggleAnalysisStatus = async (an: MatchAnalysis) => {
+    const nextStatus: 'completed' | 'in_progress' = an.status === 'completed' ? 'in_progress' : 'completed';
+    const updatedAn: MatchAnalysis = {
+      ...an,
+      status: nextStatus,
+      updated_at: new Date().toISOString(),
+    };
+
+    // Actualizar almacén local y react state
+    dbStore.saveAnalysis(updatedAn);
+    setSavedAnalyses((prev) => prev.map((item) => (item.id === an.id ? updatedAn : item)));
+
+    // Actualizar partido asociado si existe
+    if (an.match_id && an.match_id !== 'free_session') {
+      const m = dbStore.getMatchById(an.match_id);
+      if (m) {
+        dbStore.saveMatch({
+          ...m,
+          status: nextStatus === 'completed' ? 'Finalizado' : (m.status === 'Finalizado' ? 'En curso' : m.status),
+        });
+        setMatches(dbStore.getMatches());
+      }
+    }
+
+    // Persistir en Supabase
+    saveAnalysisToSupabase(updatedAn).catch((err) => {
+      console.warn('Could not update analysis status in Supabase:', err);
+    });
   };
 
   // Prevent accidental tab closing when match recording is active
@@ -1326,6 +1655,7 @@ export default function BotoneraPage() {
   };
 
   const [isEditVideoModalOpen, setIsEditVideoModalOpen] = useState(false);
+  const [editVideoTargetMatchId, setEditVideoTargetMatchId] = useState<string | null>(null);
   const [editVideoType, setEditVideoType] = useState<BotoneraProjectVideoType>('link');
   const [editVideoUrl, setEditVideoUrl] = useState('');
   const [editVideoFile, setEditVideoFile] = useState<File | null>(null);
@@ -1725,6 +2055,9 @@ export default function BotoneraPage() {
             period_adjustments: updatedAdjustments,
           });
         }
+        persistVideoAndTimingSync(selectedMatchId, {
+          periodAdjustments: updatedAdjustments,
+        });
       }
       return;
     }
@@ -1780,6 +2113,9 @@ export default function BotoneraPage() {
           periodAdjustments: next,
         });
       }
+      persistVideoAndTimingSync(selectedMatchId, {
+        periodAdjustments: next,
+      });
     }
     // Re-aplicar inmediatamente al crono para reflejar el inicio sin ajuste
     applyVideoTime(getCurrentVideoTime(), true);
@@ -1820,6 +2156,9 @@ export default function BotoneraPage() {
           periodAdjustments: updatedAdjustments,
         });
       }
+      persistVideoAndTimingSync(selectedMatchId, {
+        periodAdjustments: updatedAdjustments,
+      });
     }
     applyVideoTime(getCurrentVideoTime(), true);
   };
@@ -1908,6 +2247,10 @@ export default function BotoneraPage() {
         p2VideoStartSeconds: updatedOffsets[2] ?? null,
       });
     }
+    persistVideoAndTimingSync(selectedMatchId, {
+      p1VideoStartSeconds: updatedOffsets[1] ?? null,
+      p2VideoStartSeconds: updatedOffsets[2] ?? null,
+    });
   };
 
   const handleUpdatePeriodOffset = (p: number, newTimeSec: number) => {
@@ -2007,66 +2350,59 @@ export default function BotoneraPage() {
             botonera_template_id: template?.id || masterAn.botonera_template_id,
           });
         }
+        persistVideoAndTimingSync(selectedMatchId, {
+          p1VideoStartSeconds: updatedOffsets[1] ?? null,
+          p2VideoStartSeconds: updatedOffsets[2] ?? null,
+        });
       }
       return updatedOffsets;
     });
   };
 
   const handleOpenEditVideoModal = () => {
+    setEditVideoTargetMatchId(selectedMatchId);
     setEditVideoType(videoType || 'link');
     setEditVideoUrl(videoUrl || '');
     setEditVideoFile(null);
     setIsEditVideoModalOpen(true);
   };
 
+  const handleOpenEditVideoForAnalysis = (an: MatchAnalysis) => {
+    const m = dbStore.getMatchById(an.match_id) || matches.find((match) => match.id === an.match_id);
+    setEditVideoTargetMatchId(an.match_id);
+    setEditVideoType((an.video_type || m?.video_type || 'link') as BotoneraProjectVideoType);
+    setEditVideoUrl(an.video_url || m?.video_url || '');
+    setEditVideoFile(null);
+    setIsEditVideoModalOpen(true);
+  };
+
   const handleSaveVideoSettings = (e: React.FormEvent) => {
     e.preventDefault();
-    setVideoType(editVideoType);
+    const targetMatchId = editVideoTargetMatchId || selectedMatchId;
     let resolvedNewUrl: string | null = null;
     let resolvedNewSource: string | null = null;
 
     if (editVideoType === 'link') {
-      resolvedNewUrl = editVideoUrl;
+      resolvedNewUrl = editVideoUrl.trim() || null;
       resolvedNewSource = null;
-      setVideoUrl(editVideoUrl);
-      setVideoSourceName(null);
-      setVideoFile(null);
     } else if (editVideoType === 'local' && editVideoFile) {
       resolvedNewUrl = URL.createObjectURL(editVideoFile);
       resolvedNewSource = editVideoFile.name;
-      setVideoFile(editVideoFile);
-      setVideoSourceName(editVideoFile.name);
-      setVideoUrl(resolvedNewUrl);
     }
 
-    if (selectedMatchId && selectedMatchId !== 'free_session') {
-      const m = dbStore.getMatchById(selectedMatchId);
-      if (m) {
-        dbStore.saveMatch({
-          ...m,
-          video_type: editVideoType,
-          video_url: resolvedNewUrl || m.video_url,
-          video_source_name: resolvedNewSource || m.video_source_name,
-          p1_video_start_time: periodVideoOffsets[1] ?? m.p1_video_start_time,
-          p2_video_start_time: periodVideoOffsets[2] ?? m.p2_video_start_time,
-          period_adjustments: periodAdjustmentsRef.current,
-          botonera_template_id: template?.id || m.botonera_template_id,
-        });
-      }
-      const existingAnalyses = dbStore.getAnalyses(selectedMatchId);
-      const masterAn = existingAnalyses.length > 0 ? existingAnalyses[0] : null;
-      if (masterAn) {
-        dbStore.saveAnalysis({
-          ...masterAn,
-          video_type: editVideoType,
-          video_url: resolvedNewUrl || masterAn.video_url,
-          video_source_name: resolvedNewSource || masterAn.video_source_name,
-          p1_video_start_time: periodVideoOffsets[1] ?? masterAn.p1_video_start_time,
-          p2_video_start_time: periodVideoOffsets[2] ?? masterAn.p2_video_start_time,
-          period_adjustments: periodAdjustmentsRef.current,
-          botonera_template_id: template?.id || masterAn.botonera_template_id,
-        });
-      }
+    if (targetMatchId === selectedMatchId) {
+      setVideoType(editVideoType);
+      setVideoUrl(resolvedNewUrl);
+      setVideoSourceName(resolvedNewSource);
+      setVideoFile(editVideoType === 'local' ? editVideoFile : null);
+    }
+
+    if (targetMatchId && targetMatchId !== 'free_session') {
+      persistVideoAndTimingSync(targetMatchId, {
+        videoUrl: resolvedNewUrl,
+        videoType: editVideoType,
+        videoSourceName: resolvedNewSource,
+      });
     }
 
     setIsEditVideoModalOpen(false);
@@ -2139,6 +2475,59 @@ export default function BotoneraPage() {
     }
   };
 
+  // Lógica compartida de persistencia para un evento nuevo: usada tanto por la botonera de
+  // categorías (commitEvent) como por el marcador en vivo (BotoneraLiveScoreboard.onAddEvent).
+  // Unificada para que ambos flujos reciban el mismo comportamiento de reintento/errores y no
+  // diverjan al corregir uno y olvidar el otro.
+  const persistNewEvent = (newEvt: NormalizedEvent) => {
+    const targetId = (selectedMatchId && selectedMatchId !== 'free_session') ? selectedMatchId : (selectedMatchId || 'free_session');
+
+    // 1. Mark as own write to prevent echo loop
+    ownWritesRef.current.add(newEvt.event_id);
+
+    // 2. Pure state update in UI - appears immediately (0ms)
+    setEvents((prev) => {
+      if (prev.some((e) => e.event_id === newEvt.event_id)) return prev;
+      return [newEvt, ...prev];
+    });
+
+    // 3. Save to local storage safely without wiping other events
+    dbStore.saveNormalizedEvents([newEvt], false, targetId);
+
+    // 4. Instant write to Supabase analysis_events table (row-by-row collaborative persistence).
+    // Retried with backoff; if it still fails, it drops into the background sync queue and
+    // keeps auto-retrying (interval + reconnect) until it lands — no manual action ever needed.
+    withRetry(() => insertAnalysisEventToSupabase(targetId, newEvt), { label: `insert event ${newEvt.event_id}` })
+      .then(() => clearSyncFailed(newEvt.event_id))
+      .catch((err) => {
+        console.warn('Could not sync new event to Supabase analysis_events after retries, queued for auto-retry:', err);
+        markSyncFailed(newEvt.event_id, { kind: 'insert', targetId, event: newEvt });
+      });
+
+    // 5. Update match score & event count if event is a goal
+    const targetMatch = dbStore.getMatchById(targetId) || matches.find((m) => m.id === targetId);
+    if (targetMatch) {
+      const allMatchEvents = dbStore.getNormalizedEvents(targetId);
+      const scores = calculateMatchScoresFromEvents(
+        allMatchEvents,
+        targetMatch.home_team,
+        targetMatch.away_team,
+        targetMatch.home_score ?? 0,
+        targetMatch.away_score ?? 0
+      );
+      if (scores.hasTaggedGoals) {
+        const updatedMatch: Match = {
+          ...targetMatch,
+          home_score: scores.homeScore,
+          away_score: scores.awayScore,
+          event_count: allMatchEvents.length,
+        };
+        dbStore.saveMatch(updatedMatch);
+        setMatches(dbStore.getMatches());
+      }
+    }
+  };
+
   const commitEvent = (
     btn: BotoneraButton,
     descriptorsToSave: string[],
@@ -2181,8 +2570,12 @@ export default function BotoneraPage() {
     const exactTimestamp = eventTimestamp !== undefined ? eventTimestamp : timerSeconds;
     const exactPeriod = eventPeriod !== undefined ? eventPeriod : period;
 
+    const secureEventId = typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `evt_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
     const newEvt: NormalizedEvent = {
-      event_id: `evt_tag_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+      event_id: secureEventId,
       source_event_id: `src_${Date.now()}`,
       match_id: selectedMatchId === 'free_session' ? 'free_session' : selectedMatchId,
       team_id: chosenTeamId,
@@ -2224,201 +2617,59 @@ export default function BotoneraPage() {
       updated_at: new Date().toISOString(),
     };
 
-    setEvents((prev) => {
-      const nextEvents = [newEvt, ...prev];
-      const targetId = (selectedMatchId && selectedMatchId !== 'free_session') ? selectedMatchId : (selectedMatchId || 'free_session');
-      dbStore.saveNormalizedEvents([newEvt], false, targetId);
-
-      ownWritesRef.current.add(newEvt.event_id);
-      // 1. Instant write to Supabase analysis_events table (row-by-row collaborative persistence)
-      insertAnalysisEventToSupabase(targetId, newEvt).catch((err) =>
-        console.warn('Could not sync new event to Supabase analysis_events:', err)
-      );
-
-      // 2. Auto-save immediately to single master MatchAnalysis & Match record in Supabase & local DB
-      const targetMatch = dbStore.getMatchById(targetId) || matches.find((m) => m.id === targetId);
-      const currentAnalyst = profile?.full_name || user?.email || 'Analista SAO';
-
-      const masterAnalysisId = `analysis_${targetId}`;
-      const existingAnalyses = dbStore.getAnalyses(targetId);
-      const existingObj = existingAnalyses.find((a) => a.match_id === targetId || a.id === masterAnalysisId);
-
-      const combinedAnalystNames = dbStore.sanitizeAnalystNames([
-        ...(existingObj?.analyst_name ? [existingObj.analyst_name] : []),
-        currentAnalyst,
-      ]);
-
-      const updatedEvents = dbStore.deduplicateEventsByTime([...nextEvents, ...(existingObj?.events || [])]);
-
-      const resolvedVideoUrl = (videoUrl && videoUrl.trim()) || existingObj?.video_url || targetMatch?.video_url || null;
-      const resolvedVideoType = videoType || existingObj?.video_type || targetMatch?.video_type || (resolvedVideoUrl ? (resolvedVideoUrl.includes('http') ? 'link' : 'local') : null);
-      const resolvedVideoSourceName = videoSourceName || existingObj?.video_source_name || targetMatch?.video_source_name || (resolvedVideoUrl ? 'Vídeo del Partido' : null);
-      const resolvedP1 = periodVideoOffsets[1] ?? existingObj?.p1_video_start_time ?? targetMatch?.p1_video_start_time ?? null;
-      const resolvedP2 = periodVideoOffsets[2] ?? existingObj?.p2_video_start_time ?? targetMatch?.p2_video_start_time ?? null;
-      const resolvedTemplateId = template?.id || existingObj?.botonera_template_id || targetMatch?.botonera_template_id || null;
-
-      const masterAnalysis: MatchAnalysis = {
-        id: masterAnalysisId,
-        match_id: targetId,
-        title: `Análisis ${targetMatch ? targetMatch.home_team + ' vs ' + targetMatch.away_team : 'Etiquetado en Vivo'}`,
-        analyst_name: combinedAnalystNames,
-        status: 'in_progress' as const,
-        video_type: resolvedVideoType,
-        video_url: resolvedVideoUrl,
-        video_source_name: resolvedVideoSourceName,
-        p1_video_start_time: resolvedP1,
-        p2_video_start_time: resolvedP2,
-        period_adjustments: periodAdjustmentsRef.current,
-        botonera_template_id: resolvedTemplateId,
-        home_lineup: targetMatch?.home_lineup || existingObj?.home_lineup || null,
-        away_lineup: targetMatch?.away_lineup || existingObj?.away_lineup || null,
-        events: updatedEvents,
-        created_at: existingObj?.created_at || new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-
-      dbStore.saveAnalysis(masterAnalysis);
-      saveAnalysisToSupabase(masterAnalysis, { skipEventsTableSync: true }).catch((err) =>
-        console.warn('Could not sync master analysis to Supabase:', err)
-      );
-
-      // 3. Immediately save active session in Supabase with 0-delay (prevents data loss on power outage or browser crash)
-      const activeSessionPayload: ActiveBotoneraSession = {
-        selectedMatchId: targetId,
-        period,
-        timerSeconds,
-        isTimerRunning,
-        startTimestamp: isTimerRunning ? (dbStore.getActiveBotoneraSession()?.startTimestamp || Date.now() - timerSeconds * 1000) : null,
-        lastUpdatedTimestamp: Date.now(),
-        events: updatedEvents,
-        isConfigured: isSessionConfigured,
-        videoType: resolvedVideoType,
-        videoSourceName: resolvedVideoSourceName,
-        videoUrl: resolvedVideoUrl,
-        p1VideoStartSeconds: resolvedP1,
-        p2VideoStartSeconds: resolvedP2,
-        periodAdjustments: periodAdjustmentsRef.current,
-        botoneraTemplateId: resolvedTemplateId,
-        home_lineup: targetMatch?.home_lineup || existingObj?.home_lineup || null,
-        away_lineup: targetMatch?.away_lineup || existingObj?.away_lineup || null,
-      };
-      dbStore.saveActiveBotoneraSession(activeSessionPayload, true);
-      saveAnalysisSessionToSupabase(activeSessionPayload).catch((err) =>
-        console.warn('Could not sync active session to Supabase immediately:', err)
-      );
-
-      if (targetMatch) {
-        const scores = calculateMatchScoresFromEvents(
-          updatedEvents,
-          targetMatch.home_team,
-          targetMatch.away_team,
-          targetMatch.home_score ?? 0,
-          targetMatch.away_score ?? 0
-        );
-
-        const updatedMatch: Match = {
-          ...targetMatch,
-          home_score: scores.hasTaggedGoals ? scores.homeScore : targetMatch.home_score,
-          away_score: scores.hasTaggedGoals ? scores.awayScore : targetMatch.away_score,
-          event_count: updatedEvents.length,
-          status: 'Finalizado',
-          import_status: 'XML Importado',
-          video_type: resolvedVideoType,
-          video_url: resolvedVideoUrl || undefined,
-          video_source_name: resolvedVideoSourceName || undefined,
-          p1_video_start_time: resolvedP1,
-          p2_video_start_time: resolvedP2,
-          period_adjustments: periodAdjustmentsRef.current,
-          botonera_template_id: resolvedTemplateId || undefined,
-        };
-
-        dbStore.saveMatch(updatedMatch);
-        saveMatchesToSupabase([updatedMatch]).catch(() => {});
-        setMatches(dbStore.getMatches());
-      }
-      setSavedAnalyses((prev) => {
-        const idx = prev.findIndex((a) => a.id === masterAnalysis.id || a.match_id === masterAnalysis.match_id);
-        if (idx >= 0) {
-          const nextList = [...prev];
-          nextList[idx] = masterAnalysis;
-          return nextList;
-        }
-        return [masterAnalysis, ...prev];
-      });
-
-      return nextEvents;
-    });
+    persistNewEvent(newEvt);
     setEventModalData(null);
   };
 
   const handleDeleteEvent = (eventId: string) => {
+    const targetId = (selectedMatchId && selectedMatchId !== 'free_session') ? selectedMatchId : (selectedMatchId || 'free_session');
+
+    // 1. Mark as own write to prevent echo loop
+    ownWritesRef.current.add(eventId);
+
+    // 2. Pure state update in UI - removed immediately (0ms)
     setEvents((prev) => {
       const target = prev.find((e) => e.event_id === eventId);
       if (target) {
         dbStore.backupDeletedEvents([target]);
       }
-      const next = prev.filter((e) => e.event_id !== eventId);
-      const targetId = (selectedMatchId && selectedMatchId !== 'free_session') ? selectedMatchId : (selectedMatchId || 'free_session');
-      dbStore.saveNormalizedEvents(next, true, targetId);
-
-      if (targetId) {
-        ownWritesRef.current.add(eventId);
-        const deleterName = profile?.full_name || user?.email || 'Analista';
-        deleteAnalysisEventFromSupabase(eventId, deleterName).catch((err) =>
-          console.warn('Could not sync event deletion to Supabase:', err)
-        );
-
-        // Update single master MatchAnalysis card
-        const masterAnalysisId = `analysis_${targetId}`;
-        const analyses = dbStore.getAnalyses(targetId);
-        const existing = analyses.find((a) => a.match_id === targetId || a.id === masterAnalysisId) || analyses[0];
-        if (existing) {
-          const updatedAnalysis: MatchAnalysis = {
-            ...existing,
-            events: next,
-            period_adjustments: periodAdjustmentsRef.current || existing.period_adjustments,
-            updated_at: new Date().toISOString(),
-          };
-          dbStore.saveAnalysis(updatedAnalysis);
-          saveAnalysisToSupabase(updatedAnalysis, { skipEventsTableSync: true }).catch(() => {});
-          setSavedAnalyses(dbStore.getAnalyses());
-        }
-
-        const activeSess = dbStore.getActiveBotoneraSession();
-        if (activeSess) {
-          const updatedSession: ActiveBotoneraSession = {
-            ...activeSess,
-            events: next,
-            lastUpdatedTimestamp: Date.now(),
-          };
-          dbStore.saveActiveBotoneraSession(updatedSession, true);
-          saveAnalysisSessionToSupabase(updatedSession).catch(() => {});
-        }
-
-        const targetMatch = dbStore.getMatchById(targetId) || matches.find((m) => m.id === targetId);
-        if (targetMatch) {
-          const scores = calculateMatchScoresFromEvents(
-            next,
-            targetMatch.home_team,
-            targetMatch.away_team,
-            targetMatch.home_score ?? 0,
-            targetMatch.away_score ?? 0
-          );
-
-          const updatedMatch: Match = {
-            ...targetMatch,
-            home_score: scores.hasTaggedGoals ? scores.homeScore : targetMatch.home_score,
-            away_score: scores.hasTaggedGoals ? scores.awayScore : targetMatch.away_score,
-            event_count: next.length,
-          };
-
-          dbStore.saveMatch(updatedMatch);
-          saveMatchesToSupabase([updatedMatch]).catch(() => {});
-          setMatches(dbStore.getMatches());
-        }
-      }
-      return next;
+      return prev.filter((e) => e.event_id !== eventId);
     });
+
+    // 3. Delete from local storage
+    dbStore.deleteNormalizedEvent(eventId);
+
+    // 4. Asynchronous delete from Supabase analysis_events table
+    if (targetId) {
+      const deleterName = profile?.full_name || user?.email || 'Analista';
+      withRetry(() => deleteAnalysisEventFromSupabase(eventId, deleterName), { label: `delete event ${eventId}` })
+        .then(() => clearSyncFailed(eventId))
+        .catch((err) => {
+          console.warn('Could not sync event deletion to Supabase after retries, queued for auto-retry:', err);
+          markSyncFailed(eventId, { kind: 'delete', eventId, deleterName });
+        });
+
+      // Update match event count & scores
+      const targetMatch = dbStore.getMatchById(targetId) || matches.find((m) => m.id === targetId);
+      if (targetMatch) {
+        const remainingEvts = dbStore.getNormalizedEvents(targetId);
+        const scores = calculateMatchScoresFromEvents(
+          remainingEvts,
+          targetMatch.home_team,
+          targetMatch.away_team,
+          targetMatch.home_score ?? 0,
+          targetMatch.away_score ?? 0
+        );
+        const updatedMatch: Match = {
+          ...targetMatch,
+          home_score: scores.hasTaggedGoals ? scores.homeScore : targetMatch.home_score,
+          away_score: scores.hasTaggedGoals ? scores.awayScore : targetMatch.away_score,
+          event_count: remainingEvts.length,
+        };
+        dbStore.saveMatch(updatedMatch);
+        setMatches(dbStore.getMatches());
+      }
+    }
   };
 
   const handleResetTeamSubstitutions = (team: 'home' | 'away') => {
@@ -2435,48 +2686,22 @@ export default function BotoneraPage() {
     const targetIds = new Set(targets.map((e) => e.event_id));
     dbStore.backupDeletedEvents(targets);
 
-    setEvents((prev) => {
-      const next = prev.filter((e) => !targetIds.has(e.event_id));
-      const targetId = (selectedMatchId && selectedMatchId !== 'free_session') ? selectedMatchId : (selectedMatchId || 'free_session');
-      dbStore.saveNormalizedEvents(next, true, targetId);
+    setEvents((prev) => prev.filter((e) => !targetIds.has(e.event_id)));
 
-      if (targetId) {
-        const deleterName = profile?.full_name || user?.email || 'Analista';
-        targets.forEach((e) => {
-          ownWritesRef.current.add(e.event_id);
-          deleteAnalysisEventFromSupabase(e.event_id, deleterName).catch((err) =>
-            console.warn('Could not sync substitution reset to Supabase:', err)
-          );
-        });
+    // 2. Remove from local store
+    targets.forEach((e) => dbStore.deleteNormalizedEvent(e.event_id));
 
-        const masterAnalysisId = `analysis_${targetId}`;
-        const analyses = dbStore.getAnalyses(targetId);
-        const existing = analyses.find((a) => a.match_id === targetId || a.id === masterAnalysisId) || analyses[0];
-        if (existing) {
-          const updatedAnalysis: MatchAnalysis = {
-            ...existing,
-            events: next,
-            period_adjustments: periodAdjustmentsRef.current || existing.period_adjustments,
-            updated_at: new Date().toISOString(),
-          };
-          dbStore.saveAnalysis(updatedAnalysis);
-          saveAnalysisToSupabase(updatedAnalysis, { skipEventsTableSync: true }).catch(() => {});
-          setSavedAnalyses(dbStore.getAnalyses());
-        }
-
-        const activeSess = dbStore.getActiveBotoneraSession();
-        if (activeSess) {
-          const updatedSession: ActiveBotoneraSession = {
-            ...activeSess,
-            events: next,
-            lastUpdatedTimestamp: Date.now(),
-          };
-          dbStore.saveActiveBotoneraSession(updatedSession, true);
-          saveAnalysisSessionToSupabase(updatedSession).catch(() => {});
-        }
-      }
-      return next;
-    });
+    // 3. Delete from Supabase analysis_events
+    const targetId = (selectedMatchId && selectedMatchId !== 'free_session') ? selectedMatchId : (selectedMatchId || 'free_session');
+    if (targetId) {
+      const deleterName = profile?.full_name || user?.email || 'Analista';
+      targets.forEach((e) => {
+        ownWritesRef.current.add(e.event_id);
+        deleteAnalysisEventFromSupabase(e.event_id, deleterName).catch((err) =>
+          console.warn('Could not sync substitution reset to Supabase:', err)
+        );
+      });
+    }
   };
 
   const handleResetLineupsAndSubstitutions = (scope: 'home' | 'away' | 'both' = 'both') => {
@@ -2505,7 +2730,12 @@ export default function BotoneraPage() {
     }
 
     const subIdsToDelete = new Set(subsToDelete.map((s) => s.event_id));
-    const nextEvents = events.filter((e) => !subIdsToDelete.has(e.event_id));
+
+    // 1. Pure state update
+    setEvents((prev) => prev.filter((e) => !subIdsToDelete.has(e.event_id)));
+
+    // 2. Remove from local store
+    subsToDelete.forEach((s) => dbStore.deleteNormalizedEvent(s.event_id));
 
     // Delete substitutions from Supabase analysis_events table immediately
     if (targetId) {
@@ -2517,9 +2747,6 @@ export default function BotoneraPage() {
         );
       });
     }
-
-    dbStore.saveNormalizedEvents(nextEvents, true, targetId);
-    setEvents(nextEvents);
 
     // 2. Build clean default lineups
     const freshHomeLineup: TeamLineupConfig = {
@@ -2555,18 +2782,19 @@ export default function BotoneraPage() {
 
     // 3. Update Match record in local dbStore & Supabase
     if (currentM) {
+      const remainingEvts = dbStore.getNormalizedEvents(targetId);
       const updatedMatch: Match = {
         ...currentM,
         home_lineup: newHomeLineup,
         away_lineup: newAwayLineup,
-        event_count: nextEvents.length,
+        event_count: remainingEvts.length,
       };
       dbStore.saveMatch(updatedMatch);
       setMatches(dbStore.getMatches());
       saveMatchesToSupabase([updatedMatch]).catch(() => {});
     }
 
-    // 4. Update master MatchAnalysis in local dbStore & Supabase
+    // 4. Update master MatchAnalysis in local dbStore & Supabase (lineups only, without overwriting events)
     const masterAnalysisId = `analysis_${targetId}`;
     const analyses = dbStore.getAnalyses(targetId);
     const existing = analyses.find((a) => a.match_id === targetId || a.id === masterAnalysisId) || analyses[0];
@@ -2575,7 +2803,6 @@ export default function BotoneraPage() {
         ...existing,
         home_lineup: newHomeLineup,
         away_lineup: newAwayLineup,
-        events: nextEvents,
         updated_at: new Date().toISOString(),
       };
       dbStore.saveAnalysis(updatedAnalysis);
@@ -2590,7 +2817,6 @@ export default function BotoneraPage() {
         ...activeSess,
         home_lineup: newHomeLineup,
         away_lineup: newAwayLineup,
-        events: nextEvents,
         lastUpdatedTimestamp: Date.now(),
       };
       dbStore.saveActiveBotoneraSession(updatedSession, true);
@@ -2599,46 +2825,47 @@ export default function BotoneraPage() {
   };
 
   const handleUpdateEvent = (updatedEvt: NormalizedEvent) => {
-    setEvents((prev) => {
-      const nextEvents = prev.map((e) => (e.event_id === updatedEvt.event_id ? updatedEvt : e));
-      const targetId = (selectedMatchId && selectedMatchId !== 'free_session') ? selectedMatchId : (selectedMatchId || 'free_session');
-      dbStore.saveNormalizedEvents(nextEvents, true, targetId);
+    const targetId = (selectedMatchId && selectedMatchId !== 'free_session') ? selectedMatchId : (selectedMatchId || 'free_session');
 
-      if (targetId) {
-        ownWritesRef.current.add(updatedEvt.event_id);
-        updateAnalysisEventInSupabase(targetId, updatedEvt).catch((err) =>
-          console.warn('Could not sync event update to Supabase:', err)
+    // 1. Mark as own write to avoid echo loop
+    ownWritesRef.current.add(updatedEvt.event_id);
+
+    // 2. Pure state update in UI - immediate (0ms)
+    setEvents((prev) => prev.map((e) => (e.event_id === updatedEvt.event_id ? updatedEvt : e)));
+
+    // 3. Update in local storage safely without wiping other events
+    dbStore.saveNormalizedEvents([updatedEvt], false, targetId);
+
+    // 4. Update in Supabase analysis_events table
+    if (targetId) {
+      withRetry(() => updateAnalysisEventInSupabase(targetId, updatedEvt), { label: `update event ${updatedEvt.event_id}` })
+        .then(() => clearSyncFailed(updatedEvt.event_id))
+        .catch((err) => {
+          markSyncFailed(updatedEvt.event_id, { kind: 'update', targetId, event: updatedEvt });
+          console.warn('Could not sync event update to Supabase after retries, queued for auto-retry:', err);
+        });
+
+      // Update match event count & scores if goal or team changed
+      const targetMatch = dbStore.getMatchById(targetId) || matches.find((m) => m.id === targetId);
+      if (targetMatch) {
+        const remainingEvts = dbStore.getNormalizedEvents(targetId);
+        const scores = calculateMatchScoresFromEvents(
+          remainingEvts,
+          targetMatch.home_team,
+          targetMatch.away_team,
+          targetMatch.home_score ?? 0,
+          targetMatch.away_score ?? 0
         );
-
-        // Update single master MatchAnalysis card
-        const masterAnalysisId = `analysis_${targetId}`;
-        const analyses = dbStore.getAnalyses(targetId);
-        const existing = analyses.find((a) => a.match_id === targetId || a.id === masterAnalysisId) || analyses[0];
-        if (existing) {
-          const updatedAnalysis: MatchAnalysis = {
-            ...existing,
-            events: nextEvents,
-            period_adjustments: periodAdjustmentsRef.current || existing.period_adjustments,
-            updated_at: new Date().toISOString(),
-          };
-          dbStore.saveAnalysis(updatedAnalysis);
-          saveAnalysisToSupabase(updatedAnalysis, { skipEventsTableSync: true }).catch(() => {});
-          setSavedAnalyses(dbStore.getAnalyses());
-        }
-
-        const activeSess = dbStore.getActiveBotoneraSession();
-        if (activeSess) {
-          const updatedSession: ActiveBotoneraSession = {
-            ...activeSess,
-            events: nextEvents,
-            lastUpdatedTimestamp: Date.now(),
-          };
-          dbStore.saveActiveBotoneraSession(updatedSession, true);
-          saveAnalysisSessionToSupabase(updatedSession).catch(() => {});
-        }
+        const updatedMatch: Match = {
+          ...targetMatch,
+          home_score: scores.hasTaggedGoals ? scores.homeScore : targetMatch.home_score,
+          away_score: scores.hasTaggedGoals ? scores.awayScore : targetMatch.away_score,
+          event_count: remainingEvts.length,
+        };
+        dbStore.saveMatch(updatedMatch);
+        setMatches(dbStore.getMatches());
       }
-      return nextEvents;
-    });
+    }
   };
 
   const handleClearAllEvents = async () => {
@@ -2669,7 +2896,7 @@ export default function BotoneraPage() {
           updated_at: new Date().toISOString(),
         };
         dbStore.saveAnalysis(clearedAnalysis);
-        await saveAnalysisToSupabase(clearedAnalysis);
+        await saveAnalysisToSupabase(clearedAnalysis, { explicitClear: true });
       }
 
       // 4. Update match event_count in dbStore & Supabase
@@ -2799,10 +3026,36 @@ export default function BotoneraPage() {
             <Flame className="w-5 h-5 text-slate-950 fill-amber-300" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2.5 flex-wrap">
               <h1 className="font-black text-slate-100 text-base md:text-lg tracking-wide">
                 ANALIZADOR Y REGISTRO EN DIRECTO (BOTONERA)
               </h1>
+
+              {/* Indicador en directo en la cabecera: Analista, Parte y Minuto de juego */}
+              {pageMode === 'analysis' && (isSessionConfigured || isTimerRunning) && (
+                <div className="flex items-center gap-2 px-2.5 py-1 rounded-xl bg-gradient-to-r from-red-950/80 via-slate-900 to-amber-950/40 border border-red-500/50 shadow-sm animate-fade-in">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+                  </span>
+                  <span className="text-red-400 font-mono font-black text-[10px] tracking-wider uppercase">
+                    EN DIRECTO
+                  </span>
+                  <span className="text-slate-600">•</span>
+                  <span className="text-white font-extrabold text-xs flex items-center gap-1">
+                    <User className="w-3.5 h-3.5 text-amber-400" />
+                    {profile?.full_name || user?.email?.split('@')[0] || 'Analista Principal'}
+                  </span>
+                  <span className="text-slate-600">•</span>
+                  <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono font-bold text-[11px] border border-amber-500/30">
+                    {period === 1 ? '1ª Parte' : period === 2 ? '2ª Parte' : period === 3 ? 'Prórroga 1' : period === 4 ? 'Prórroga 2' : `Parte ${period}`}
+                  </span>
+                  <span className="text-emerald-400 font-mono font-extrabold text-xs">
+                    {formatTime(timerSeconds)} ({Math.floor(timerSeconds / 60) + 1}&apos;)
+                  </span>
+                </div>
+              )}
+
               {isTimerRunning && (
                 <span className="px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 font-mono text-[10px] font-bold border border-red-500/30 animate-pulse flex items-center gap-1">
                   <Radio className="w-3 h-3" /> REC
@@ -2817,6 +3070,15 @@ export default function BotoneraPage() {
                   {connectedAnalysts.length === 1
                     ? connectedAnalysts[0].userName
                     : `${connectedAnalysts.length} analistas conectados`}
+                </span>
+              )}
+              {failedSyncEventIds.size > 0 && (
+                <span
+                  className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 font-mono text-[10px] font-bold border border-amber-500/30 flex items-center gap-1 animate-pulse"
+                  title="Guardado localmente. Sincronizando automáticamente con Supabase en segundo plano — no hace falta hacer nada."
+                >
+                  <AlertTriangle className="w-3 h-3" />
+                  Sincronizando {failedSyncEventIds.size} evento{failedSyncEventIds.size === 1 ? '' : 's'}…
                 </span>
               )}
             </div>
@@ -2935,13 +3197,25 @@ export default function BotoneraPage() {
           {/* Active Session Banner (if an in-progress session exists) */}
           {isSessionConfigured && (
             <div className="p-5 rounded-2xl bg-gradient-to-r from-emerald-950/80 via-slate-900 to-slate-900 border border-emerald-500/40 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xl w-full">
-              <div className="flex items-center gap-3.5">
+              <div className="flex items-center gap-3.5 min-w-0">
                 <div className="p-3 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shrink-0">
                   <Radio className="w-5 h-5 animate-pulse text-emerald-400" />
                 </div>
-                <div>
-                  <p className="font-extrabold text-white text-sm">Tienes un registro en directo en marcha</p>
-                  <p className="text-slate-400 text-xs mt-0.5">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="font-extrabold text-white text-sm">Registro en directo en marcha</p>
+                    <span className="flex items-center gap-1 text-xs text-amber-300 font-bold bg-amber-950/50 px-2 py-0.5 rounded-lg border border-amber-500/30">
+                      <User className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                      <span>{profile?.full_name || user?.email?.split('@')[0] || 'Analista Principal'}</span>
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono font-bold text-xs border border-emerald-500/30">
+                      {period === 1 ? '1ª Parte' : period === 2 ? '2ª Parte' : period === 3 ? 'Prórroga 1' : period === 4 ? 'Prórroga 2' : `Parte ${period}`}
+                    </span>
+                    <span className="text-emerald-400 font-mono font-extrabold text-xs">
+                      Min. {Math.floor(timerSeconds / 60) + 1}&apos; ({formatTime(timerSeconds)})
+                    </span>
+                  </div>
+                  <p className="text-slate-400 text-xs mt-1">
                     Partido: <span className="text-amber-400 font-bold">{selectedMatchId && selectedMatchId !== 'free_session' ? (dbStore.getMatchById(selectedMatchId)?.home_team + ' vs ' + dbStore.getMatchById(selectedMatchId)?.away_team) : 'Sesión Libre'}</span> • {events.length} eventos etiquetados
                   </p>
                 </div>
@@ -3047,11 +3321,12 @@ export default function BotoneraPage() {
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4 gap-4 w-full">
                     {savedAnalyses.map((an) => {
-                      const m = matches.find((match) => match.id === an.match_id);
+                      const m = matches.find((match) => match.id === an.match_id) || dbStore.getMatchById(an.match_id);
+                      const { competition, round } = getAnalysisLeagueAndRound(an, m);
                       const rawUrl = an.video_url || m?.video_url;
                       let ytThumb: string | null = null;
                       if (rawUrl) {
-                        const matchId = rawUrl.match(/(?:v=|\/embed\/|\/shorts\/|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+                        const matchId = rawUrl.match(/(?:v=|\/embed\/|\/shorts\/|\/live\/|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
                         if (matchId && matchId[1]) {
                           ytThumb = `https://img.youtube.com/vi/${matchId[1]}/hqdefault.jpg`;
                         }
@@ -3075,20 +3350,32 @@ export default function BotoneraPage() {
                               />
                               <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent" />
                               <div className="absolute top-2 left-2 right-2 flex items-center justify-between z-10">
-                                {m?.round ? (
-                                  <span className="px-2 py-0.5 rounded text-[10px] font-black bg-amber-500 text-slate-950 shadow-md">
-                                    {m.round}
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-black bg-amber-500 text-slate-950 shadow-md flex items-center gap-1">
+                                    <Trophy className="w-3 h-3" />
+                                    <span>{competition}</span>
                                   </span>
-                                ) : <div />}
-                                <span
-                                  className={`px-2 py-0.5 rounded text-[10px] font-bold border backdrop-blur-md ${
+                                  {round && (
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-black bg-slate-900/90 text-amber-300 border border-amber-500/40 backdrop-blur-md shadow-md">
+                                      {round}
+                                    </span>
+                                  )}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleToggleAnalysisStatus(an);
+                                  }}
+                                  title={`Estado actual: ${an.status === 'completed' ? 'Finalizado' : 'En progreso'}. Haz clic para cambiar.`}
+                                  className={`px-2 py-0.5 rounded text-[10px] font-bold border backdrop-blur-md transition-all hover:scale-105 active:scale-95 cursor-pointer ${
                                     an.status === 'completed'
-                                      ? 'bg-emerald-950/90 text-emerald-300 border-emerald-500/40 shadow-sm'
-                                      : 'bg-rose-950/90 text-rose-300 border-rose-500/40 shadow-sm'
+                                      ? 'bg-emerald-950/90 text-emerald-300 border-emerald-500/40 shadow-sm hover:border-emerald-400 hover:bg-emerald-900/90'
+                                      : 'bg-rose-950/90 text-rose-300 border-rose-500/40 shadow-sm hover:border-rose-400 hover:bg-rose-900/90'
                                   }`}
                                 >
                                   {an.status === 'completed' ? 'Finalizado' : 'En progreso'}
-                                </span>
+                                </button>
                               </div>
                               <div className="absolute bottom-2 left-3 right-3 flex items-center justify-between text-[11px] font-mono text-slate-200 z-10">
                                 <span className="bg-slate-950/80 px-2 py-0.5 rounded text-[10px] font-bold text-amber-300 border border-amber-500/30 backdrop-blur-md">
@@ -3108,34 +3395,55 @@ export default function BotoneraPage() {
                             <div>
                               {!ytThumb && (
                                 <div className="flex items-center justify-between text-[11px] text-slate-400 pb-2 border-b border-slate-800/60">
-                                  <span className="font-mono text-slate-300">
-                                    {new Date(an.updated_at || an.created_at).toLocaleDateString()}
-                                  </span>
-                                  <span
-                                    className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30 flex items-center gap-1">
+                                      <Trophy className="w-3 h-3 text-amber-400" />
+                                      <span>{competition}</span>
+                                    </span>
+                                    {round && (
+                                      <span className="px-1.5 py-0.5 rounded text-[10px] font-black bg-slate-800 text-slate-200 border border-slate-700">
+                                        {round}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleToggleAnalysisStatus(an);
+                                    }}
+                                    title={`Estado actual: ${an.status === 'completed' ? 'Finalizado' : 'En progreso'}. Haz clic para cambiar.`}
+                                    className={`px-2 py-0.5 rounded text-[10px] font-bold border transition-all hover:scale-105 active:scale-95 cursor-pointer ${
                                       an.status === 'completed'
-                                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                                        : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
+                                        : 'bg-rose-500/10 text-rose-400 border-rose-500/30 hover:bg-rose-500/20'
                                     }`}
                                   >
                                     {an.status === 'completed' ? 'Finalizado' : 'En progreso'}
-                                  </span>
+                                  </button>
                                 </div>
                               )}
 
                               <h4 className="font-extrabold text-sm text-white line-clamp-1 group-hover:text-amber-300 transition-colors">
                                 {an.title}
                               </h4>
+                              {/* Competición y Jornada en el cuerpo para visibilidad clara */}
+                              <div className="flex items-center gap-2 mt-1">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-slate-900 border border-slate-800 text-slate-300">
+                                  <Trophy className="w-3 h-3 text-amber-400 shrink-0" />
+                                  <span className="truncate max-w-[130px]">{competition}</span>
+                                </span>
+                                {round && (
+                                  <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30 shrink-0">
+                                    {round}
+                                  </span>
+                                )}
+                              </div>
                               {m && (
-                                <div className="flex items-center justify-between gap-2 mt-0.5">
+                                <div className="flex items-center justify-between gap-2 mt-1">
                                   <p className="text-xs text-amber-400 font-semibold truncate">
                                     {m.home_team} vs {m.away_team}
                                   </p>
-                                  {m.round && (
-                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/40 shrink-0">
-                                      {m.round}
-                                    </span>
-                                  )}
                                 </div>
                               )}
                               <p className="text-xs text-slate-400 mt-1 flex items-center gap-1.5 line-clamp-1">
@@ -3166,6 +3474,14 @@ export default function BotoneraPage() {
                               >
                                 <Eye className="w-3.5 h-3.5" />
                                 <span>Abrir Visor</span>
+                              </button>
+
+                              <button
+                                onClick={() => handleOpenEditVideoForAnalysis(an)}
+                                className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-sky-400 border border-slate-800 hover:border-sky-500/40 transition-colors cursor-pointer"
+                                title="Editar Vídeo / Enlace"
+                              >
+                                <Link2 className="w-4 h-4" />
                               </button>
 
                               <button
@@ -3222,45 +3538,7 @@ export default function BotoneraPage() {
             events={events}
             timerSeconds={timerSeconds}
             period={period}
-            onAddEvent={(newEvt) => {
-              setEvents((prev) => {
-                const nextEvents = [newEvt, ...prev];
-                const targetId = (selectedMatchId && selectedMatchId !== 'free_session') ? selectedMatchId : (selectedMatchId || 'free_session');
-                dbStore.saveNormalizedEvents([newEvt], false, targetId);
-
-                ownWritesRef.current.add(newEvt.event_id);
-                insertAnalysisEventToSupabase(targetId, newEvt).catch((err) =>
-                  console.warn('Could not sync new scoreboard event to Supabase:', err)
-                );
-
-                const masterAnalysisId = `analysis_${targetId}`;
-                const existingAnalyses = dbStore.getAnalyses(targetId);
-                const existingObj = existingAnalyses.find((a) => a.match_id === targetId || a.id === masterAnalysisId) || existingAnalyses[0];
-                if (existingObj) {
-                  const updatedAn: MatchAnalysis = {
-                    ...existingObj,
-                    events: nextEvents,
-                    updated_at: new Date().toISOString(),
-                  };
-                  dbStore.saveAnalysis(updatedAn);
-                  saveAnalysisToSupabase(updatedAn, { skipEventsTableSync: true }).catch(() => {});
-                  setSavedAnalyses(dbStore.getAnalyses());
-                }
-
-                const activeSess = dbStore.getActiveBotoneraSession();
-                if (activeSess) {
-                  const updatedSession: ActiveBotoneraSession = {
-                    ...activeSess,
-                    events: nextEvents,
-                    lastUpdatedTimestamp: Date.now(),
-                  };
-                  dbStore.saveActiveBotoneraSession(updatedSession, true);
-                  saveAnalysisSessionToSupabase(updatedSession).catch(() => {});
-                }
-
-                return nextEvents;
-              });
-            }}
+            onAddEvent={(newEvt) => persistNewEvent(newEvt)}
             onResetSubstitutions={handleResetTeamSubstitutions}
             onResetLineupsAndSubstitutions={handleResetLineupsAndSubstitutions}
             onUpdateLineup={(team, config, updatedPlayers) => {
@@ -3841,12 +4119,13 @@ export default function BotoneraPage() {
       {activeVisorAnalysis && (
         <AnalysisVisor
           match={
-            matches.find((m) => m.id === activeVisorAnalysis.match_id) || {
+            matches.find((m) => m.id === activeVisorAnalysis.match_id) || dbStore.getMatchById(activeVisorAnalysis.match_id) || {
               id: activeVisorAnalysis.match_id,
               home_team: 'Shabab Al Ordon',
               away_team: 'Rival',
               date: '',
               competition: 'Jordan Pro League',
+              round: undefined,
               season: '2026/2027',
               home_score: 0,
               away_score: 0,
@@ -3862,6 +4141,96 @@ export default function BotoneraPage() {
             setSavedAnalyses((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
           }}
         />
+      )}
+      {/* Modal para preguntar si el partido ha finalizado al salir del análisis */}
+      {isExitStatusModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-4 animate-fade-in">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-lg w-full p-6 sm:p-7 space-y-6 shadow-2xl relative overflow-hidden border-t-amber-500/30">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0">
+                  <Trophy className="w-6 h-6 text-amber-400" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-white text-base sm:text-lg">
+                    ¿Está acabado ya el partido?
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Indica el estado con el que deseas guardar este análisis en la base de datos al salir.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsExitStatusModalOpen(false)}
+                className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                title="Cerrar"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-1">
+              {/* Opción A: Sí, Partido Finalizado */}
+              <button
+                onClick={() => handleEndSessionWithStatus('completed')}
+                className="group p-4 rounded-2xl bg-gradient-to-br from-emerald-950/40 to-slate-950 border border-emerald-500/40 hover:border-emerald-400 hover:from-emerald-900/60 hover:to-slate-900 text-left transition-all shadow-lg hover:shadow-emerald-500/20 cursor-pointer flex flex-col justify-between gap-3"
+              >
+                <div className="flex items-center justify-between w-full">
+                  <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-500/50 flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                  </div>
+                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                    Finalizado
+                  </span>
+                </div>
+                <div>
+                  <p className="font-black text-sm text-white group-hover:text-emerald-300 transition-colors">
+                    🏁 Sí, Finalizado
+                  </p>
+                  <p className="text-[11px] text-slate-400 mt-1 leading-snug">
+                    El partido ha concluido. El análisis se guardará con la insignia verde de &quot;Finalizado&quot;.
+                  </p>
+                </div>
+              </button>
+
+              {/* Opción B: No, Sigue en Progreso */}
+              <button
+                onClick={() => handleEndSessionWithStatus('in_progress')}
+                className="group p-4 rounded-2xl bg-gradient-to-br from-rose-950/40 to-slate-950 border border-rose-500/40 hover:border-rose-400 hover:from-rose-900/60 hover:to-slate-900 text-left transition-all shadow-lg hover:shadow-rose-500/20 cursor-pointer flex flex-col justify-between gap-3"
+              >
+                <div className="flex items-center justify-between w-full">
+                  <div className="w-9 h-9 rounded-xl bg-rose-500/20 border border-rose-500/50 flex items-center justify-center text-rose-400 group-hover:scale-110 transition-transform">
+                    <Radio className="w-5 h-5 text-rose-400" />
+                  </div>
+                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40">
+                    En progreso
+                  </span>
+                </div>
+                <div>
+                  <p className="font-black text-sm text-white group-hover:text-rose-300 transition-colors">
+                    ⏳ Sigue en Progreso
+                  </p>
+                  <p className="text-[11px] text-slate-400 mt-1 leading-snug">
+                    Aún faltan acciones por registrar. Se mantendrá abierto con la insignia roja para reanudarlo luego.
+                  </p>
+                </div>
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-slate-800">
+              <span className="text-[11px] text-slate-500">
+                Se sincronizarán todos tus eventos y marcas de tiempo automáticamente.
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsExitStatusModalOpen(false)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-colors cursor-pointer"
+              >
+                Continuar en la Sesión
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Modal de Confirmación Previa para Eliminar Registro */}

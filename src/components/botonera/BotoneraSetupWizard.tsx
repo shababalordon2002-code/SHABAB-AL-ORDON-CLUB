@@ -58,6 +58,10 @@ export const BotoneraSetupWizard: React.FC<BotoneraSetupWizardProps> = ({
   const [templateId, setTemplateId] = useState<string>(templates[0]?.id || '');
   const [deleteConfirmTemplate, setDeleteConfirmTemplate] = useState<BotoneraTemplate | null>(null);
 
+  const hasExplicitVideo =
+    (videoType === 'link' && videoUrl.trim() !== '') ||
+    (videoType === 'local' && (videoFile !== null || videoSourceName.trim() !== ''));
+
   const canGoStep2 = videoType !== null && (videoType !== 'local' || videoSourceName.trim() !== '') && (videoType !== 'link' || videoUrl.trim() !== '');
   const canGoStep3 = matchId !== '';
   const canFinish = true;
@@ -70,13 +74,33 @@ export const BotoneraSetupWizard: React.FC<BotoneraSetupWizardProps> = ({
     }
   };
 
+  const handleSelectMatch = (m: Match) => {
+    setMatchId(m.id);
+    // CRITICAL: If the user explicitly provided or chose a video in Step 1, NEVER overwrite it with the match's old video!
+    if (hasExplicitVideo) {
+      return;
+    }
+
+    // Only auto-fill from the match if the user hasn't provided a video and didn't select 'none'
+    if (m.video_url && videoType !== 'none') {
+      setVideoUrl(m.video_url);
+      setVideoType(m.video_type || 'link');
+      if (m.video_source_name) setVideoSourceName(m.video_source_name);
+    }
+  };
+
   const handleFinish = () => {
-    const finalVideoType = videoType || 'none';
+    const finalVideoType: BotoneraProjectVideoType = videoType || 'none';
+    const finalVideoUrl = finalVideoType === 'link' ? (videoUrl.trim() || null) : null;
+    const finalVideoSource = finalVideoType === 'local'
+      ? (videoSourceName.trim() || videoFile?.name || 'Archivo Local')
+      : (finalVideoUrl ? (videoSourceName.trim() || 'Enlace Web') : null);
     const finalTemplateId = templateId || templates[0]?.id || 'default_template';
+
     onComplete({
       videoType: finalVideoType,
-      videoSourceName: finalVideoType === 'local' ? videoSourceName : null,
-      videoUrl: finalVideoType === 'link' ? videoUrl : null,
+      videoSourceName: finalVideoSource,
+      videoUrl: finalVideoUrl,
       videoFile: finalVideoType === 'local' ? videoFile : null,
       matchId: matchId || 'free_session',
       templateId: finalTemplateId,
@@ -233,7 +257,7 @@ export const BotoneraSetupWizard: React.FC<BotoneraSetupWizardProps> = ({
                     <button
                       key={m.id}
                       type="button"
-                      onClick={() => setMatchId(m.id)}
+                      onClick={() => handleSelectMatch(m)}
                       className={`w-full text-left p-3 rounded-xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 cursor-pointer ${
                         isSelected
                           ? 'bg-emerald-600/15 border-emerald-500/60 ring-1 ring-emerald-500/40 text-white'
@@ -282,8 +306,14 @@ export const BotoneraSetupWizard: React.FC<BotoneraSetupWizardProps> = ({
                         </div>
                       </div>
 
-                      {/* Event count & Status */}
+                      {/* Event count, Video status & Match Status */}
                       <div className="flex items-center gap-2 shrink-0 text-[10px]">
+                        {m.video_url && (
+                          <span className="px-2 py-0.5 rounded bg-sky-950/80 border border-sky-800/60 text-sky-300 font-bold flex items-center gap-1">
+                            <Video className="w-3 h-3" />
+                            <span>Vídeo Vinculado</span>
+                          </span>
+                        )}
                         {m.event_count > 0 && (
                           <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-400 font-mono">
                             {m.event_count} evs
@@ -308,6 +338,68 @@ export const BotoneraSetupWizard: React.FC<BotoneraSetupWizardProps> = ({
                   </p>
                 )}
               </div>
+
+              {/* Match Video Feedback & Control */}
+              {(() => {
+                const selectedM = matches.find((m) => m.id === matchId);
+                if (!selectedM) return null;
+
+                if (hasExplicitVideo && selectedM.video_url && selectedM.video_url !== videoUrl) {
+                  return (
+                    <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 animate-fade-in">
+                      <div className="space-y-0.5 min-w-0">
+                        <div className="flex items-center gap-1.5 text-amber-300 font-bold">
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                          <span>Este partido tenía otro vídeo vinculado previamente</span>
+                        </div>
+                        <p className="text-[11px] text-amber-200/80 truncate">
+                          Se usará tu <strong>nuevo vídeo</strong> ({videoType === 'local' ? (videoSourceName || 'Archivo Local') : videoUrl}) y se actualizará el partido.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setVideoUrl(selectedM.video_url || '');
+                          setVideoType(selectedM.video_type || 'link');
+                          if (selectedM.video_source_name) setVideoSourceName(selectedM.video_source_name);
+                        }}
+                        className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 rounded-lg text-[11px] font-bold border border-amber-500/40 transition shrink-0 cursor-pointer"
+                      >
+                        Usar vídeo anterior del partido
+                      </button>
+                    </div>
+                  );
+                }
+
+                if (!hasExplicitVideo && selectedM.video_url) {
+                  return (
+                    <div className="p-3 rounded-xl bg-sky-500/10 border border-sky-500/30 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 animate-fade-in">
+                      <div className="space-y-0.5 min-w-0">
+                        <div className="flex items-center gap-1.5 text-sky-300 font-bold">
+                          <Video className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                          <span>Vídeo existente en este partido</span>
+                        </div>
+                        <p className="text-[11px] text-sky-200/80 truncate">
+                          {selectedM.video_source_name || selectedM.video_url}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setVideoUrl(selectedM.video_url || '');
+                          setVideoType(selectedM.video_type || 'link');
+                          if (selectedM.video_source_name) setVideoSourceName(selectedM.video_source_name);
+                        }}
+                        className="px-3 py-1.5 bg-sky-500/20 hover:bg-sky-500/30 text-sky-200 rounded-lg text-[11px] font-bold border border-sky-500/40 transition shrink-0 cursor-pointer"
+                      >
+                        {videoUrl === selectedM.video_url ? '✓ Vídeo cargado' : 'Cargar este vídeo'}
+                      </button>
+                    </div>
+                  );
+                }
+
+                return null;
+              })()}
             </div>
           )}
 

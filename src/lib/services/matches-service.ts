@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/client';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { Match } from '@/types';
 import { isMatchOnOrAfterSept2026 } from '@/lib/utils/date-utils';
+import { getAnalysisVideosMapFromSupabase, upsertAnalysisVideoToSupabase } from './botonera-service';
 
 // Fetch matches from Supabase 'matches' table
 export async function getMatchesFromSupabase(): Promise<Match[]> {
@@ -26,7 +27,31 @@ export async function getMatchesFromSupabase(): Promise<Match[]> {
         : (row.period_adjustments || row.home_lineup?._period_adjustments || null),
     })) as Match[];
 
-    return rawList.filter(m => isMatchOnOrAfterSept2026(m.date));
+    const filtered = rawList.filter(m => isMatchOnOrAfterSept2026(m.date));
+
+    // Overlay single-source-of-truth from analysis_videos if available
+    try {
+      const videoMap = await getAnalysisVideosMapFromSupabase();
+      if (videoMap && videoMap.size > 0) {
+        filtered.forEach((m) => {
+          const v = videoMap.get(m.id);
+          if (v) {
+            if (v.videoUrl) {
+              m.video_url = v.videoUrl;
+              m.video_type = v.videoType;
+              m.video_source_name = v.videoSourceName;
+            }
+            if (v.p1VideoStartSeconds != null) m.p1_video_start_time = v.p1VideoStartSeconds;
+            if (v.p2VideoStartSeconds != null) m.p2_video_start_time = v.p2VideoStartSeconds;
+            if (v.periodAdjustments) m.period_adjustments = v.periodAdjustments;
+          }
+        });
+      }
+    } catch {
+      // Non-blocking fallback
+    }
+
+    return filtered;
   } catch (err: any) {
     console.warn('Could not load matches from Supabase:', err.message);
     return [];
@@ -186,6 +211,20 @@ export async function saveMatchesToSupabase(matches: Match[]): Promise<boolean> 
       console.error('Error upserting matches to Supabase:', error.message);
       return false;
     }
+
+    // Sync video and timings to analysis_videos table as well
+    freshRows.forEach((row) => {
+      if (row.video_url || row.p1_video_start_time != null || row.p2_video_start_time != null || row.period_adjustments != null) {
+        upsertAnalysisVideoToSupabase(row.id, {
+          videoType: row.video_type,
+          videoUrl: row.video_url,
+          videoSourceName: row.video_source_name,
+          p1VideoStartSeconds: row.p1_video_start_time,
+          p2VideoStartSeconds: row.p2_video_start_time,
+          periodAdjustments: row.period_adjustments,
+        }).catch(() => {});
+      }
+    });
 
     return true;
   } catch (err: any) {

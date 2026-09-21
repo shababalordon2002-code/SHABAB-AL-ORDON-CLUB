@@ -309,6 +309,8 @@ export interface ActiveBotoneraSession {
   lastUpdatedTimestamp: number;
   events: NormalizedEvent[];
   isConfigured?: boolean; // true once the setup wizard (video/partido/botonera) has been completed
+  analystName?: string | null;
+  matchTitle?: string | null;
   videoType?: BotoneraProjectVideoType | null;
   videoSourceName?: string | null; // local file name, when videoType === 'local'
   videoUrl?: string | null;        // youtube/link URL, when videoType === 'link'

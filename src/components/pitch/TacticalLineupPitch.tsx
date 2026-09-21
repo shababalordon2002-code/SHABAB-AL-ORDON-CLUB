@@ -215,7 +215,7 @@ export const TacticalLineupPitch: React.FC<TacticalLineupPitchProps> = ({
 
           return (
             <div
-              key={starterPly.id || idx}
+              key={`${starterPly.id || 'empty'}_${idx}`}
               style={{ left: `${pos.x}%`, top: `${pos.y}%` }}
               onClick={() => {
                 if (onPlayerClick) {
@@ -352,7 +352,7 @@ export const TacticalLineupPitch: React.FC<TacticalLineupPitchProps> = ({
                 >
                   <option value="">Selecciona el titular que sale...</option>
                   {starters.map((p, idx) => (
-                    <option key={p.id || idx} value={p.name}>
+                    <option key={`${p.id || 'empty'}_${idx}`} value={p.name}>
                       #{p.number || idx + 1} - {p.name} ({p.position || 'JUG'})
                     </option>
                   ))}

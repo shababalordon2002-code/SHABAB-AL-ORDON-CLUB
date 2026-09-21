@@ -360,9 +360,48 @@ export const dbStore = {
   getMatches(): Match[] {
     const matches: Match[] = getFromStorage(STORAGE_KEYS.MATCHES, SEED_MATCHES);
     const validMatches = matches.filter((m) => isMatchOnOrAfterSept2026(m.date));
-    const sanitized = validMatches.map(sanitizeMatchLogos);
-    setToStorage(STORAGE_KEYS.MATCHES, sanitized);
-    return sanitized;
+
+    // Sincronizar parámetros de vídeo y minutajes del partido directamente desde los análisis de la Botonera
+    const analyses = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
+    const analysisMap = new Map<string, MatchAnalysis>();
+    analyses.forEach((a) => {
+      if (a && a.match_id && a.video_url && a.video_url.trim()) {
+        analysisMap.set(a.match_id, a);
+      }
+    });
+
+    const activeSession = this.getActiveBotoneraSession();
+
+    const synchronized = validMatches.map((m) => {
+      const an = analysisMap.get(m.id);
+      const isCurrentActive = activeSession && activeSession.selectedMatchId === m.id;
+      const liveVideoUrl = isCurrentActive && activeSession.videoUrl && activeSession.videoUrl.trim() ? activeSession.videoUrl : null;
+      const liveVideoType = isCurrentActive && activeSession.videoType ? activeSession.videoType : null;
+      const liveVideoSource = isCurrentActive && activeSession.videoSourceName ? activeSession.videoSourceName : null;
+      const liveP1 = isCurrentActive && activeSession.p1VideoStartSeconds != null ? activeSession.p1VideoStartSeconds : null;
+      const liveP2 = isCurrentActive && activeSession.p2VideoStartSeconds != null ? activeSession.p2VideoStartSeconds : null;
+      const liveAdjustments = isCurrentActive && activeSession.periodAdjustments ? activeSession.periodAdjustments : null;
+
+      // Siempre priorizar: Sesión en vivo de Botonera > Análisis guardado en Botonera > Registro del partido
+      const resolvedVideo = liveVideoUrl || an?.video_url || m.video_url;
+      const resolvedType = liveVideoType || an?.video_type || m.video_type;
+      const resolvedSource = liveVideoSource || an?.video_source_name || m.video_source_name;
+      const resolvedP1 = liveP1 ?? an?.p1_video_start_time ?? m.p1_video_start_time;
+      const resolvedP2 = liveP2 ?? an?.p2_video_start_time ?? m.p2_video_start_time;
+      const resolvedAdjustments = liveAdjustments ?? an?.period_adjustments ?? m.period_adjustments;
+
+      return sanitizeMatchLogos({
+        ...m,
+        video_url: resolvedVideo || m.video_url,
+        video_type: resolvedType || m.video_type,
+        video_source_name: resolvedSource || m.video_source_name,
+        p1_video_start_time: resolvedP1 ?? m.p1_video_start_time,
+        p2_video_start_time: resolvedP2 ?? m.p2_video_start_time,
+        period_adjustments: resolvedAdjustments ?? m.period_adjustments,
+      });
+    });
+
+    return synchronized;
   },
 
   async syncMatchesFromSupabase(): Promise<Match[]> {
@@ -392,6 +431,7 @@ export const dbStore = {
           video_source_name: rm.video_source_name || local.video_source_name,
           p1_video_start_time: rm.p1_video_start_time ?? local.p1_video_start_time,
           p2_video_start_time: rm.p2_video_start_time ?? local.p2_video_start_time,
+          period_adjustments: rm.period_adjustments ?? local.period_adjustments ?? (local.home_lineup as any)?._period_adjustments ?? null,
           botonera_template_id: rm.botonera_template_id || local.botonera_template_id,
         };
       });
@@ -421,18 +461,18 @@ export const dbStore = {
       if (m.id === match.id) return true;
       if (m.flashscore_mid && match.flashscore_mid && m.flashscore_mid === match.flashscore_mid) return true;
 
-      // 2. Same date AND same teams
+      // 2. Same date AND both same teams
       if (m.date && match.date && m.date === match.date) {
         const sameHome = norm(m.home_team).includes(norm(match.home_team)) || norm(match.home_team).includes(norm(m.home_team));
         const sameAway = norm(m.away_team).includes(norm(match.away_team)) || norm(match.away_team).includes(norm(m.away_team));
-        if (sameHome || sameAway) return true;
+        if (sameHome && sameAway) return true;
       }
 
-      // 3. Same round/jornada (e.g. "Jornada 1") AND matching teams
+      // 3. Same round/jornada (e.g. "Jornada 1") AND both same teams
       if (m.round && match.round && norm(m.round) === norm(match.round)) {
         const sameHome = norm(m.home_team).includes(norm(match.home_team)) || norm(match.home_team).includes(norm(m.home_team));
         const sameAway = norm(m.away_team).includes(norm(match.away_team)) || norm(match.away_team).includes(norm(m.away_team));
-        if (sameHome || sameAway) return true;
+        if (sameHome && sameAway) return true;
       }
 
       return false;
@@ -558,27 +598,21 @@ export const dbStore = {
     const trash = this.getTrashEvents();
     const trashSet = new Set(trash.map((t) => t.event_id));
 
-    const analyses = this.getAnalyses(matchId);
-    const analysisEvs = analyses.flatMap((a) => a.events || []);
-
-    const allEvents = [...analysisEvs, ...storageEvents].filter((e) => e && e.event_id && !trashSet.has(e.event_id));
+    const validEvents = storageEvents.filter((e) => e && e.event_id && !trashSet.has(e.event_id));
     if (matchId) {
-      const matchOnly = allEvents.filter((e) => e.match_id === matchId);
+      const matchOnly = validEvents.filter((e) => e.match_id === matchId);
       return this.deduplicateEventsByTime(matchOnly);
     }
-    return this.deduplicateEventsByTime(allEvents);
+    return this.deduplicateEventsByTime(validEvents);
   },
 
   async syncAnalysisEventsFromSupabase(matchId?: string): Promise<NormalizedEvent[]> {
     if (!matchId) return this.getNormalizedEvents();
     try {
       const remoteEvs = await getAnalysisEventsFromSupabase(matchId);
-      const analyses = this.getAnalyses(matchId);
-      const analysisEvs = analyses.flatMap((a) => a.events || []);
-
-      const combined = [...(remoteEvs || []), ...analysisEvs];
-      const validCombined = this.deduplicateEventsByTime(combined);
-      this.saveNormalizedEvents(validCombined, true, matchId);
+      if (remoteEvs && remoteEvs.length > 0) {
+        this.saveNormalizedEvents(remoteEvs, false, matchId);
+      }
     } catch (err) {
       console.warn('Could not sync analysis_events from Supabase:', err);
     }
@@ -586,6 +620,7 @@ export const dbStore = {
   },
 
   saveNormalizedEvents(newEvents: NormalizedEvent[], replaceMatchEvents = false, overrideMatchId?: string): void {
+    if (!newEvents || newEvents.length === 0) return;
     let allEvents = getFromStorage<NormalizedEvent[]>(STORAGE_KEYS.EVENTS, []);
     const trash = this.getTrashEvents();
     const trashSet = new Set(trash.map((t) => t.event_id));
@@ -593,12 +628,31 @@ export const dbStore = {
 
     const targetMatchId = overrideMatchId || newEvents[0]?.match_id;
     if (replaceMatchEvents && targetMatchId) {
-      allEvents = allEvents.filter((e) => e.match_id !== targetMatchId);
-    } else if (newEvents.length > 0) {
-      const newIds = new Set(newEvents.map((e) => e.event_id));
-      allEvents = allEvents.filter((e) => !newIds.has(e.event_id));
+      // Explicit replace (e.g. user manually cleared all events)
+      const otherMatches = allEvents.filter((e) => e.match_id !== targetMatchId);
+      allEvents = [...newEvents, ...otherMatches];
+    } else {
+      // Safe merge by event_id: never lose events from other analysts
+      const byId = new Map<string, NormalizedEvent>();
+      allEvents.forEach((e) => {
+        if (e && e.event_id) byId.set(e.event_id, e);
+      });
+      newEvents.forEach((e) => {
+        if (e && e.event_id) {
+          const existing = byId.get(e.event_id);
+          if (!existing) {
+            byId.set(e.event_id, e);
+          } else {
+            const exTime = new Date(existing.updated_at || existing.created_at || 0).getTime();
+            const curTime = new Date(e.updated_at || e.created_at || 0).getTime();
+            if (curTime >= exTime) {
+              byId.set(e.event_id, e);
+            }
+          }
+        }
+      });
+      allEvents = Array.from(byId.values());
     }
-    allEvents = [...newEvents, ...allEvents];
     setToStorage(STORAGE_KEYS.EVENTS, allEvents);
   },
 
@@ -973,17 +1027,30 @@ export const dbStore = {
       // Guarantee matchObj in matches table reflects analysis video & offsets
       if (matchObj) {
         const an = consolidated[consolidated.length - 1];
-        if (an && ((an.video_url && !matchObj.video_url) || (an.p1_video_start_time != null && matchObj.p1_video_start_time == null))) {
-          matchObj.video_url = an.video_url || matchObj.video_url;
-          matchObj.video_type = an.video_type || matchObj.video_type;
-          matchObj.video_source_name = an.video_source_name || matchObj.video_source_name;
-          matchObj.p1_video_start_time = an.p1_video_start_time ?? matchObj.p1_video_start_time;
-          matchObj.p2_video_start_time = an.p2_video_start_time ?? matchObj.p2_video_start_time;
-          matchObj.period_adjustments = an.period_adjustments ?? matchObj.period_adjustments;
-          matchObj.botonera_template_id = an.botonera_template_id || matchObj.botonera_template_id;
+        if (an) {
+          if (an.video_url && an.video_url.trim()) {
+            matchObj.video_url = an.video_url;
+            matchObj.video_type = an.video_type || matchObj.video_type || 'link';
+            matchObj.video_source_name = an.video_source_name || matchObj.video_source_name;
+          }
+          if (an.p1_video_start_time != null) {
+            matchObj.p1_video_start_time = an.p1_video_start_time;
+          }
+          if (an.p2_video_start_time != null) {
+            matchObj.p2_video_start_time = an.p2_video_start_time;
+          }
+          if (an.period_adjustments && Object.keys(an.period_adjustments).length > 0) {
+            matchObj.period_adjustments = an.period_adjustments;
+          }
+          if (an.botonera_template_id) {
+            matchObj.botonera_template_id = an.botonera_template_id;
+          }
         }
       }
     });
+
+    // Persistir partidos actualizados para que match.video_url coincida siempre con el análisis de la botonera
+    setToStorage(STORAGE_KEYS.MATCHES, matches);
 
     return consolidated;
   },
@@ -1097,7 +1164,7 @@ export const dbStore = {
       // Save all normalized events from remote analyses into local event store
       consolidated.forEach((an) => {
         if (an.events && an.events.length > 0) {
-          this.saveNormalizedEvents(an.events, true, an.match_id);
+          this.saveNormalizedEvents(an.events, false, an.match_id);
         }
       });
 

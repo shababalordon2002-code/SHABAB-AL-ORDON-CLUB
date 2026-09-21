@@ -8,6 +8,8 @@ import { dbStore } from '@/lib/store/db-store';
 import { ActiveBotoneraSession } from '@/types';
 import { isRecordingLocked, subscribeRecordingLock } from '@/lib/recording-lock';
 import { useAuth } from '@/components/providers/AuthProvider';
+import { getAnalysisSessionFromSupabase } from '@/lib/services/botonera-service';
+import { createClient } from '@/lib/supabase/client';
 
 interface HeaderProps {
   onMenuClick?: () => void;
@@ -26,8 +28,31 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
   }, []);
 
   useEffect(() => {
-    const checkSession = () => {
-      const sess = dbStore.getActiveBotoneraSession();
+    let isMounted = true;
+    const checkSession = async () => {
+      let sess = dbStore.getActiveBotoneraSession();
+
+      // Comprobar si la sesión local está verdaderamente activa ahora mismo
+      const isLocalRunning = sess && sess.isTimerRunning;
+      const isLocalRecent = sess && sess.isConfigured && sess.lastUpdatedTimestamp && Date.now() - sess.lastUpdatedTimestamp < 90 * 1000 && (sess.timerSeconds || 0) > 0;
+      const isLocalActive = !!sess && (isLocalRunning || isLocalRecent);
+
+      if (!isLocalActive) {
+        try {
+          const remoteSess = await getAnalysisSessionFromSupabase();
+          const isRemoteRunning = remoteSess && remoteSess.isTimerRunning;
+          const isRemoteRecent = remoteSess && remoteSess.lastUpdatedTimestamp && Date.now() - remoteSess.lastUpdatedTimestamp < 90 * 1000 && (remoteSess.timerSeconds || 0) > 0;
+          if (remoteSess && (isRemoteRunning || isRemoteRecent)) {
+            sess = remoteSess;
+          } else {
+            sess = null;
+          }
+        } catch {
+          sess = null;
+        }
+      }
+
+      if (!isMounted) return;
       setActiveSession(sess);
 
       if (sess && sess.isTimerRunning && sess.startTimestamp) {
@@ -35,12 +60,28 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
         setCurrentSeconds(elapsed);
       } else if (sess) {
         setCurrentSeconds(sess.timerSeconds || 0);
+      } else {
+        setCurrentSeconds(0);
       }
     };
 
     checkSession();
     const interval = setInterval(checkSession, 1000);
-    return () => clearInterval(interval);
+
+    // Suscripción Realtime a sesiones activas en Supabase
+    const supabase = createClient();
+    const channel = supabase
+      .channel('header_realtime_sessions')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'analysis_sessions' }, () => {
+        checkSession();
+      })
+      .subscribe();
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const formatTime = (totalSec: number) => {
@@ -48,6 +89,39 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
     const secs = Math.floor(totalSec % 60);
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
+
+  const getPeriodLabel = (p?: number) => {
+    switch (p) {
+      case 1:
+        return '1ª Parte';
+      case 2:
+        return '2ª Parte';
+      case 3:
+        return 'Prórroga 1';
+      case 4:
+        return 'Prórroga 2';
+      default:
+        return '1ª Parte';
+    }
+  };
+
+  const gameMinute = Math.floor(currentSeconds / 60) + 1;
+
+  // Resolución del nombre del analista que está en directo
+  const activeAnalystName =
+    activeSession?.analystName ||
+    (activeSession?.selectedMatchId ? dbStore.getAnalyses(activeSession.selectedMatchId)[0]?.analyst_name : null) ||
+    profile?.full_name ||
+    user?.email?.split('@')[0] ||
+    'Analista Principal';
+
+  // Resolución del partido en curso
+  const matchObj =
+    activeSession?.selectedMatchId && activeSession.selectedMatchId !== 'free_session'
+      ? dbStore.getMatchById(activeSession.selectedMatchId)
+      : null;
+  const matchLabel =
+    activeSession?.matchTitle || (matchObj ? `${matchObj.home_team} vs ${matchObj.away_team}` : null);
 
   const getRoleBadge = (role?: string) => {
     switch (role) {
@@ -80,7 +154,7 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
 
   return (
     <header className="h-16 bg-slate-900/80 border-b border-slate-800/80 px-3 sm:px-6 flex items-center justify-between sticky top-0 z-20 backdrop-blur-md gap-2">
-      {/* Left: Season & Context */}
+      {/* Left: Season, Context & Live Active Analysis Pill */}
       <div className="flex items-center gap-2 sm:gap-4 min-w-0 overflow-x-auto">
         <button
           type="button"
@@ -103,19 +177,55 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
           <span>Shabab Al Ordon Club</span>
         </div>
 
-        {/* Global Live Active Session Indicator */}
-        {activeSession && activeSession.isTimerRunning && (
+        {/* Global Live Active Session Indicator: Analista, Parte de juego y Minuto de juego */}
+        {activeSession && (activeSession.isTimerRunning || (currentSeconds > 0 && activeSession.lastUpdatedTimestamp && Date.now() - activeSession.lastUpdatedTimestamp < 90000)) && (
           <Link
             href="/botonera"
-            className="flex items-center gap-2 px-3 py-1 rounded-xl bg-red-500/20 border border-red-500/40 text-red-300 text-xs font-mono font-bold hover:bg-red-500/30 transition shadow animate-pulse shrink-0"
+            className="flex items-center gap-2 sm:gap-2.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-red-950/80 via-slate-900 to-amber-950/50 border border-red-500/50 hover:border-red-400 text-slate-200 text-xs font-bold transition-all shadow-lg shadow-red-950/40 shrink-0 group"
+            title="Sesión de análisis en vivo activa. Haz clic para ir a la Botonera."
           >
-            <Radio className="w-3.5 h-3.5 text-red-400" />
-            <span className="hidden sm:inline">
-              🔴 REGISTRO EN DIRECTO ({formatTime(currentSeconds)})
-            </span>
-            <span className="sm:hidden">🔴 {formatTime(currentSeconds)}</span>
-            <span className="hidden lg:inline text-[10px] font-sans underline font-extrabold text-amber-300 ml-1">
-              Volver a Botonera ⚡
+            {/* Live pulsing dot */}
+            <div className="flex items-center gap-1.5">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+              </span>
+              <span className="text-red-400 font-mono font-black text-[10px] tracking-wider uppercase">
+                EN VIVO
+              </span>
+            </div>
+
+            <div className="h-3.5 w-px bg-slate-700/80" />
+
+            {/* Nombre del analista */}
+            <div className="flex items-center gap-1 text-slate-300">
+              <UserIcon className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <span className="font-extrabold text-white text-xs max-w-[120px] sm:max-w-[160px] truncate">
+                {activeAnalystName}
+              </span>
+            </div>
+
+            <div className="h-3.5 w-px bg-slate-700/80" />
+
+            {/* Parte de juego y Minuto del crono */}
+            <div className="flex items-center gap-1.5 font-mono text-[11px]">
+              <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold">
+                {getPeriodLabel(activeSession.period)}
+              </span>
+              <span className="text-emerald-400 font-extrabold font-mono text-xs">
+                {formatTime(currentSeconds)} ({gameMinute}&apos;)
+              </span>
+            </div>
+
+            {/* Partido (en pantallas grandes) */}
+            {matchLabel && (
+              <span className="hidden xl:inline text-[11px] text-slate-400 font-semibold truncate max-w-[160px]">
+                • {matchLabel}
+              </span>
+            )}
+
+            <span className="hidden sm:inline text-[10px] font-sans font-black text-amber-400 group-hover:text-amber-300 ml-0.5">
+              ⚡
             </span>
           </Link>
         )}

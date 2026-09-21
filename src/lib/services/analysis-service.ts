@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/client';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { MatchAnalysis, NormalizedEvent } from '@/types';
-import { rowToNormalizedEvent } from '@/lib/services/botonera-service';
+import { rowToNormalizedEvent, getAnalysisVideosMapFromSupabase, getAnalysisVideoFromSupabase, upsertAnalysisVideoToSupabase } from '@/lib/services/botonera-service';
 
 // Fetch all Match Analyses (or filtered by matchId) from Supabase with full events reconciliation
 export async function getAnalysesFromSupabase(matchId?: string): Promise<MatchAnalysis[]> {
@@ -18,13 +18,12 @@ export async function getAnalysesFromSupabase(matchId?: string): Promise<MatchAn
       if (!error.message.includes('relation "public.match_analyses" does not exist')) {
         console.warn('Supabase fetch match_analyses error:', error.message);
       }
-      return [];
     }
 
     // Single source of truth: Also fetch all analysis_events rows from Supabase
     let eventsByMatch = new Map<string, NormalizedEvent[]>();
     try {
-      let evQuery = supabase.from('analysis_events').select('*').order('created_at', { ascending: true });
+      let evQuery = supabase.from('analysis_events').select('*').order('timestamp', { ascending: true });
       if (matchId) {
         evQuery = evQuery.eq('match_id', matchId);
       }
@@ -43,14 +42,18 @@ export async function getAnalysesFromSupabase(matchId?: string): Promise<MatchAn
       console.warn('Non-blocking warning fetching analysis_events for analyses:', evFetchErr);
     }
 
-    return (data || []).map((row: any) => {
+    const processedMatchIds = new Set<string>();
+
+    const analyses: MatchAnalysis[] = (data || []).map((row: any) => {
+      processedMatchIds.add(row.match_id);
       const parsedRowEvents: NormalizedEvent[] = typeof row.events === 'string'
         ? JSON.parse(row.events)
         : (Array.isArray(row.events) ? row.events : []);
 
       const tblEvents = eventsByMatch.get(row.match_id) || [];
 
-      // Reconcile: merge tblEvents with parsedRowEvents, unique by event_id
+      // Single source of truth: tblEvents (analysis_events table) is authoritative.
+      // parsedRowEvents from match_analyses are only kept if not yet in analysis_events table.
       const eventMap = new Map<string, NormalizedEvent>();
       tblEvents.forEach((e) => {
         if (e && e.event_id) eventMap.set(e.event_id, e);
@@ -61,7 +64,14 @@ export async function getAnalysesFromSupabase(matchId?: string): Promise<MatchAn
         }
       });
 
-      const reconciledEvents = Array.from(eventMap.values());
+      const reconciledEvents = Array.from(eventMap.values()).sort((a, b) => {
+        const pa = a.period ?? 1;
+        const pb = b.period ?? 1;
+        if (pa !== pb) return pa - pb;
+        const ta = a.timestamp ?? 0;
+        const tb = b.timestamp ?? 0;
+        return ta - tb;
+      });
 
       return {
         id: row.id,
@@ -85,6 +95,63 @@ export async function getAnalysesFromSupabase(matchId?: string): Promise<MatchAn
         updated_at: row.updated_at,
       };
     });
+
+    // Also synthesize analyses for matches that have rows in analysis_events but no row in match_analyses
+    eventsByMatch.forEach((evList, mId) => {
+      if (!processedMatchIds.has(mId) && (!matchId || matchId === mId)) {
+        processedMatchIds.add(mId);
+        analyses.push({
+          id: `analysis_${mId}`,
+          match_id: mId,
+          title: `Análisis de Partido`,
+          analyst_name: 'Analista SAO',
+          status: 'completed',
+          video_type: null,
+          video_url: null,
+          video_source_name: null,
+          p1_video_start_time: null,
+          p2_video_start_time: null,
+          period_adjustments: null,
+          botonera_template_id: null,
+          home_lineup: null,
+          away_lineup: null,
+          events: evList.sort((a, b) => {
+            const pa = a.period ?? 1;
+            const pb = b.period ?? 1;
+            if (pa !== pb) return pa - pb;
+            return (a.timestamp ?? 0) - (b.timestamp ?? 0);
+          }),
+          created_at: evList[0]?.created_at || new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      }
+    });
+
+    // Overlay video config from the single-source-of-truth analysis_videos table.
+    // This table is authoritative when a row exists; otherwise the analysis keeps
+    // whatever it already resolved above from match_analyses (legacy fallback), so
+    // analyses saved before this table existed still show their video.
+    try {
+      const videoMap = await getAnalysisVideosMapFromSupabase(matchId);
+      if (videoMap.size > 0) {
+        analyses.forEach((an) => {
+          const v = videoMap.get(an.match_id);
+          if (!v) return;
+          if (v.videoUrl) {
+            an.video_type = v.videoType;
+            an.video_url = v.videoUrl;
+            an.video_source_name = v.videoSourceName;
+          }
+          if (v.p1VideoStartSeconds != null) an.p1_video_start_time = v.p1VideoStartSeconds;
+          if (v.p2VideoStartSeconds != null) an.p2_video_start_time = v.p2VideoStartSeconds;
+          if (v.periodAdjustments) an.period_adjustments = v.periodAdjustments;
+        });
+      }
+    } catch (videoErr) {
+      console.warn('Non-blocking warning overlaying analysis_videos:', videoErr);
+    }
+
+    return analyses;
   } catch (err: any) {
     console.warn('Could not load match_analyses from Supabase:', err.message);
     return [];
@@ -99,7 +166,7 @@ const _analysisSaveSeq: Record<string, number> = {};
 // Save/Upsert a Match Analysis to Supabase
 export async function saveAnalysisToSupabase(
   analysis: MatchAnalysis,
-  options?: { skipEventsTableSync?: boolean }
+  options?: { skipEventsTableSync?: boolean; explicitClear?: boolean }
 ): Promise<boolean> {
   if (!analysis || !analysis.id || !analysis.match_id) return false;
 
@@ -116,10 +183,12 @@ export async function saveAnalysisToSupabase(
 
     const targetId = analysis.id && analysis.id.startsWith('analysis_') ? analysis.id : `analysis_${analysis.match_id}`;
 
-    // "A Fuego" protection: query existing match_analyses and matches in Supabase so existing video
-    // and period start times are never overwritten with null/empty values.
+    // "A Fuego" protection: query existing match_analyses/matches AND the single-source-of-truth
+    // analysis_videos table so existing video and period start times are never overwritten with
+    // null/empty values. analysis_videos wins over the legacy tables when it has a value.
     let existingAn: any = null;
     let existingMatch: any = null;
+    let existingVideo: Awaited<ReturnType<typeof getAnalysisVideoFromSupabase>> = null;
     try {
       const { data: exA } = await supabase
         .from('match_analyses')
@@ -132,20 +201,22 @@ export async function saveAnalysisToSupabase(
         .select('*')
         .eq('id', analysis.match_id);
       if (exM && exM.length > 0) existingMatch = exM[0];
+
+      existingVideo = await getAnalysisVideoFromSupabase(analysis.match_id);
     } catch (err) {
       console.warn('Could not query existing analysis/match for video preservation:', err);
     }
 
-    const resolvedVideoUrl = (analysis.video_url && analysis.video_url.trim()) || existingAn?.video_url || existingMatch?.video_url || null;
-    const resolvedVideoType = analysis.video_type || existingAn?.video_type || existingMatch?.video_type || (resolvedVideoUrl ? (resolvedVideoUrl.includes('http') ? 'link' : 'local') : null);
-    const resolvedVideoSourceName = analysis.video_source_name || existingAn?.video_source_name || existingMatch?.video_source_name || null;
+    const resolvedVideoUrl = (analysis.video_url && analysis.video_url.trim()) || existingVideo?.videoUrl || existingAn?.video_url || existingMatch?.video_url || null;
+    const resolvedVideoType = analysis.video_type || existingVideo?.videoType || existingAn?.video_type || existingMatch?.video_type || (resolvedVideoUrl ? (resolvedVideoUrl.includes('http') ? 'link' : 'local') : null);
+    const resolvedVideoSourceName = analysis.video_source_name || existingVideo?.videoSourceName || existingAn?.video_source_name || existingMatch?.video_source_name || null;
     // `undefined` means "field not touched" -> preserve existing value (a fuego).
     // Explicit `null` means the caller intentionally cleared the period start -> persist the clear.
-    const resolvedP1 = analysis.p1_video_start_time !== undefined ? analysis.p1_video_start_time : (existingAn?.p1_video_start_time ?? existingMatch?.p1_video_start_time ?? null);
-    const resolvedP2 = analysis.p2_video_start_time !== undefined ? analysis.p2_video_start_time : (existingAn?.p2_video_start_time ?? existingMatch?.p2_video_start_time ?? null);
+    const resolvedP1 = analysis.p1_video_start_time !== undefined ? analysis.p1_video_start_time : (existingVideo?.p1VideoStartSeconds ?? existingAn?.p1_video_start_time ?? existingMatch?.p1_video_start_time ?? null);
+    const resolvedP2 = analysis.p2_video_start_time !== undefined ? analysis.p2_video_start_time : (existingVideo?.p2VideoStartSeconds ?? existingAn?.p2_video_start_time ?? existingMatch?.p2_video_start_time ?? null);
     const resolvedAdjustments = analysis.period_adjustments !== undefined
       ? analysis.period_adjustments
-      : (existingAn?.period_adjustments ?? existingMatch?.period_adjustments ?? existingAn?.home_lineup?._period_adjustments ?? existingMatch?.home_lineup?._period_adjustments ?? null);
+      : (existingVideo?.periodAdjustments ?? existingAn?.period_adjustments ?? existingMatch?.period_adjustments ?? existingAn?.home_lineup?._period_adjustments ?? existingMatch?.home_lineup?._period_adjustments ?? null);
     const resolvedTemplateId = analysis.botonera_template_id || existingAn?.botonera_template_id || existingMatch?.botonera_template_id || null;
     const resolvedHomeLineup = analysis.home_lineup || existingAn?.home_lineup || existingMatch?.home_lineup || null;
     const resolvedAwayLineup = analysis.away_lineup || existingAn?.away_lineup || existingMatch?.away_lineup || null;
@@ -155,12 +226,12 @@ export async function saveAnalysisToSupabase(
       ? { ...resolvedHomeLineup, ...(resolvedAdjustments ? { _period_adjustments: resolvedAdjustments } : {}) }
       : (resolvedAdjustments ? { _period_adjustments: resolvedAdjustments } : null);
 
-    // Handle events: If analysis.events is explicitly passed as empty array [], clear all events
-    const isExplicitClear = Array.isArray(analysis.events) && analysis.events.length === 0;
+    // Events safety: ONLY delete from analysis_events table if explicitClear is intentionally requested by user action
+    const isExplicitClear = options?.explicitClear === true;
 
     let consolidatedEvents: any[] = [];
     if (isExplicitClear) {
-      // Clear from analysis_events table in Supabase
+      // User explicitly requested to clear all events
       try {
         await supabase.from('analysis_events').delete().eq('match_id', analysis.match_id);
       } catch (clearErr) {
@@ -379,6 +450,23 @@ export async function saveAnalysisToSupabase(
       } catch (syncErr) {
         console.warn('Could not sync video settings to matches table in Supabase:', syncErr);
       }
+    }
+
+    // Write the resolved video/timing config to the single-source-of-truth table too,
+    // so every analysis ends up readable from one consistent place regardless of which
+    // legacy table this particular save happened to touch.
+    if (resolvedVideoUrl || resolvedP1 != null || resolvedP2 != null || resolvedAdjustments != null) {
+      upsertAnalysisVideoToSupabase(
+        analysis.match_id,
+        {
+          videoType: resolvedVideoType,
+          videoUrl: resolvedVideoUrl,
+          videoSourceName: resolvedVideoSourceName,
+          p1VideoStartSeconds: resolvedP1,
+          p2VideoStartSeconds: resolvedP2,
+          periodAdjustments: resolvedAdjustments,
+        }
+      ).catch((videoErr) => console.warn('Could not sync analysis_videos table in Supabase:', videoErr));
     }
 
     if (error) {

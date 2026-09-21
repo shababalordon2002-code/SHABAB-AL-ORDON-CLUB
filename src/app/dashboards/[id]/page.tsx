@@ -8,6 +8,7 @@ import { BotoneraTemplate, Match, MatchDashboard, NormalizedEvent } from '@/type
 import { StandardMatchDashboard } from '@/components/dashboards/StandardMatchDashboard';
 
 import { createClient } from '@/lib/supabase/client';
+import { subscribeToAnalysisEvents } from '@/lib/services/botonera-service';
 
 function DashboardDetailContent({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
@@ -20,9 +21,11 @@ function DashboardDetailContent({ params }: { params: Promise<{ id: string }> })
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let unsubEvents: (() => void) | null = null;
+    let targetMatchId = '';
+
     async function loadDashboardData() {
       const d = dbStore.getDashboards().find((item) => item.id === dashboardId);
-      let targetMatchId = '';
       let tmplId: string | null | undefined;
 
       if (d) {
@@ -49,23 +52,51 @@ function DashboardDetailContent({ params }: { params: Promise<{ id: string }> })
       }
 
       if (targetMatchId) {
-        // Set initial combined events from local store immediately (combines all analyses & events)
+        // Set initial combined events from local store immediately
         const initialEvents = dbStore.getNormalizedEvents(targetMatchId);
         setEvents(initialEvents);
+
+        // Subscribe to live analysis_events for instant (0ms) additions/deletions across analysts
+        if (!unsubEvents) {
+          unsubEvents = subscribeToAnalysisEvents(targetMatchId, {
+            onInsert: (newEvent) => {
+              setEvents((prev) => {
+                if (prev.some((e) => e.event_id === newEvent.event_id)) return prev;
+                return [...prev, newEvent].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+              });
+              dbStore.saveNormalizedEvents([newEvent], false, targetMatchId);
+            },
+            onUpdate: (updatedEvent) => {
+              setEvents((prev) => prev.map((e) => (e.event_id === updatedEvent.event_id ? updatedEvent : e)));
+              dbStore.saveNormalizedEvents([updatedEvent], false, targetMatchId);
+            },
+            onDelete: (deletedEventId) => {
+              setEvents((prev) => prev.filter((e) => e.event_id !== deletedEventId));
+              dbStore.deleteNormalizedEvent(deletedEventId);
+            },
+            onReconnected: () => {
+              dbStore.syncAnalysisEventsFromSupabase(targetMatchId).then((synced) => {
+                if (synced && synced.length > 0) setEvents(synced);
+              });
+            },
+          });
+        }
 
         // Sync latest events & analyses from Supabase if connected
         try {
           await dbStore.syncAnalysesFromSupabase(targetMatchId);
           const freshAnalyses = dbStore.getAnalyses(targetMatchId);
           if (freshAnalyses && freshAnalyses.length > 0) {
-            const latestAn = freshAnalyses[0];
+            const latestAn = freshAnalyses.find((a) => a.video_url && a.video_url.trim()) || freshAnalyses[0];
             setMatch((prev) => {
               if (!prev) return prev;
               return {
                 ...prev,
-                p1_video_start_time: prev.p1_video_start_time ?? latestAn.p1_video_start_time ?? null,
-                p2_video_start_time: prev.p2_video_start_time ?? latestAn.p2_video_start_time ?? null,
-                video_url: prev.video_url || latestAn.video_url || null,
+                p1_video_start_time: latestAn.p1_video_start_time ?? prev.p1_video_start_time ?? null,
+                p2_video_start_time: latestAn.p2_video_start_time ?? prev.p2_video_start_time ?? null,
+                video_url: latestAn.video_url || prev.video_url || null,
+                video_type: latestAn.video_type || prev.video_type || null,
+                video_source_name: latestAn.video_source_name || prev.video_source_name || null,
               };
             });
           }
@@ -87,7 +118,7 @@ function DashboardDetailContent({ params }: { params: Promise<{ id: string }> })
     // Auto-refresh fallback
     const interval = setInterval(loadDashboardData, 5 * 60 * 1000);
 
-    // Realtime push: when any analyst registers/saves an event or analysis, reload live
+    // Realtime push: when match metadata or dashboards are updated
     const supabase = createClient();
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     const debouncedReload = () => {
@@ -100,13 +131,12 @@ function DashboardDetailContent({ params }: { params: Promise<{ id: string }> })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'match_analyses' }, debouncedReload)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'match_dashboards' }, debouncedReload)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, debouncedReload)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'analysis_events' }, debouncedReload)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'analysis_sessions' }, debouncedReload)
       .subscribe();
 
     return () => {
       clearInterval(interval);
       if (debounceTimer) clearTimeout(debounceTimer);
+      if (unsubEvents) unsubEvents();
       supabase.removeChannel(channel);
     };
   }, [dashboardId]);

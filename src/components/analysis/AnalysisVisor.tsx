@@ -39,7 +39,13 @@ export const AnalysisVisor: React.FC<AnalysisVisorProps> = ({
 
   useEffect(() => {
     if (analysis.events && analysis.events.length > 0) {
-      setLiveEvents(analysis.events);
+      setLiveEvents((prev) => {
+        if (prev.length === 0) return analysis.events || [];
+        const map = new Map<string, NormalizedEvent>();
+        (analysis.events || []).forEach((e) => map.set(e.event_id, e));
+        prev.forEach((e) => map.set(e.event_id, e));
+        return Array.from(map.values()).sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+      });
     }
   }, [analysis.events]);
 
@@ -48,29 +54,36 @@ export const AnalysisVisor: React.FC<AnalysisVisorProps> = ({
     if (!analysis?.match_id) return;
     let cancelled = false;
 
-    getAnalysisEventsFromSupabase(analysis.match_id).then((remoteEvents) => {
-      if (cancelled) return;
-      if (remoteEvents && remoteEvents.length > 0) {
-        setLiveEvents((prev) => {
-          const map = new Map<string, NormalizedEvent>();
-          remoteEvents.forEach((e) => map.set(e.event_id, e));
-          prev.forEach((e) => {
-            if (!map.has(e.event_id)) map.set(e.event_id, e);
+    const fetchLatest = () => {
+      getAnalysisEventsFromSupabase(analysis.match_id).then((remoteEvents) => {
+        if (cancelled) return;
+        if (remoteEvents && remoteEvents.length > 0) {
+          setLiveEvents((prev) => {
+            const map = new Map<string, NormalizedEvent>();
+            remoteEvents.forEach((e) => map.set(e.event_id, e));
+            prev.forEach((e) => {
+              if (!map.has(e.event_id)) map.set(e.event_id, e);
+            });
+            return Array.from(map.values()).sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
           });
-          return Array.from(map.values()).sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
-        });
-      }
-    });
+        }
+      });
+    };
+
+    fetchLatest();
 
     const unsubscribe = subscribeToAnalysisEvents(analysis.match_id, {
       onInsert: (evt) => {
-        setLiveEvents((prev) => (prev.some((e) => e.event_id === evt.event_id) ? prev : [...prev, evt]));
+        setLiveEvents((prev) => (prev.some((e) => e.event_id === evt.event_id) ? prev : [...prev, evt].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0))));
       },
       onUpdate: (evt) => {
         setLiveEvents((prev) => prev.map((e) => (e.event_id === evt.event_id ? evt : e)));
       },
       onDelete: (eventId) => {
         setLiveEvents((prev) => prev.filter((e) => e.event_id !== eventId));
+      },
+      onReconnected: () => {
+        fetchLatest();
       },
     });
 

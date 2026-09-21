@@ -264,6 +264,9 @@ export function openClipPopupWindow(options: OpenClipPopupOptions): Window | nul
           embedSrc = id ? `https://www.youtube.com/embed/${id}` : resolvedVideoUrl;
         } else if (url.pathname.startsWith('/shorts/')) {
           embedSrc = `https://www.youtube.com/embed/${url.pathname.split('/')[2]}`;
+        } else if (url.pathname.startsWith('/live/')) {
+          const id = url.pathname.split('/')[2];
+          embedSrc = id ? `https://www.youtube.com/embed/${id}` : resolvedVideoUrl;
         }
       }
       const u = new URL(embedSrc);
@@ -479,4 +482,30 @@ export function openClipPopupWindow(options: OpenClipPopupOptions): Window | nul
   win.document.close();
   win.focus();
   return win;
+}
+
+/**
+ * Extracts 11-char YouTube Video ID from any format:
+ * - https://www.youtube.com/watch?v=TlAnLiYv0ag
+ * - https://www.youtube.com/live/TlAnLiYv0ag
+ * - https://youtu.be/TlAnLiYv0ag
+ * - https://www.youtube.com/embed/TlAnLiYv0ag
+ * - https://www.youtube.com/shorts/TlAnLiYv0ag
+ * - or bare ID
+ */
+export function extractYouTubeVideoId(url?: string | null): string | null {
+  if (!url) return null;
+  const trimmed = url.trim();
+  if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
+  const match = trimmed.match(/(?:v=|\/embed\/|\/shorts\/|\/live\/|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+  if (match && match[1]) return match[1];
+  return null;
+}
+
+/**
+ * Returns high-quality YouTube thumbnail URL or null if not a YouTube URL.
+ */
+export function getYouTubeThumbnailUrl(url?: string | null): string | null {
+  const id = extractYouTubeVideoId(url);
+  return id ? `https://img.youtube.com/vi/${id}/hqdefault.jpg` : null;
 }

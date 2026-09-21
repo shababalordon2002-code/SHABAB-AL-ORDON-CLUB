@@ -63,6 +63,12 @@ export function toEmbedUrl(rawUrl: string): string {
       } else if (url.pathname.startsWith('/shorts/')) {
         const id = url.pathname.split('/')[2];
         embedUrl = `https://www.youtube.com/embed/${id}`;
+      } else if (url.pathname.startsWith('/live/')) {
+        // Retransmisiones en directo (y sus repeticiones ya finalizadas), ej:
+        // https://www.youtube.com/live/TlAnLiYv0ag — la página normal rechaza cargarse
+        // en un iframe, pero /embed/<id> funciona igual para vídeos en directo.
+        const id = url.pathname.split('/')[2];
+        embedUrl = id ? `https://www.youtube.com/embed/${id}` : rawUrl;
       } else if (url.pathname.startsWith('/embed/')) {
         embedUrl = rawUrl;
       }
@@ -493,6 +499,19 @@ export const BotoneraVideoPlayer: React.FC<BotoneraVideoPlayerProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
+          {videoType === 'link' && videoUrl && (
+            <a
+              href={videoUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Abrir este vídeo directamente en YouTube en una pestaña o ventana aparte"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/40 text-[11px] font-bold transition cursor-pointer"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Abrir en YouTube</span>
+            </a>
+          )}
+
           {onEditVideoSettings && (
             <button
               onClick={onEditVideoSettings}
