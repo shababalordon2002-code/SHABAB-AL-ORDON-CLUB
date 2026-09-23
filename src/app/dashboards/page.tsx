@@ -127,8 +127,6 @@ export default function DashboardsPage() {
           dbStore.syncAnalysesFromSupabase(),
           dbStore.syncBotoneraTemplatesFromSupabase(),
         ]);
-        const matches = dbStore.getMatches();
-        await Promise.all(matches.map((m) => dbStore.syncAnalysisEventsFromSupabase(m.id)));
         load();
       } catch {
         load();
@@ -137,24 +135,21 @@ export default function DashboardsPage() {
 
     syncAll();
 
-    // Fallback auto-refresh (in case realtime is momentarily disconnected).
+    // Fallback auto-refresh cada 5 minutos
     const interval = setInterval(syncAll, 5 * 60 * 1000);
 
-    // Realtime push: any analyst saving an event, finishing an analysis, or creating
-    // a match/dashboard, triggers a smooth debounced refresh for every viewer on this page.
+    // Realtime push: refresco suave cuando se crea o modifica un dashboard, partido o análisis finalizado
     const supabase = createClient();
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     const debouncedSync = () => {
       if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(syncAll, 500);
+      debounceTimer = setTimeout(syncAll, 1000);
     };
     const channel = supabase
       .channel(`dashboards-page-live:${Math.random().toString(36).substring(2, 9)}_${Date.now()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'match_analyses' }, debouncedSync)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'match_dashboards' }, debouncedSync)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, debouncedSync)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'analysis_events' }, debouncedSync)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'analysis_sessions' }, debouncedSync)
       .subscribe();
 
     return () => {
@@ -164,11 +159,14 @@ export default function DashboardsPage() {
     };
   }, []);
 
-  // Poll Active Live Session Status every 3 seconds - only updates state if session info changed
+  // Sincronización de sesiones activas en directo (basada en eventos Realtime, sin polling de 3s)
   useEffect(() => {
+    let isMounted = true;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
     const syncSessions = () => {
       dbStore.getAllActiveSessions().then((sessions) => {
-        if (!sessions) return;
+        if (!isMounted || !sessions) return;
         const currentStr = JSON.stringify(activeSessionsMapRef.current);
         const newStr = JSON.stringify(sessions);
         if (currentStr !== newStr) {
@@ -177,9 +175,23 @@ export default function DashboardsPage() {
         }
       });
     };
+
     syncSessions();
-    const interval = setInterval(syncSessions, 3000);
-    return () => clearInterval(interval);
+
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`dashboards-sessions-live:${Math.random().toString(36).substring(2, 9)}_${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'analysis_sessions' }, () => {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(syncSessions, 2000);
+      })
+      .subscribe();
+
+    return () => {
+      isMounted = false;
+      if (debounceTimer) clearTimeout(debounceTimer);
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const totalDashboards = useMemo(() => blocks.reduce((acc, b) => acc + b.dashboards.length, 0), [blocks]);

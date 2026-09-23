@@ -185,10 +185,18 @@ export async function deleteBotoneraTemplateFromSupabase(templateId: string): Pr
 // ==================== ONGOING ANALYSIS SESSIONS IN SUPABASE ====================
 
 // Fetch active analysis session for a match (or latest active session) from Supabase
-export async function getAnalysisSessionFromSupabase(matchId?: string): Promise<ActiveBotoneraSession | null> {
+export async function getAnalysisSessionFromSupabase(
+  matchId?: string,
+  includeFullEvents = false
+): Promise<ActiveBotoneraSession | null> {
   try {
     const supabase = createClient();
-    let query = supabase.from('analysis_sessions').select('*');
+    // Optimize egress: do not download massive events blob unless specifically needed
+    const columns = includeFullEvents
+      ? '*'
+      : 'id, match_id, period, timer_seconds, is_timer_running, start_timestamp, last_updated_timestamp, is_configured, analyst_name, match_title, video_type, video_source_name, video_url, p1_video_start_seconds, p2_video_start_seconds, period_adjustments, botonera_template_id, updated_at';
+
+    let query = supabase.from('analysis_sessions').select(columns);
 
     if (matchId) {
       query = query.eq('match_id', matchId);
@@ -250,13 +258,13 @@ export async function getAnalysisSessionFromSupabase(matchId?: string): Promise<
   }
 }
 
-// Fetch all active analysis sessions across all matches currently in progress
+// Fetch all active analysis sessions across all matches currently in progress (lightweight columns for badges/live stats)
 export async function getAllActiveSessionsFromSupabase(): Promise<Record<string, ActiveBotoneraSession>> {
   try {
     const supabase = createClient();
     const { data, error } = await supabase
       .from('analysis_sessions')
-      .select('*')
+      .select('id, match_id, period, timer_seconds, is_timer_running, start_timestamp, last_updated_timestamp, is_configured, analyst_name, match_title, video_type, video_source_name, video_url, p1_video_start_seconds, p2_video_start_seconds, period_adjustments, botonera_template_id, updated_at')
       .order('updated_at', { ascending: false });
 
     if (error || !data) {
@@ -268,8 +276,6 @@ export async function getAllActiveSessionsFromSupabase(): Promise<Record<string,
 
     const result: Record<string, ActiveBotoneraSession> = {};
     for (const row of data) {
-      const parsedHomeLineup = typeof row.home_lineup === 'string' ? JSON.parse(row.home_lineup) : (row.home_lineup || null);
-      const parsedAwayLineup = typeof row.away_lineup === 'string' ? JSON.parse(row.away_lineup) : (row.away_lineup || null);
       result[row.match_id] = {
         selectedMatchId: row.match_id,
         period: row.period || 1,
@@ -277,10 +283,10 @@ export async function getAllActiveSessionsFromSupabase(): Promise<Record<string,
         isTimerRunning: row.is_timer_running || false,
         startTimestamp: row.start_timestamp ? Number(row.start_timestamp) : null,
         lastUpdatedTimestamp: row.last_updated_timestamp ? Number(row.last_updated_timestamp) : Date.now(),
-        events: typeof row.events === 'string' ? JSON.parse(row.events) : (row.events || []),
+        events: [],
         isConfigured: row.is_configured ?? true,
-        analystName: row.analyst_name || parsedHomeLineup?._analyst_name || null,
-        matchTitle: row.match_title || parsedHomeLineup?._match_title || null,
+        analystName: row.analyst_name || null,
+        matchTitle: row.match_title || null,
         videoType: row.video_type || null,
         videoSourceName: row.video_source_name || null,
         videoUrl: row.video_url || null,
@@ -288,10 +294,10 @@ export async function getAllActiveSessionsFromSupabase(): Promise<Record<string,
         p2VideoStartSeconds: row.p2_video_start_seconds ?? null,
         periodAdjustments: typeof row.period_adjustments === 'string'
           ? JSON.parse(row.period_adjustments)
-          : (row.period_adjustments || parsedHomeLineup?._period_adjustments || null),
+          : (row.period_adjustments || null),
         botoneraTemplateId: row.botonera_template_id || null,
-        home_lineup: parsedHomeLineup,
-        away_lineup: parsedAwayLineup,
+        home_lineup: null,
+        away_lineup: null,
       };
     }
     return result;
@@ -820,23 +826,10 @@ export function subscribeToAnalysisEvents(
         }
       }
     )
-    // 1. Primary DELETE handler with filter on match_id (works when REPLICA IDENTITY FULL is enabled)
+    // Single filtered DELETE handler (filtered strictly to this match_id)
     .on(
       'postgres_changes',
       { event: 'DELETE', schema: 'public', table: 'analysis_events', filter: `match_id=eq.${matchId}` },
-      (payload: any) => {
-        const eventId = payload.old?.event_id;
-        if (eventId && !recentlyDeleted.has(eventId)) {
-          recentlyDeleted.add(eventId);
-          setTimeout(() => recentlyDeleted.delete(eventId), 3000);
-          handlers.onDelete?.(eventId);
-        }
-      }
-    )
-    // 2. Fallback DELETE handler without filter (ensures DELETE is never missed if REPLICA IDENTITY FULL is not yet applied)
-    .on(
-      'postgres_changes',
-      { event: 'DELETE', schema: 'public', table: 'analysis_events' },
       (payload: any) => {
         const eventId = payload.old?.event_id;
         if (eventId && !recentlyDeleted.has(eventId)) {

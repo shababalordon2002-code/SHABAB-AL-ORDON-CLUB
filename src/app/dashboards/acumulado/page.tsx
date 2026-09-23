@@ -78,15 +78,13 @@ function CumulativeDashboardContent() {
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     const debouncedSync = () => {
       if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(syncAll, 500);
+      debounceTimer = setTimeout(syncAll, 1500);
     };
 
     const channel = supabase
       .channel(`dashboards-acumulado-live:${Math.random().toString(36).substring(2, 9)}_${Date.now()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'match_analyses' }, debouncedSync)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, debouncedSync)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'analysis_events' }, debouncedSync)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'analysis_sessions' }, debouncedSync)
       .subscribe();
 
     return () => {

@@ -29,6 +29,8 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
 
   useEffect(() => {
     let isMounted = true;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
     const checkSession = async () => {
       let sess = dbStore.getActiveBotoneraSession();
 
@@ -65,21 +67,36 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
       }
     };
 
+    // Comprobación inicial de sesión
     checkSession();
-    const interval = setInterval(checkSession, 1000);
 
-    // Suscripción Realtime a sesiones activas en Supabase
+    // Actualización local del cronómetro en la UI (0 llamadas de red / 0 bytes de consumo)
+    const localTickInterval = setInterval(() => {
+      setActiveSession((currentSess) => {
+        if (currentSess && currentSess.isTimerRunning && currentSess.startTimestamp) {
+          const elapsed = Math.max(0, Math.floor((Date.now() - currentSess.startTimestamp) / 1000));
+          setCurrentSeconds(elapsed);
+        } else if (currentSess) {
+          setCurrentSeconds(currentSess.timerSeconds || 0);
+        }
+        return currentSess;
+      });
+    }, 1000);
+
+    // Suscripción Realtime a cambios de sesión (debounced para evitar peticiones repetitivas)
     const supabase = createClient();
     const channel = supabase
       .channel('header_realtime_sessions')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'analysis_sessions' }, () => {
-        checkSession();
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(checkSession, 1500);
       })
       .subscribe();
 
     return () => {
       isMounted = false;
-      clearInterval(interval);
+      clearInterval(localTickInterval);
+      if (debounceTimer) clearTimeout(debounceTimer);
       supabase.removeChannel(channel);
     };
   }, []);

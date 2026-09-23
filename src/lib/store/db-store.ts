@@ -960,13 +960,19 @@ export const dbStore = {
   },
 
   _lastActiveSessionSupabaseSync: 0,
+  _lastTimerRunningState: undefined as boolean | undefined,
 
   saveActiveBotoneraSession(session: ActiveBotoneraSession, forceImmediate = false): void {
     setToStorage(STORAGE_KEYS.BOTONERA_ACTIVE_SESSION, session);
 
-    // Sync active session asynchronously to Supabase (throttled to every 5s or when paused, or immediate on event tagging)
+    // Sync active session asynchronously to Supabase:
+    // - Immediate when status changes (play / pause / period change / event tagged)
+    // - Throttled heartbeat to every 30s while timer is running (since startTimestamp accurately tracks elapsed time on all clients)
     const now = Date.now();
-    if (forceImmediate || now - (this._lastActiveSessionSupabaseSync || 0) > 5000 || !session.isTimerRunning) {
+    const hasStatusChanged = session.isTimerRunning !== this._lastTimerRunningState;
+    this._lastTimerRunningState = session.isTimerRunning;
+
+    if (forceImmediate || hasStatusChanged || now - (this._lastActiveSessionSupabaseSync || 0) > 30000) {
       this._lastActiveSessionSupabaseSync = now;
       saveAnalysisSessionToSupabase(session).catch(err => {
         console.warn("Could not sync active session to Supabase:", err);
