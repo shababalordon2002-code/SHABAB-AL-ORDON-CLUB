@@ -266,6 +266,14 @@ export default function DashboardsPage() {
             <span>Dashboard Acumulativo</span>
           </Link>
 
+          <Link
+            href="/estadisticas-equipo"
+            className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-sky-300 font-extrabold text-xs shadow-md transition-all flex items-center gap-2 border border-sky-500/30 cursor-pointer"
+          >
+            <BarChart3 className="w-4 h-4" />
+            <span>Estadísticas Equipo</span>
+          </Link>
+
           {isAdmin && (
             <button
               onClick={() => setShowAdminModal(true)}

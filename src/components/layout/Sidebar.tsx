@@ -11,7 +11,8 @@ import {
   ChevronRight,
   Gamepad2,
   Lock,
-  ShieldCheck
+  ShieldCheck,
+  LineChart
 } from 'lucide-react';
 import { isRecordingLocked, subscribeRecordingLock } from '@/lib/recording-lock';
 import { useAuth } from '@/components/providers/AuthProvider';
@@ -30,6 +31,7 @@ const baseNavItems: NavItem[] = [
   { name: 'Botonera Live', href: '/botonera', icon: Gamepad2, badge: 'Live', requiresRecording: true },
   { name: 'Jugadores', href: '/jugadores', icon: Users },
   { name: 'Dashboards', href: '/dashboards', icon: BarChart3 },
+  { name: 'Estadísticas Equipo', href: '/estadisticas-equipo', icon: LineChart },
   { name: 'Configuración', href: '/configuracion', icon: Settings, requiresRecording: true },
   { name: 'Gestión Usuarios', href: '/admin/usuarios', icon: ShieldCheck, badge: 'Admin', adminOnly: true },
 ];
