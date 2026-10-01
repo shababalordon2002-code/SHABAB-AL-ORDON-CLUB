@@ -26,10 +26,16 @@ async function scrapeFlashscoreViaFetch(maxMatches = 20): Promise<Match[]> {
       if (!res.ok) continue;
       const html = await res.text();
 
-      const rawBlocks = html.split('~AA÷').slice(1);
+      const rawBlocks = html.split('~AA÷');
+      // The "~ZA÷...¬ZK÷<competition>" header comes before its group of matches, so after
+      // splitting by '~AA÷' it sits at the tail of the previous block: carry it forward.
+      const competitionOf = (block: string) => block.match(/¬ZK÷([^¬]+)/)?.[1]?.trim();
+      let currentCompetition = competitionOf(rawBlocks[0]) || 'Premier League';
 
-      for (const block of rawBlocks) {
+      for (const block of rawBlocks.slice(1)) {
         const fields = block.split('¬');
+        const competition = currentCompetition;
+        currentCompetition = competitionOf(block) || currentCompetition;
         const mid = fields[0];
         if (!mid || mid.length > 12) continue;
 
@@ -38,7 +44,6 @@ async function scrapeFlashscoreViaFetch(maxMatches = 20): Promise<Match[]> {
         let homeScore: number | null = null;
         let awayScore: number | null = null;
         let timestamp = 0;
-        let competition = 'Premier League';
 
         fields.forEach(field => {
           if (field.startsWith('AE÷')) homeTeam = field.slice(3).trim();
@@ -46,7 +51,6 @@ async function scrapeFlashscoreViaFetch(maxMatches = 20): Promise<Match[]> {
           else if (field.startsWith('AG÷')) homeScore = parseInt(field.slice(3), 10);
           else if (field.startsWith('AH÷')) awayScore = parseInt(field.slice(3), 10);
           else if (field.startsWith('AD÷')) timestamp = parseInt(field.slice(3), 10);
-          else if (field.startsWith('ZK÷')) competition = field.slice(3).trim();
         });
 
         if (homeTeam && awayTeam) {
@@ -111,6 +115,9 @@ async function scrapeFlashscoreViaFetch(maxMatches = 20): Promise<Match[]> {
 // Full Puppeteer Scraper for Local / Node Environment
 async function scrapeFlashscoreViaPuppeteer(maxMatches = 20): Promise<Match[]> {
   console.log("Starting Flashscore match scraper via Puppeteer...");
+  // The results page also lists last season's matches; without this filter they eat up the
+  // `maxMatches` slots and the upcoming fixtures never get scraped.
+  const seasonMids = new Set((await scrapeFlashscoreViaFetch(1000)).map(m => m.flashscore_mid).filter(Boolean));
   const browser = await puppeteer.launch({
     executablePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     headless: true,
@@ -159,7 +166,16 @@ async function scrapeFlashscoreViaPuppeteer(maxMatches = 20): Promise<Match[]> {
     }
   }
 
-  const allMatchHrefs = Array.from(matchLinksMap.keys());
+  const midOf = (href: string) => {
+    try {
+      return new URL(href).searchParams.get('mid') || href.split('/partido/')[1]?.split('/')[0] || '';
+    } catch {
+      return '';
+    }
+  };
+  const listedHrefs = Array.from(matchLinksMap.keys());
+  const seasonHrefs = listedHrefs.filter(href => seasonMids.has(midOf(href)));
+  const allMatchHrefs = seasonHrefs.length > 0 ? seasonHrefs : listedHrefs;
   console.log(`Found ${allMatchHrefs.length} match links across Flashscore results & fixtures.`);
 
   const scrapedMatches: Match[] = [];
@@ -315,18 +331,49 @@ async function scrapeFlashscoreViaPuppeteer(maxMatches = 20): Promise<Match[]> {
 }
 
 // Master Scraper Export with automatic environment fallback
+// The team feed has no round info; the match detail page embeds it as
+// "tournament":"Premier League - Jornada 3".
+async function fetchTournamentFromDetail(mid: string): Promise<{ competition: string; round: string } | null> {
+  try {
+    const res = await fetch(`https://www.flashscore.es/partido/${mid}/`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'es-ES,es;q=0.9',
+      },
+      cache: 'no-store'
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+    const raw = html.match(/"tournament":"([^"]*?-[^"]*)"/)?.[1];
+    if (!raw) return null;
+    const idx = raw.indexOf(' - ');
+    if (idx === -1) return null;
+    return { competition: raw.slice(0, idx).trim(), round: raw.slice(idx + 3).trim() };
+  } catch {
+    return null;
+  }
+}
+
+async function enrichRounds(matches: Match[]): Promise<Match[]> {
+  return Promise.all(matches.map(async (m) => {
+    if (m.round || !m.flashscore_mid) return m;
+    const info = await fetchTournamentFromDetail(m.flashscore_mid);
+    return info ? { ...m, competition: info.competition || m.competition, round: info.round } : m;
+  }));
+}
+
 export async function scrapeFlashscoreMatches(maxMatches = 20): Promise<Match[]> {
   const isVercel = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
 
   if (isVercel) {
     console.log("Vercel environment detected. Running lightweight fetch scraper...");
-    return scrapeFlashscoreViaFetch(maxMatches);
+    return enrichRounds(await scrapeFlashscoreViaFetch(maxMatches));
   }
 
   try {
-    return await scrapeFlashscoreViaPuppeteer(maxMatches);
+    return enrichRounds(await scrapeFlashscoreViaPuppeteer(maxMatches));
   } catch (err: any) {
     console.warn("Puppeteer failed (or not supported). Falling back to HTTP Fetch Scraper...", err.message);
-    return scrapeFlashscoreViaFetch(maxMatches);
+    return enrichRounds(await scrapeFlashscoreViaFetch(maxMatches));
   }
 }
