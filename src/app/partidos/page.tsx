@@ -24,6 +24,7 @@ import { Match, MatchAnalysis, ActiveBotoneraSession, NormalizedEvent } from '@/
 import { MatchAnalysisSelectorModal } from '@/components/analysis/MatchAnalysisSelectorModal';
 import { AnalysisVisor } from '@/components/analysis/AnalysisVisor';
 import { calculateMatchScoresFromEvents } from '@/lib/analytics/dashboard-engine';
+import { isSessionLive } from '@/lib/services/botonera-service';
 
 export default function PartidosPage() {
   const [matches, setMatches] = useState<Match[]>([]);
@@ -137,7 +138,7 @@ export default function PartidosPage() {
     const isShababHome = m.home_team.toLowerCase().includes('shabab al ordon');
     const isShababAway = m.away_team.toLowerCase().includes('shabab al ordon');
     const activeSession = activeSessionsMap[m.id];
-    const isLiveActive = !!(activeSession && activeSession.isTimerRunning);
+    const isLiveActive = isSessionLive(activeSession);
     const savedAnalyses = dbStore.getAnalyses(m.id);
     const matchEvents = isLiveActive 
       ? (activeSession.events || []) 

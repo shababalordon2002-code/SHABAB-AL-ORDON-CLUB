@@ -3,6 +3,17 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { SESSION_PRESERVE_COLUMNS, MATCH_PRESERVE_COLUMNS, isNoOpUpdate, selectWithFallback } from '@/lib/supabase/egress';
 import { BotoneraTemplate, ActiveBotoneraSession, NormalizedEvent } from '@/types';
 
+// ==================== LIVE SESSION DETECTION ====================
+// Una sesión solo está "en vivo" si algún analista la mantiene abierta en la Botonera:
+// mientras está dentro del modo análisis se envía un latido cada 30 s. El crono puede seguir
+// marcado como en marcha tras salir (se reanuda luego), así que isTimerRunning no basta.
+export const LIVE_SESSION_HEARTBEAT_MS = 30 * 1000;
+export const LIVE_SESSION_STALE_MS = 90 * 1000;
+
+export function isSessionLive(session: ActiveBotoneraSession | null | undefined): boolean {
+  return !!session && !!session.lastUpdatedTimestamp && Date.now() - session.lastUpdatedTimestamp < LIVE_SESSION_STALE_MS;
+}
+
 // ==================== SYNC RETRY HELPER ====================
 // Wraps a Supabase write so a transient failure (offline, dropped connection, etc.)
 // doesn't silently vanish as a single console.warn. Retries with backoff, and only
@@ -229,14 +240,13 @@ export async function getAnalysisSessionFromSupabase(
     const parsedAwayLineup = typeof row.away_lineup === 'string' ? JSON.parse(row.away_lineup) : (row.away_lineup || null);
 
     // Si no se pide un partido concreto (ej. Header comprobando si hay alguien analizando en vivo),
-    // debe ser una sesión verdaderamente activa: el crono debe estar en marcha O haber tenido
-    // actividad en los últimos 90 segundos. Si está parada o cerrada, no hay nadie analizando.
+    // debe ser una sesión verdaderamente activa: latido en los últimos 90 segundos. Aunque el
+    // crono siga marcado en marcha, si nadie está dentro del análisis no hay nadie analizando.
     if (!matchId) {
       const rowTime = row.last_updated_timestamp
         ? Number(row.last_updated_timestamp)
         : (row.updated_at ? new Date(row.updated_at).getTime() : 0);
-      const isRecentlyActive = rowTime && Date.now() - rowTime < 90 * 1000;
-      if (!row.is_timer_running && !isRecentlyActive) {
+      if (!rowTime || Date.now() - rowTime >= LIVE_SESSION_STALE_MS) {
         return null;
       }
     }
@@ -324,6 +334,9 @@ export async function getAllActiveSessionsFromSupabase(): Promise<Record<string,
 // (manual edits, the active-session sync effect) fire this fire-and-forget in parallel,
 // and a slower call finishing after a newer one would overwrite fresh data with stale data.
 const _sessionSaveSeq: Record<string, number> = {};
+// Secuencia en la que se borró la sesión de cada partido: un guardado iniciado antes del
+// borrado no debe recrear la fila (dejaría la sesión "EN VIVO" tras finalizar).
+const _sessionDeletedSeq: Record<string, number> = {};
 
 // Save/Upsert Active Analysis Session to Supabase
 export async function saveAnalysisSessionToSupabase(session: ActiveBotoneraSession): Promise<boolean> {
@@ -436,6 +449,12 @@ export async function saveAnalysisSessionToSupabase(session: ActiveBotoneraSessi
       if (error.message.includes('home_lineup')) delete fallbackRow.home_lineup;
       if (error.message.includes('away_lineup')) delete fallbackRow.away_lineup;
       ({ error } = await supabase.from('analysis_sessions').upsert([fallbackRow], { onConflict: 'match_id' }));
+    }
+
+    // La sesión se finalizó/borró mientras este upsert estaba en vuelo: deshacer la resurrección.
+    if ((_sessionDeletedSeq[matchId] || 0) > mySeq) {
+      await supabase.from('analysis_sessions').delete().eq('match_id', matchId);
+      return true;
     }
 
     // Also update matches table in Supabase so match records permanently hold video & offset
@@ -959,6 +978,11 @@ export function subscribeToAnalysisPresence(
 // Delete Active Analysis Session from Supabase (e.g. when completed or reset)
 export async function deleteAnalysisSessionFromSupabase(matchId: string): Promise<boolean> {
   if (!matchId) return false;
+
+  // Invalida cualquier guardado de sesión en curso para que no recree la fila tras el borrado
+  const seq = (_sessionSaveSeq[matchId] || 0) + 1;
+  _sessionSaveSeq[matchId] = seq;
+  _sessionDeletedSeq[matchId] = seq;
 
   try {
     let supabase: any;

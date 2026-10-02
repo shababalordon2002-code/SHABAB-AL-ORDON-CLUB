@@ -18,6 +18,8 @@ import {
   subscribeToAnalysisVideo,
   upsertAnalysisVideoToSupabase,
   withRetry,
+  LIVE_SESSION_HEARTBEAT_MS,
+  LIVE_SESSION_STALE_MS,
 } from '@/lib/services/botonera-service';
 import { saveAnalysisToSupabase, deleteAnalysisFromSupabase } from '@/lib/services/analysis-service';
 import { createMatchChangeBatcher } from '@/lib/supabase/egress';
@@ -1009,6 +1011,34 @@ export default function BotoneraPage() {
       isYouTubeApiHealthyRef.current = false;
     };
   }, [videoType, iframeEl, applyVideoTime]);
+
+  // Latido de presencia: mientras el analista está dentro del modo análisis la sesión se marca
+  // como "en vivo" (aunque el crono esté parado). Al salir (Menú, otra página o desmontaje) se
+  // marca caducada al momento para que el Header y las tarjetas dejen de mostrar EN VIVO; el crono
+  // conserva su estado para poder reanudar.
+  // Solo se toca la sesión guardada si es la de ESTE partido: localStorage puede conservar aún la
+  // sesión de otro partido analizado antes, y refrescarla la volvería a mostrar como EN VIVO.
+  useEffect(() => {
+    if (pageMode !== 'analysis' || !isSessionConfigured || !selectedMatchId) return;
+
+    const ownSession = () => {
+      const sess = dbStore.getActiveBotoneraSession();
+      return sess && sess.selectedMatchId === selectedMatchId ? sess : null;
+    };
+    const beat = () => {
+      const sess = ownSession();
+      if (sess) dbStore.saveActiveBotoneraSession({ ...sess, lastUpdatedTimestamp: Date.now() }, true);
+    };
+    const id = setInterval(beat, LIVE_SESSION_HEARTBEAT_MS);
+
+    return () => {
+      clearInterval(id);
+      const sess = ownSession();
+      if (sess) {
+        dbStore.saveActiveBotoneraSession({ ...sess, lastUpdatedTimestamp: Date.now() - LIVE_SESSION_STALE_MS }, true);
+      }
+    };
+  }, [pageMode, isSessionConfigured, selectedMatchId]);
 
   // Sync Active Tagging Session State to LocalStorage / dbStore / Supabase
   useEffect(() => {

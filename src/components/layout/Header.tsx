@@ -8,7 +8,7 @@ import { dbStore } from '@/lib/store/db-store';
 import { ActiveBotoneraSession } from '@/types';
 import { isRecordingLocked, subscribeRecordingLock } from '@/lib/recording-lock';
 import { useAuth } from '@/components/providers/AuthProvider';
-import { getAnalysisSessionFromSupabase } from '@/lib/services/botonera-service';
+import { getAnalysisSessionFromSupabase, isSessionLive } from '@/lib/services/botonera-service';
 import { createClient } from '@/lib/supabase/client';
 
 interface HeaderProps {
@@ -34,17 +34,13 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
     const checkSession = async () => {
       let sess = dbStore.getActiveBotoneraSession();
 
-      // Comprobar si la sesión local está verdaderamente activa ahora mismo
-      const isLocalRunning = sess && sess.isTimerRunning;
-      const isLocalRecent = sess && sess.isConfigured && sess.lastUpdatedTimestamp && Date.now() - sess.lastUpdatedTimestamp < 90 * 1000 && (sess.timerSeconds || 0) > 0;
-      const isLocalActive = !!sess && (isLocalRunning || isLocalRecent);
+      // En vivo = algún analista dentro del modo análisis (latido reciente), no solo crono en marcha
+      const isLocalActive = !!sess && !!sess.isConfigured && isSessionLive(sess);
 
       if (!isLocalActive) {
         try {
           const remoteSess = await getAnalysisSessionFromSupabase();
-          const isRemoteRunning = remoteSess && remoteSess.isTimerRunning;
-          const isRemoteRecent = remoteSess && remoteSess.lastUpdatedTimestamp && Date.now() - remoteSess.lastUpdatedTimestamp < 90 * 1000 && (remoteSess.timerSeconds || 0) > 0;
-          if (remoteSess && (isRemoteRunning || isRemoteRecent)) {
+          if (remoteSess && isSessionLive(remoteSess)) {
             sess = remoteSess;
           } else {
             sess = null;
@@ -73,10 +69,16 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
     // Actualización local del cronómetro en la UI (0 llamadas de red / 0 bytes de consumo)
     const localTickInterval = setInterval(() => {
       setActiveSession((currentSess) => {
-        if (currentSess && currentSess.isTimerRunning && currentSess.startTimestamp) {
+        if (!currentSess) return currentSess;
+        // Sin latido en los últimos 90 s: el analista salió del análisis (o cerró la pestaña)
+        if (!isSessionLive(currentSess)) {
+          setCurrentSeconds(0);
+          return null;
+        }
+        if (currentSess.isTimerRunning && currentSess.startTimestamp) {
           const elapsed = Math.max(0, Math.floor((Date.now() - currentSess.startTimestamp) / 1000));
           setCurrentSeconds(elapsed);
-        } else if (currentSess) {
+        } else {
           setCurrentSeconds(currentSess.timerSeconds || 0);
         }
         return currentSess;
@@ -195,7 +197,7 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
         </div>
 
         {/* Global Live Active Session Indicator: Analista, Parte de juego y Minuto de juego */}
-        {activeSession && (activeSession.isTimerRunning || (currentSeconds > 0 && activeSession.lastUpdatedTimestamp && Date.now() - activeSession.lastUpdatedTimestamp < 90000)) && (
+        {activeSession && (
           <Link
             href="/botonera"
             className="flex items-center gap-2 sm:gap-2.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-red-950/80 via-slate-900 to-amber-950/50 border border-red-500/50 hover:border-red-400 text-slate-200 text-xs font-bold transition-all shadow-lg shadow-red-950/40 shrink-0 group"

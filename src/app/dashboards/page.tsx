@@ -40,6 +40,7 @@ import { useAuth } from '@/components/providers/AuthProvider';
 import { AdminDashboardConfigModal } from '@/components/dashboards/AdminDashboardConfigModal';
 import { TacticalLineupPitch } from '@/components/pitch/TacticalLineupPitch';
 import { calculateMatchScoresFromEvents } from '@/lib/analytics/dashboard-engine';
+import { isSessionLive } from '@/lib/services/botonera-service';
 
 import { getYouTubeThumbnailUrl } from '@/lib/analytics/video-utils';
 
@@ -340,7 +341,7 @@ export default function DashboardsPage() {
       <div className="space-y-4">
         {blocks.map((block) => {
           const liveSession = activeSessionsMap[block.match.id];
-          const isLiveTagging = dashboardConfig.showLiveBadge && liveSession && liveSession.isTimerRunning;
+          const isLiveTagging = dashboardConfig.showLiveBadge && isSessionLive(liveSession);
           const currentEventsCount = block.events.length || (liveSession?.events?.length || 0);
           const analysisWithVideo = block.analyses.find((a) => a.video_url && a.video_url.trim()) || block.analyses[0];
           const resolvedVideoUrl = (analysisWithVideo?.video_url && analysisWithVideo.video_url.trim()) || (liveSession?.videoUrl && liveSession.videoUrl.trim()) || (block.match.video_url && block.match.video_url.trim()) || null;
