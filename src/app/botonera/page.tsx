@@ -20,6 +20,7 @@ import {
   withRetry,
 } from '@/lib/services/botonera-service';
 import { saveAnalysisToSupabase, deleteAnalysisFromSupabase } from '@/lib/services/analysis-service';
+import { createMatchChangeBatcher } from '@/lib/supabase/egress';
 import { saveMatchesToSupabase } from '@/lib/services/matches-service';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { Match, Player, NormalizedEvent, BotoneraTemplate, BotoneraButton, BotoneraProjectVideoType, MatchAnalysis, ActiveBotoneraSession, TeamLineupConfig } from '@/types';
@@ -37,6 +38,7 @@ import { BotoneraSetupWizard } from '@/components/botonera/BotoneraSetupWizard';
 import { BotoneraVideoPlayer, toEmbedUrl } from '@/components/botonera/BotoneraVideoPlayer';
 import { BotoneraLiveStats } from '@/components/botonera/BotoneraLiveStats';
 import { BotoneraStopwatch, PERIOD_BASE_SECONDS } from '@/components/botonera/BotoneraStopwatch';
+import { BotoneraVideoTimeline } from '@/components/botonera/BotoneraVideoTimeline';
 import { BotoneraEventModal } from '@/components/botonera/BotoneraEventModal';
 import { BotoneraLiveScoreboard } from '@/components/botonera/BotoneraLiveScoreboard';
 import { AnalysisVisor } from '@/components/analysis/AnalysisVisor';
@@ -259,6 +261,7 @@ export default function BotoneraPage() {
   // Last known currentTime (seconds) of the YouTube player, updated via postMessage listener.
   // Used to capture the video position when PLAY is pressed on the stopwatch.
   const youtubeCurrentTimeRef = useRef<number>(0);
+  const youtubeDurationRef = useRef<number>(0);
   // Play/pausa conocido del reproductor de enlace, por si la API no lo da fiable
   const youtubeIsPlayingRef = useRef<boolean>(false);
   // Same elements kept in state so the sync effects re-run when the player mounts/unmounts
@@ -846,29 +849,27 @@ export default function BotoneraPage() {
   // Global Realtime listener: whenever any analyst tags, edits, or saves an analysis in Supabase,
   // sync live across all connected clients and update cards instantly
   useEffect(() => {
+    // Only the matches touched by the change are re-downloaded (not every analysis and
+    // event of every match), which keeps Supabase egress low during live tagging.
     const supabase = createClient();
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-    const debouncedSync = () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        dbStore.syncAnalysesFromSupabase().then((loaded) => {
-          if (loaded && loaded.length > 0) {
-            setSavedAnalyses(loaded);
-          }
-        });
-      }, 400);
-    };
+    const batcher = createMatchChangeBatcher((matchIds) => {
+      dbStore.syncAnalysesForMatchesFromSupabase(matchIds).then((loaded) => {
+        if (loaded && loaded.length > 0) {
+          setSavedAnalyses(loaded);
+        }
+      });
+    }, 400);
 
     const channel = supabase
       .channel(`botonera-global-analyses-realtime:${Math.random().toString(36).substring(2, 9)}_${Date.now()}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'match_analyses' }, debouncedSync)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'analysis_events' }, debouncedSync)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'analysis_videos' }, debouncedSync)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, debouncedSync)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'match_analyses' }, (p: any) => batcher.push('match_analyses', p))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'analysis_events' }, (p: any) => batcher.push('analysis_events', p))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'analysis_videos' }, (p: any) => batcher.push('analysis_videos', p))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, (p: any) => batcher.push('matches', p))
       .subscribe();
 
     return () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
+      batcher.cancel();
       supabase.removeChannel(channel);
     };
   }, []);
@@ -1139,7 +1140,7 @@ export default function BotoneraPage() {
           p1VideoStartSeconds: newP1,
           p2VideoStartSeconds: newP2,
           periodAdjustments: newAdjustments || {},
-        });
+        }, true); // push now (not on the 30s heartbeat) so Supabase never holds stale timing
       }
 
       // 4. Immediately sync to Supabase analysis_videos table
@@ -1631,6 +1632,9 @@ export default function BotoneraPage() {
         const data = typeof event.data === 'string' ? JSON.parse(event.data) : null;
         if (!data) return;
         // YouTube infoDelivery: carries currentTime and playerState
+        if (data.event === 'infoDelivery' && typeof data.info?.duration === 'number' && data.info.duration > 0) {
+          youtubeDurationRef.current = data.info.duration;
+        }
         if (data.event === 'infoDelivery' && typeof data.info?.currentTime === 'number') {
           youtubeCurrentTimeRef.current = data.info.currentTime;
           if (!hasYouTubeSignalRef.current) {
@@ -2479,6 +2483,65 @@ export default function BotoneraPage() {
       localObjectUrl,
     });
   };
+
+  /** Length of the attached video in seconds, or null while the player hasn't reported it. */
+  const getVideoDuration = (): number | null => {
+    const localDuration = videoElementRef.current?.duration;
+    if (typeof localDuration === 'number' && Number.isFinite(localDuration) && localDuration > 0) return localDuration;
+    const apiDuration = ytPlayerRef.current?.getDuration?.();
+    if (typeof apiDuration === 'number' && Number.isFinite(apiDuration) && apiDuration > 0) return apiDuration;
+    if (youtubeDurationRef.current > 0) return youtubeDurationRef.current;
+    return null;
+  };
+
+  // ── Reproducción de cortes en el vídeo principal (línea de tiempo + "Reproducir todo") ──
+  // Cada corte va de (minuto del evento − leadTime) a (minuto del evento + lagTime); al
+  // terminar uno salta solo al siguiente de la lista y al acabar la lista pausa el vídeo.
+  const [clipPlaylist, setClipPlaylist] = useState<{ events: NormalizedEvent[]; index: number } | null>(null);
+  const clipWindowRef = useRef<{ start: number; end: number; seekedAt: number } | null>(null);
+
+  const playClipAt = (list: NormalizedEvent[], index: number) => {
+    const evt = list[index];
+    const videoTime = calculateEventVideoTime(evt, selectedMatch, periodVideoOffsets, 0, periodAdjustments);
+    const lead = Number(evt.metadata?.leadTime ?? 5) || 0;
+    const lag = Number(evt.metadata?.lagTime ?? 5) || 0;
+    const start = Math.max(0, videoTime - lead);
+    clipWindowRef.current = { start, end: videoTime + Math.max(lag, 1), seekedAt: Date.now() };
+    seekVideoTo(start, true);
+    setClipPlaylist({ events: list, index });
+  };
+
+  const stopClipPlaylist = () => {
+    clipWindowRef.current = null;
+    setClipPlaylist(null);
+    setVideoPlaying(false);
+  };
+
+  const handlePlayEventsInVideo = (list: NormalizedEvent[]) => {
+    if (list.length === 0) return;
+    playClipAt(list, 0);
+  };
+
+  const clipPlaylistTickRef = useRef<() => void>(() => {});
+  clipPlaylistTickRef.current = () => {
+    const win = clipWindowRef.current;
+    if (!clipPlaylist || !win) return;
+    // Margen tras cada salto: el reproductor tarda un momento en informar de la nueva posición
+    if (Date.now() - win.seekedAt < 1200) return;
+    if (getCurrentVideoTime() < win.end) return;
+    const next = clipPlaylist.index + 1;
+    if (next < clipPlaylist.events.length) playClipAt(clipPlaylist.events, next);
+    else stopClipPlaylist();
+  };
+
+  const isClipPlaylistActive = clipPlaylist !== null;
+  useEffect(() => {
+    if (!isClipPlaylistActive) return;
+    const id = setInterval(() => clipPlaylistTickRef.current(), 250);
+    return () => clearInterval(id);
+  }, [isClipPlaylistActive]);
+
+  const playingClipEventId = clipPlaylist ? clipPlaylist.events[clipPlaylist.index]?.event_id ?? null : null;
 
   /**
    * Seeks the MAIN live video to the current match time (periodOffset + timerSeconds).
@@ -3713,6 +3776,21 @@ export default function BotoneraPage() {
                   getCurrentVideoTime={getCurrentVideoTime}
                 />
 
+                {/* Línea de tiempo del vídeo: partes + eventos por color */}
+                <BotoneraVideoTimeline
+                  events={events}
+                  buttons={template?.buttons || []}
+                  match={selectedMatch}
+                  periodVideoOffsets={periodVideoOffsets}
+                  periodAdjustments={periodAdjustments}
+                  homeTeamName={currentHomeTeamName}
+                  getCurrentVideoTime={getCurrentVideoTime}
+                  getVideoDuration={getVideoDuration}
+                  onSeek={(t) => seekVideoTo(t)}
+                  onPlayEvent={(evt) => handlePlayEventsInVideo([evt])}
+                  playingEventId={playingClipEventId}
+                />
+
                 {/* Feed de Eventos — directamente debajo del vídeo */}
                 <BotoneraEventLog
                   events={events}
@@ -3728,6 +3806,10 @@ export default function BotoneraPage() {
                   players={players}
                   match={selectedMatch}
                   periodVideoOffsets={periodVideoOffsets}
+                  periodAdjustments={periodAdjustments}
+                  onPlayAll={handlePlayEventsInVideo}
+                  onStopPlayAll={stopClipPlaylist}
+                  playingEventId={playingClipEventId}
                 />
               </div>
 
@@ -3819,6 +3901,21 @@ export default function BotoneraPage() {
                     onSeekVideoToTime={(t) => seekVideoTo(t)}
                     getCurrentVideoTime={getCurrentVideoTime}
                   />
+                  <div className="mt-4">
+                    <BotoneraVideoTimeline
+                      events={events}
+                      buttons={template?.buttons || []}
+                      match={selectedMatch}
+                      periodVideoOffsets={periodVideoOffsets}
+                      periodAdjustments={periodAdjustments}
+                      homeTeamName={currentHomeTeamName}
+                      getCurrentVideoTime={getCurrentVideoTime}
+                      getVideoDuration={getVideoDuration}
+                      onSeek={(t) => seekVideoTo(t)}
+                      onPlayEvent={(evt) => handlePlayEventsInVideo([evt])}
+                      playingEventId={playingClipEventId}
+                    />
+                  </div>
                 </div>
               )}
 
@@ -3892,6 +3989,10 @@ export default function BotoneraPage() {
                   players={players}
                   match={selectedMatch}
                   periodVideoOffsets={periodVideoOffsets}
+                  periodAdjustments={periodAdjustments}
+                  onPlayAll={handlePlayEventsInVideo}
+                  onStopPlayAll={stopClipPlaylist}
+                  playingEventId={playingClipEventId}
                 />
 
                 <BotoneraLiveStats

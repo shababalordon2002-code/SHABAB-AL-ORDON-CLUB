@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { dbStore, DEFAULT_DASHBOARD_CONFIG } from '@/lib/store/db-store';
 import { createClient } from '@/lib/supabase/client';
+import { createMatchChangeBatcher } from '@/lib/supabase/egress';
 import {
   BotoneraTemplate,
   Match,
@@ -139,22 +140,40 @@ export default function DashboardsPage() {
     const interval = setInterval(syncAll, 5 * 60 * 1000);
 
     // Realtime push: refresco suave cuando se crea o modifica un dashboard, partido o análisis finalizado
+    // Each change only re-downloads what it touched: the affected matches' analyses,
+    // the match list if a match changed, the dashboards if a dashboard changed.
     const supabase = createClient();
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-    const debouncedSync = () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(syncAll, 1000);
+    const changedTables = new Set<string>();
+    const batcher = createMatchChangeBatcher(async (matchIds) => {
+      const tables = new Set(changedTables);
+      changedTables.clear();
+      try {
+        await Promise.all([
+          tables.has('matches') ? dbStore.syncMatchesFromSupabase() : null,
+          tables.has('match_dashboards') ? dbStore.syncDashboardsFromSupabase() : null,
+          tables.has('match_analyses') || tables.has('matches')
+            ? dbStore.syncAnalysesForMatchesFromSupabase(matchIds)
+            : null,
+        ]);
+      } catch {
+        // fall through to load() with local data
+      }
+      load();
+    }, 1000);
+    const onChange = (table: string) => (p: any) => {
+      changedTables.add(table);
+      batcher.push(table, p);
     };
     const channel = supabase
       .channel(`dashboards-page-live:${Math.random().toString(36).substring(2, 9)}_${Date.now()}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'match_analyses' }, debouncedSync)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'match_dashboards' }, debouncedSync)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, debouncedSync)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'match_analyses' }, onChange('match_analyses'))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'match_dashboards' }, onChange('match_dashboards'))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, onChange('matches'))
       .subscribe();
 
     return () => {
       clearInterval(interval);
-      if (debounceTimer) clearTimeout(debounceTimer);
+      batcher.cancel();
       supabase.removeChannel(channel);
     };
   }, []);

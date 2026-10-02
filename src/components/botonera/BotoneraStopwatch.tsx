@@ -121,9 +121,12 @@ export const BotoneraStopwatch: React.FC<BotoneraStopwatchProps> = ({
     setIsPausePeriodModalOpen(false);
     // Do NOT seek the video here: the new period has no sync offset yet, it is
     // captured when the analyst presses PLAY again at the restart.
-    if (period === 1) { onPeriodChange(2); onTimerChange(PERIOD_BASE_SECONDS[2], false); }
-    else if (period === 2) { onPeriodChange(3); onTimerChange(PERIOD_BASE_SECONDS[3], false); }
-    else if (period === 3) { onPeriodChange(4); onTimerChange(PERIOD_BASE_SECONDS[4], false); }
+    // onPeriodChange already resets the chrono to the new period's base. Calling
+    // onTimerChange(base, false) here ran with the OLD period still active and stored a
+    // bogus manual adjustment on it (overwriting e.g. a real 1st-half adjustment).
+    if (period === 1) onPeriodChange(2);
+    else if (period === 2) onPeriodChange(3);
+    else if (period === 3) onPeriodChange(4);
     // Note: onTimerStarted will fire on next PLAY press for the new period
   };
 

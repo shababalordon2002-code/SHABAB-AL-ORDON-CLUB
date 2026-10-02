@@ -9,7 +9,8 @@ import {
   getAllActiveSessionsFromSupabase,
   deleteAnalysisSessionFromSupabase,
   clearAnalysisEventsFromSupabase,
-  getAnalysisEventsFromSupabase
+  getAnalysisEventsFromSupabase,
+  getAnalysisEventsForMatchesFromSupabase
 } from '@/lib/services/botonera-service';
 import { saveMatchesToSupabase, getMatchesFromSupabase } from '@/lib/services/matches-service';
 import { getPlayersFromSupabase, savePlayersToSupabase } from '@/lib/services/players-service';
@@ -643,6 +644,29 @@ export const dbStore = {
     return this.getNormalizedEvents(matchId);
   },
 
+  // Same result as calling syncAnalysisEventsFromSupabase(id) for every id, but with a
+  // couple of batched queries instead of one request per match.
+  async syncAnalysisEventsForMatchesFromSupabase(matchIds: string[]): Promise<void> {
+    const byMatch = await getAnalysisEventsForMatchesFromSupabase(matchIds);
+    if (!byMatch) {
+      await Promise.all(matchIds.map((id) => this.syncAnalysisEventsFromSupabase(id)));
+      return;
+    }
+    byMatch.forEach((evs, matchId) => {
+      if (evs.length > 0) this.saveNormalizedEvents(evs, false, matchId);
+    });
+  },
+
+  // Re-syncs analyses only for the given matches (null = all). Used by Realtime listeners
+  // so one change doesn't re-download every analysis and event of every match.
+  async syncAnalysesForMatchesFromSupabase(matchIds: string[] | null): Promise<MatchAnalysis[]> {
+    if (!matchIds) return this.syncAnalysesFromSupabase();
+    for (const id of matchIds) {
+      await this.syncAnalysesFromSupabase(id);
+    }
+    return this.getAnalyses();
+  },
+
   saveNormalizedEvents(newEvents: NormalizedEvent[], replaceMatchEvents = false, overrideMatchId?: string): void {
     const targetMatchId = overrideMatchId || newEvents[0]?.match_id;
     let allEvents = getFromStorage<NormalizedEvent[]>(STORAGE_KEYS.EVENTS, []);
@@ -944,6 +968,16 @@ export const dbStore = {
   async syncActiveSessionFromSupabase(matchId?: string): Promise<ActiveBotoneraSession | null> {
     const remoteSession = await getAnalysisSessionFromSupabase(matchId);
     if (remoteSession) {
+      // The remote row is pushed throttled (every ~30s), so a local copy of the same match
+      // that was updated later holds fresher values (e.g. a just-edited period start).
+      const local = this.getActiveBotoneraSession();
+      if (
+        local &&
+        local.selectedMatchId === remoteSession.selectedMatchId &&
+        (local.lastUpdatedTimestamp || 0) > (remoteSession.lastUpdatedTimestamp || 0)
+      ) {
+        return local;
+      }
       setToStorage(STORAGE_KEYS.BOTONERA_ACTIVE_SESSION, remoteSession);
       return remoteSession;
     }

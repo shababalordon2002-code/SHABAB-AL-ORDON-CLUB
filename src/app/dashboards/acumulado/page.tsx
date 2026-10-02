@@ -14,6 +14,7 @@ import { CategoryChart } from '@/components/dashboards/viz/CategoryChart';
 import { TeamLogo } from '@/components/player/PlayerBadge';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { createClient } from '@/lib/supabase/client';
+import { createMatchChangeBatcher } from '@/lib/supabase/egress';
 
 const STORAGE_KEY = 'sao_cumulative_dashboard_widgets_v1';
 
@@ -66,7 +67,7 @@ function CumulativeDashboardContent() {
           dbStore.syncBotoneraTemplatesFromSupabase?.(),
         ]);
         const allMatches = dbStore.getMatches();
-        await Promise.all(allMatches.map((m) => dbStore.syncAnalysisEventsFromSupabase(m.id)));
+        await dbStore.syncAnalysisEventsForMatchesFromSupabase(allMatches.map((m) => m.id));
         loadData();
       } catch {
         loadData();
@@ -74,21 +75,36 @@ function CumulativeDashboardContent() {
     };
     syncAll();
 
+    // Live updates only re-download the matches that changed (full sync if unknown).
     const supabase = createClient();
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-    const debouncedSync = () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(syncAll, 1500);
-    };
+    let matchesChanged = false;
+    const batcher = createMatchChangeBatcher(async (matchIds) => {
+      if (!matchIds) return syncAll();
+      const refreshMatches = matchesChanged;
+      matchesChanged = false;
+      try {
+        await Promise.all([
+          refreshMatches ? dbStore.syncMatchesFromSupabase?.() : null,
+          dbStore.syncAnalysesForMatchesFromSupabase(matchIds),
+        ]);
+        await dbStore.syncAnalysisEventsForMatchesFromSupabase(matchIds);
+      } catch {
+        // fall through with local data
+      }
+      loadData();
+    }, 1500);
 
     const channel = supabase
       .channel(`dashboards-acumulado-live:${Math.random().toString(36).substring(2, 9)}_${Date.now()}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'match_analyses' }, debouncedSync)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, debouncedSync)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'match_analyses' }, (p: any) => batcher.push('match_analyses', p))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, (p: any) => {
+        matchesChanged = true;
+        batcher.push('matches', p);
+      })
       .subscribe();
 
     return () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
+      batcher.cancel();
       supabase.removeChannel(channel);
     };
   }, []);

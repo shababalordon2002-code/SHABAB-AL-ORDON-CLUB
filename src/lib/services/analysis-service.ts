@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/client';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { MatchAnalysis, NormalizedEvent } from '@/types';
+import { ANALYSIS_PRESERVE_COLUMNS, MATCH_PRESERVE_COLUMNS, isNoOpUpdate, selectWithFallback } from '@/lib/supabase/egress';
 import { rowToNormalizedEvent, getAnalysisVideosMapFromSupabase, getAnalysisVideoFromSupabase, upsertAnalysisVideoToSupabase } from '@/lib/services/botonera-service';
 
 // Fetch all Match Analyses (or filtered by matchId) from Supabase with full events reconciliation
@@ -190,16 +191,16 @@ export async function saveAnalysisToSupabase(
     let existingMatch: any = null;
     let existingVideo: Awaited<ReturnType<typeof getAnalysisVideoFromSupabase>> = null;
     try {
-      const { data: exA } = await supabase
-        .from('match_analyses')
-        .select('*')
-        .or(`id.eq.${targetId},match_id.eq.${analysis.match_id}`);
+      const { data: exA } = await selectWithFallback(
+        (cols) => supabase.from('match_analyses').select(cols).or(`id.eq.${targetId},match_id.eq.${analysis.match_id}`),
+        ANALYSIS_PRESERVE_COLUMNS
+      );
       if (exA && exA.length > 0) existingAn = exA[0];
 
-      const { data: exM } = await supabase
-        .from('matches')
-        .select('*')
-        .eq('id', analysis.match_id);
+      const { data: exM } = await selectWithFallback(
+        (cols) => supabase.from('matches').select(cols).eq('id', analysis.match_id),
+        MATCH_PRESERVE_COLUMNS
+      );
       if (exM && exM.length > 0) existingMatch = exM[0];
 
       existingVideo = await getAnalysisVideoFromSupabase(analysis.match_id);
@@ -460,14 +461,18 @@ export async function saveAnalysisToSupabase(
           away_lineup: resolvedAwayLineup,
           updated_at: new Date().toISOString(),
         };
-        let { error: mUpdateErr } = await supabase
-          .from('matches')
-          .update(matchUpdatePayload)
-          .eq('id', analysis.match_id);
+        // Skip the write when the match already holds these exact values: a no-op update
+        // would still broadcast via Realtime and make every open client re-sync.
+        if (!isNoOpUpdate(existingMatch, matchUpdatePayload)) {
+          let { error: mUpdateErr } = await supabase
+            .from('matches')
+            .update(matchUpdatePayload)
+            .eq('id', analysis.match_id);
 
-        if (mUpdateErr && mUpdateErr.message.includes('period_adjustments')) {
-          delete matchUpdatePayload.period_adjustments;
-          await supabase.from('matches').update(matchUpdatePayload).eq('id', analysis.match_id);
+          if (mUpdateErr && mUpdateErr.message.includes('period_adjustments')) {
+            delete matchUpdatePayload.period_adjustments;
+            await supabase.from('matches').update(matchUpdatePayload).eq('id', analysis.match_id);
+          }
         }
       } catch (syncErr) {
         console.warn('Could not sync video settings to matches table in Supabase:', syncErr);

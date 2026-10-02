@@ -23,9 +23,11 @@ import {
   RotateCcw,
   RefreshCw,
   UploadCloud,
+  ListVideo,
+  Square,
 } from 'lucide-react';
 import { NormalizedEvent, BotoneraButton, Player, Match } from '@/types';
-import { getButtonColorHex } from './BotoneraPanelEditor';
+import { getEventColorHex } from './BotoneraVideoTimeline';
 import { BotoneraEventModal } from './BotoneraEventModal';
 import { TeamLogo } from '@/components/player/PlayerBadge';
 import { dbStore } from '@/lib/store/db-store';
@@ -53,6 +55,14 @@ interface BotoneraEventLogProps {
   match?: Match | null;
   /** Period video offsets recorded or edited in live session */
   periodVideoOffsets?: Record<number, number>;
+  /** Mid-period clock adjustments, so the "Vid:" time matches the real video position */
+  periodAdjustments?: Record<number, { matchTimeSec: number; videoTimeSec: number }>;
+  /** Plays the given events one after another in the main video (filtered list, in match order) */
+  onPlayAll?: (events: NormalizedEvent[]) => void;
+  /** Stops the running "Reproducir todo" playlist */
+  onStopPlayAll?: () => void;
+  /** Event currently being reproduced by the playlist / timeline (highlighted row) */
+  playingEventId?: string | null;
 }
 
 export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
@@ -71,9 +81,15 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
   maxHeightClass,
   match = null,
   periodVideoOffsets,
+  periodAdjustments,
+  onPlayAll,
+  onStopPlayAll,
+  playingEventId = null,
 }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [selectedEventName, setSelectedEventName] = useState<string>('all');
+  const [selectedTeam, setSelectedTeam] = useState<string>('all');
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
   // Fila desplegada: categoría, coordenadas y demás detalles solo al hacer clic
   const [expandedEventId, setExpandedEventId] = useState<string | null>(null);
@@ -290,8 +306,10 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
       (e.outcome && e.outcome.toLowerCase().includes(q));
 
     const matchesCategory = selectedCategory === 'all' || e.category === selectedCategory;
+    const matchesEventName = selectedEventName === 'all' || (e.event_type || e.category) === selectedEventName;
+    const matchesTeam = selectedTeam === 'all' || (e.team_name || '') === selectedTeam;
 
-    return matchesSearch && matchesCategory;
+    return matchesSearch && matchesCategory && matchesEventName && matchesTeam;
   });
 
   // Sort events: default "desc" (más reciente a más lejano por período y tiempo)
@@ -337,14 +355,7 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
   };
 
   /** Color del botón que generó el evento, para pintar la fila igual que la botonera */
-  const getEventColor = (evt: NormalizedEvent): string => {
-    const stored = evt.metadata?.buttonColor;
-    if (typeof stored === 'string' && stored) return getButtonColorHex(stored);
-    const match = buttons.find(
-      (b) => b.name === evt.event_type || b.name === evt.category || b.category === evt.category
-    );
-    return getButtonColorHex(match?.color || 'emerald');
-  };
+  const getEventColor = (evt: NormalizedEvent): string => getEventColorHex(evt, buttons);
 
   const formatMinSec = (timestampSec: number | null) => {
     if (timestampSec === null) return '--:--';
@@ -354,6 +365,25 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
   };
 
   const categoriesList = Array.from(new Set(events.map((e) => e.category)));
+  const eventNamesList = Array.from(new Set(events.map((e) => e.event_type || e.category).filter(Boolean))).sort();
+  const teamsList = Array.from(new Set(events.map((e) => e.team_name).filter((t): t is string => !!t)));
+
+  const hasAnyVideoTiming = Boolean(
+    (periodVideoOffsets && Object.keys(periodVideoOffsets).length > 0) ||
+    (match && (match.p1_video_start_time != null || match.p2_video_start_time != null))
+  );
+
+  // "Reproducir todo": la lista filtrada siempre en orden de partido (1ª parte → 2ª, minuto a minuto)
+  const handlePlayAll = () => {
+    if (!onPlayAll || filteredEvents.length === 0) return;
+    const chronological = [...filteredEvents].sort((a, b) => {
+      const pa = a.period || 1;
+      const pb = b.period || 1;
+      if (pa !== pb) return pa - pb;
+      return (a.timestamp ?? 0) - (b.timestamp ?? 0);
+    });
+    onPlayAll(chronological);
+  };
 
   // Start Editing an Event
   const handleStartEdit = (evt: NormalizedEvent) => {
@@ -457,6 +487,65 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
           ))}
         </select>
 
+        <select
+          value={selectedEventName}
+          onChange={(e) => setSelectedEventName(e.target.value)}
+          className="bg-slate-900 text-xs text-slate-300 font-semibold px-3 py-1.5 rounded-xl border border-slate-800 focus:outline-none"
+          title="Filtrar por evento (botón pulsado)"
+        >
+          <option value="all">Todos los eventos</option>
+          {eventNamesList.map((name) => (
+            <option key={name} value={name}>
+              {name} ({events.filter((e) => (e.event_type || e.category) === name).length})
+            </option>
+          ))}
+        </select>
+
+        {teamsList.length > 0 && (
+          <select
+            value={selectedTeam}
+            onChange={(e) => setSelectedTeam(e.target.value)}
+            className="bg-slate-900 text-xs text-slate-300 font-semibold px-3 py-1.5 rounded-xl border border-slate-800 focus:outline-none"
+            title="Filtrar por equipo"
+          >
+            <option value="all">Ambos equipos</option>
+            {teamsList.map((team) => (
+              <option key={team} value={team}>
+                {team}
+              </option>
+            ))}
+          </select>
+        )}
+
+        {onPlayAll && (
+          playingEventId && onStopPlayAll ? (
+            <button
+              type="button"
+              onClick={onStopPlayAll}
+              className="bg-red-950/60 text-xs text-red-200 font-bold px-3 py-1.5 rounded-xl border border-red-800/60 hover:bg-red-900/70 transition flex items-center gap-1.5 shrink-0 cursor-pointer"
+              title="Detener la reproducción en cadena"
+            >
+              <Square className="w-3.5 h-3.5 text-red-400" />
+              <span>Detener</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handlePlayAll}
+              disabled={filteredEvents.length === 0 || !hasAnyVideoTiming}
+              className="bg-emerald-600 text-xs text-emerald-950 font-black px-3 py-1.5 rounded-xl border border-emerald-500 hover:bg-emerald-500 transition flex items-center gap-1.5 shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              title={
+                hasAnyVideoTiming
+                  ? 'Reproducir en el vídeo, uno detrás de otro, todos los eventos de la lista filtrada'
+                  : 'Marca el inicio de las partes en el vídeo para poder reproducir los eventos'
+              }
+            >
+              <ListVideo className="w-3.5 h-3.5" />
+              <span>Reproducir todo ({filteredEvents.length})</span>
+            </button>
+          )
+        )}
+
         {/* Sort order toggle button */}
         <button
           type="button"
@@ -508,7 +597,8 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
                 const color = getEventColor(evt);
                 const descriptors = getDescriptors(evt);
                 const isExpanded = expandedEventId === evt.event_id;
-                const vidSec = calculateEventVideoTime(evt, match, periodVideoOffsets, 0);
+                const vidSec = calculateEventVideoTime(evt, match, periodVideoOffsets, 0, periodAdjustments);
+                const isPlaying = evt.event_id === playingEventId;
                 const vidTimeStr = formatVideoTime(vidSec);
                 const hasVideoTiming = Boolean(
                   (periodVideoOffsets && Object.keys(periodVideoOffsets).length > 0) ||
@@ -521,8 +611,8 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
                     <tr
                       onClick={() => setExpandedEventId(isExpanded ? null : evt.event_id)}
                       title="Clic para ver categoría, coordenadas y detalles"
-                      className="cursor-pointer transition hover:brightness-125"
-                      style={{ backgroundColor: `${color}1f` }}
+                      className={`cursor-pointer transition hover:brightness-125 ${isPlaying ? 'outline outline-2 outline-white/80 -outline-offset-2' : ''}`}
+                      style={{ backgroundColor: isPlaying ? `${color}55` : `${color}1f` }}
                     >
                       <td
                         className="p-2.5 font-mono font-bold text-slate-100"

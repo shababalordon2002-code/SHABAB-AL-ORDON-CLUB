@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/client';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { SESSION_PRESERVE_COLUMNS, MATCH_PRESERVE_COLUMNS, isNoOpUpdate, selectWithFallback } from '@/lib/supabase/egress';
 import { BotoneraTemplate, ActiveBotoneraSession, NormalizedEvent } from '@/types';
 
 // ==================== SYNC RETRY HELPER ====================
@@ -184,6 +185,11 @@ export async function deleteBotoneraTemplateFromSupabase(templateId: string): Pr
 
 // ==================== ONGOING ANALYSIS SESSIONS IN SUPABASE ====================
 
+// Light column set for session reads (no `events` blob). Must only list columns that exist
+// in the base schema (migration 0002 + 0009); see getAnalysisSessionFromSupabase.
+const SESSION_LIGHT_COLUMNS =
+  'match_id, period, timer_seconds, is_timer_running, start_timestamp, last_updated_timestamp, is_configured, video_type, video_source_name, video_url, p1_video_start_seconds, p2_video_start_seconds, botonera_template_id, home_lineup, away_lineup, updated_at';
+
 // Fetch active analysis session for a match (or latest active session) from Supabase
 export async function getAnalysisSessionFromSupabase(
   matchId?: string,
@@ -192,19 +198,25 @@ export async function getAnalysisSessionFromSupabase(
   try {
     const supabase = createClient();
     // Optimize egress: do not download massive events blob unless specifically needed
-    const columns = includeFullEvents
-      ? '*'
-      : 'id, match_id, period, timer_seconds, is_timer_running, start_timestamp, last_updated_timestamp, is_configured, analyst_name, match_title, video_type, video_source_name, video_url, p1_video_start_seconds, p2_video_start_seconds, period_adjustments, botonera_template_id, updated_at';
+    // Only columns that exist in every schema version (analyst name, match title and
+    // period adjustments are also stored inside home_lineup); period_adjustments is
+    // tried first and dropped if migration 0014 hasn't been applied.
+    const buildQuery = (columns: string) => {
+      let query = supabase.from('analysis_sessions').select(columns);
+      if (matchId) {
+        query = query.eq('match_id', matchId);
+      } else {
+        query = query.order('updated_at', { ascending: false }).limit(1);
+      }
+      return query;
+    };
 
-    let query = supabase.from('analysis_sessions').select(columns);
-
-    if (matchId) {
-      query = query.eq('match_id', matchId);
-    } else {
-      query = query.order('updated_at', { ascending: false }).limit(1);
+    let { data, error }: { data: any[] | null; error: any } = await buildQuery(
+      includeFullEvents ? '*' : `${SESSION_LIGHT_COLUMNS}, period_adjustments`
+    );
+    if (error && !includeFullEvents && /period_adjustments/.test(error.message || '')) {
+      ({ data, error } = await buildQuery(SESSION_LIGHT_COLUMNS));
     }
-
-    const { data, error } = await query;
     if (error || !data || data.length === 0) {
       if (error && !error.message.includes('relation "public.analysis_sessions" does not exist')) {
         console.warn('Supabase fetch analysis_sessions warning:', error.message);
@@ -262,10 +274,12 @@ export async function getAnalysisSessionFromSupabase(
 export async function getAllActiveSessionsFromSupabase(): Promise<Record<string, ActiveBotoneraSession>> {
   try {
     const supabase = createClient();
-    const { data, error } = await supabase
-      .from('analysis_sessions')
-      .select('id, match_id, period, timer_seconds, is_timer_running, start_timestamp, last_updated_timestamp, is_configured, analyst_name, match_title, video_type, video_source_name, video_url, p1_video_start_seconds, p2_video_start_seconds, period_adjustments, botonera_template_id, updated_at')
-      .order('updated_at', { ascending: false });
+    const buildQuery = (columns: string) =>
+      supabase.from('analysis_sessions').select(columns).order('updated_at', { ascending: false });
+    let { data, error }: { data: any[] | null; error: any } = await buildQuery(`${SESSION_LIGHT_COLUMNS}, period_adjustments`);
+    if (error && /period_adjustments/.test(error.message || '')) {
+      ({ data, error } = await buildQuery(SESSION_LIGHT_COLUMNS));
+    }
 
     if (error || !data) {
       if (error && !error.message.includes('relation "public.analysis_sessions" does not exist')) {
@@ -285,8 +299,8 @@ export async function getAllActiveSessionsFromSupabase(): Promise<Record<string,
         lastUpdatedTimestamp: row.last_updated_timestamp ? Number(row.last_updated_timestamp) : Date.now(),
         events: [],
         isConfigured: row.is_configured ?? true,
-        analystName: row.analyst_name || null,
-        matchTitle: row.match_title || null,
+        analystName: row.analyst_name || row.home_lineup?._analyst_name || null,
+        matchTitle: row.match_title || row.home_lineup?._match_title || null,
         videoType: row.video_type || null,
         videoSourceName: row.video_source_name || null,
         videoUrl: row.video_url || null,
@@ -294,7 +308,7 @@ export async function getAllActiveSessionsFromSupabase(): Promise<Record<string,
         p2VideoStartSeconds: row.p2_video_start_seconds ?? null,
         periodAdjustments: typeof row.period_adjustments === 'string'
           ? JSON.parse(row.period_adjustments)
-          : (row.period_adjustments || null),
+          : (row.period_adjustments || row.home_lineup?._period_adjustments || null),
         botoneraTemplateId: row.botonera_template_id || null,
         home_lineup: null,
         away_lineup: null,
@@ -332,16 +346,16 @@ export async function saveAnalysisSessionToSupabase(session: ActiveBotoneraSessi
     let existingSess: any = null;
     let existingMatch: any = null;
     try {
-      const { data: exS } = await supabase
-        .from('analysis_sessions')
-        .select('*')
-        .eq('match_id', session.selectedMatchId);
+      const { data: exS } = await selectWithFallback(
+        (cols) => supabase.from('analysis_sessions').select(cols).eq('match_id', session.selectedMatchId),
+        SESSION_PRESERVE_COLUMNS
+      );
       if (exS && exS.length > 0) existingSess = exS[0];
 
-      const { data: exM } = await supabase
-        .from('matches')
-        .select('*')
-        .eq('id', session.selectedMatchId);
+      const { data: exM } = await selectWithFallback(
+        (cols) => supabase.from('matches').select(cols).eq('id', session.selectedMatchId),
+        MATCH_PRESERVE_COLUMNS
+      );
       if (exM && exM.length > 0) existingMatch = exM[0];
     } catch (err) {
       console.warn('Could not query existing session/match for video preservation:', err);
@@ -385,7 +399,10 @@ export async function saveAnalysisSessionToSupabase(session: ActiveBotoneraSessi
       is_timer_running: session.isTimerRunning,
       start_timestamp: session.startTimestamp,
       last_updated_timestamp: session.lastUpdatedTimestamp || Date.now(),
-      events: session.events || [],
+      // Events are never read back from analysis_sessions (the source of truth is the
+      // analysis_events table, mirrored in match_analyses). Storing them here only made
+      // every timer heartbeat broadcast the whole events list via Realtime to all clients.
+      events: [],
       is_configured: session.isConfigured ?? true,
       video_type: resolvedVideoType,
       video_source_name: resolvedVideoSourceName,
@@ -436,14 +453,19 @@ export async function saveAnalysisSessionToSupabase(session: ActiveBotoneraSessi
           away_lineup: resolvedAwayLineup,
           updated_at: new Date().toISOString(),
         };
-        let { error: mErr } = await supabase
-          .from('matches')
-          .update(matchPayload)
-          .eq('id', session.selectedMatchId);
+        // Skip the write when the match already holds these exact values (e.g. the 30s
+        // timer heartbeat): a no-op update would still broadcast via Realtime and make
+        // every open client re-sync.
+        if (!isNoOpUpdate(existingMatch, matchPayload)) {
+          let { error: mErr } = await supabase
+            .from('matches')
+            .update(matchPayload)
+            .eq('id', session.selectedMatchId);
 
-        if (mErr && mErr.message.includes('period_adjustments')) {
-          delete matchPayload.period_adjustments;
-          await supabase.from('matches').update(matchPayload).eq('id', session.selectedMatchId);
+          if (mErr && mErr.message.includes('period_adjustments')) {
+            delete matchPayload.period_adjustments;
+            await supabase.from('matches').update(matchPayload).eq('id', session.selectedMatchId);
+          }
         }
       } catch (mErr) {
         console.warn('Could not sync session video settings to matches table in Supabase:', mErr);
@@ -565,6 +587,50 @@ export async function getAnalysisEventsFromSupabase(matchId: string): Promise<No
   } catch (err: any) {
     console.warn('Could not fetch analysis events from Supabase:', err.message);
     return [];
+  }
+}
+
+// Fetch the live events of many matches in a few paginated queries (instead of one
+// query per match), grouped by match_id. Returns null on error so callers can fall back
+// to the per-match path.
+export async function getAnalysisEventsForMatchesFromSupabase(
+  matchIds: string[]
+): Promise<Map<string, NormalizedEvent[]> | null> {
+  const byMatch = new Map<string, NormalizedEvent[]>();
+  const ids = Array.from(new Set(matchIds.filter(Boolean)));
+  if (ids.length === 0) return byMatch;
+  try {
+    const supabase = createClient();
+    const PAGE = 1000;
+    // Chunk the id list so the URL stays short; page each chunk past PostgREST's row cap.
+    for (let c = 0; c < ids.length; c += 100) {
+      const chunk = ids.slice(c, c + 100);
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await supabase
+          .from('analysis_events')
+          .select('*')
+          .in('match_id', chunk)
+          .order('created_at', { ascending: true })
+          .order('event_id', { ascending: true })
+          .range(from, from + PAGE - 1);
+        if (error) {
+          if (!error.message.includes('relation "public.analysis_events" does not exist')) {
+            console.warn('Supabase batch fetch analysis_events warning:', error.message);
+          }
+          return null;
+        }
+        (data || []).forEach((r: any) => {
+          const list = byMatch.get(r.match_id) || [];
+          list.push(rowToNormalizedEvent(r));
+          byMatch.set(r.match_id, list);
+        });
+        if (!data || data.length < PAGE) break;
+      }
+    }
+    return byMatch;
+  } catch (err: any) {
+    console.warn('Could not batch fetch analysis events from Supabase:', err?.message || err);
+    return null;
   }
 }
 
@@ -1087,6 +1153,12 @@ export async function upsertAnalysisVideoToSupabase(
       .maybeSingle();
 
     const merged = existing ? { ...existing, ...row } : row;
+
+    // Nothing actually changed (autosave re-sending the same config): skip the write so
+    // it doesn't broadcast via Realtime and trigger a re-sync on every open client.
+    if (existing && isNoOpUpdate(existing, merged, ['updated_at', 'updated_by', 'updated_by_name'])) {
+      return true;
+    }
 
     const { error } = await supabase.from('analysis_videos').upsert([merged], { onConflict: 'match_id' });
     if (error) {

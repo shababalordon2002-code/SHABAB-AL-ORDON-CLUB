@@ -8,6 +8,7 @@ import { BotoneraTemplate, Match, MatchDashboard, NormalizedEvent } from '@/type
 import { StandardMatchDashboard } from '@/components/dashboards/StandardMatchDashboard';
 
 import { createClient } from '@/lib/supabase/client';
+import { realtimeMatchId } from '@/lib/supabase/egress';
 import { subscribeToAnalysisEvents } from '@/lib/services/botonera-service';
 
 function DashboardDetailContent({ params }: { params: Promise<{ id: string }> }) {
@@ -125,16 +126,20 @@ function DashboardDetailContent({ params }: { params: Promise<{ id: string }> })
     // Realtime push: when match metadata or dashboards are updated
     const supabase = createClient();
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-    const debouncedReload = () => {
+    // Reload only when the change concerns this dashboard's match (or can't be attributed),
+    // instead of on every change to any match.
+    const debouncedReload = (table: string) => (payload: any) => {
+      const changedMatchId = realtimeMatchId(table, payload);
+      if (changedMatchId && targetMatchId && changedMatchId !== targetMatchId) return;
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(loadDashboardData, 500);
     };
 
     const channel = supabase
       .channel(`dashboard-detail-live-${dashboardId}:${Math.random().toString(36).substring(2, 9)}_${Date.now()}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'match_analyses' }, debouncedReload)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'match_dashboards' }, debouncedReload)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, debouncedReload)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'match_analyses' }, debouncedReload('match_analyses'))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'match_dashboards' }, debouncedReload('match_dashboards'))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, debouncedReload('matches'))
       .subscribe();
 
     return () => {

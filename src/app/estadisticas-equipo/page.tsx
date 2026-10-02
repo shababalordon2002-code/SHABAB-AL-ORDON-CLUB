@@ -118,7 +118,7 @@ export default function TeamStatsPage() {
         dbStore.syncAnalysesFromSupabase?.(),
         dbStore.syncBotoneraTemplatesFromSupabase?.(),
       ]);
-      await Promise.all(dbStore.getMatches().map((m) => dbStore.syncAnalysisEventsFromSupabase(m.id)));
+      await dbStore.syncAnalysisEventsForMatchesFromSupabase(dbStore.getMatches().map((m) => m.id));
     } catch (err) {
       console.warn('Estadísticas equipo: sincronización parcial', err);
     }
