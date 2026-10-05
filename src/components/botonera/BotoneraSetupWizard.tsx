@@ -18,6 +18,7 @@ import {
   X,
 } from 'lucide-react';
 import { Match, BotoneraTemplate, BotoneraProjectVideoType } from '@/types';
+import { TeamLogo } from '@/components/player/PlayerBadge';
 
 interface BotoneraSetupWizardProps {
   matches: Match[];
@@ -287,9 +288,7 @@ export const BotoneraSetupWizard: React.FC<BotoneraSetupWizardProps> = ({
                         {/* Teams */}
                         <div className="flex items-center gap-2 font-bold text-xs">
                           <div className="flex items-center gap-1.5 truncate">
-                            {m.home_team_logo && (
-                              <img src={m.home_team_logo} alt="" className="w-4 h-4 object-contain rounded bg-slate-950 p-0.5 shrink-0" />
-                            )}
+                            <TeamLogo teamName={m.home_team} logoUrl={m.home_team_logo} size={18} />
                             <span className={isShababHome ? 'text-amber-400 font-extrabold' : 'text-slate-100'}>{m.home_team}</span>
                           </div>
 
@@ -298,9 +297,7 @@ export const BotoneraSetupWizard: React.FC<BotoneraSetupWizardProps> = ({
                           </span>
 
                           <div className="flex items-center gap-1.5 truncate">
-                            {m.away_team_logo && (
-                              <img src={m.away_team_logo} alt="" className="w-4 h-4 object-contain rounded bg-slate-950 p-0.5 shrink-0" />
-                            )}
+                            <TeamLogo teamName={m.away_team} logoUrl={m.away_team_logo} size={18} />
                             <span className={isShababAway ? 'text-amber-400 font-extrabold' : 'text-slate-100'}>{m.away_team}</span>
                           </div>
                         </div>

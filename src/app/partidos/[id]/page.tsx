@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, use } from 'react';
 import Link from 'next/link';
+import { requestAdminPassword } from '@/components/auth/AdminPasswordPrompt';
 import {
   Trophy,
   UploadCloud,
@@ -93,11 +94,11 @@ export default function PartidoDetailPage({ params }: { params: Promise<{ id: st
     return () => clearInterval(interval);
   }, [matchId]);
 
-  const handleDeleteAnalysisCard = (analysisId: string) => {
-    if (confirm('¿Estás seguro de eliminar esta tarjeta de análisis?')) {
-      dbStore.deleteAnalysis(analysisId);
-      setAnalyses((prev) => prev.filter((a) => a.id !== analysisId));
-    }
+  const handleDeleteAnalysisCard = async (analysisId: string) => {
+    if (!confirm('¿Estás seguro de eliminar esta tarjeta de análisis?')) return;
+    if (!(await requestAdminPassword())) return;
+    dbStore.deleteAnalysis(analysisId);
+    setAnalyses((prev) => prev.filter((a) => a.id !== analysisId));
   };
 
   const handleUpdateAnalysisCard = (updated: MatchAnalysis) => {

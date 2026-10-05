@@ -22,6 +22,7 @@ import {
   Activity,
 } from 'lucide-react';
 import { dbStore, DEFAULT_DASHBOARD_CONFIG } from '@/lib/store/db-store';
+import { requestAdminPassword } from '@/components/auth/AdminPasswordPrompt';
 import { createClient } from '@/lib/supabase/client';
 import { createMatchChangeBatcher } from '@/lib/supabase/egress';
 import {
@@ -41,6 +42,7 @@ import { AdminDashboardConfigModal } from '@/components/dashboards/AdminDashboar
 import { TacticalLineupPitch } from '@/components/pitch/TacticalLineupPitch';
 import { calculateMatchScoresFromEvents } from '@/lib/analytics/dashboard-engine';
 import { isSessionLive } from '@/lib/services/botonera-service';
+import { TeamLogo } from '@/components/player/PlayerBadge';
 
 import { getYouTubeThumbnailUrl } from '@/lib/analytics/video-utils';
 
@@ -222,7 +224,8 @@ export default function DashboardsPage() {
     load();
   };
 
-  const handleDeleteAnalysis = (analysisId: string) => {
+  const handleDeleteAnalysis = async (analysisId: string) => {
+    if (!(await requestAdminPassword())) return;
     dbStore.deleteAnalysis(analysisId);
     if (selectedMatchForAnalysis) {
       const updatedList = dbStore.getAnalyses(selectedMatchForAnalysis.match.id);
@@ -465,21 +468,13 @@ export default function DashboardsPage() {
                       );
                       return (
                         <h2 className="text-sm sm:text-base font-extrabold text-white truncate flex items-center gap-2">
-                          <img 
-                            src={block.match.home_team.toLowerCase().includes('shabab') || block.match.home_team.toLowerCase().includes('ordon') ? '/logo.png' : (block.match.home_team_logo || '/logo.png')} 
-                            alt="" 
-                            className="w-4.5 h-4.5 object-contain" 
-                          />
+                          <TeamLogo teamName={block.match.home_team} logoUrl={block.match.home_team_logo} size={20} />
                           <span>{block.match.home_team}</span>
                           <span className="px-1.5 py-0.5 rounded bg-slate-950 text-amber-400 font-mono text-xs border border-slate-800 font-bold">
                             {blockScores.homeScore} - {blockScores.awayScore}
                           </span>
                           <span>{block.match.away_team}</span>
-                          <img 
-                            src={block.match.away_team.toLowerCase().includes('shabab') || block.match.away_team.toLowerCase().includes('ordon') ? '/logo.png' : (block.match.away_team_logo || '/logo.png')} 
-                            alt="" 
-                            className="w-4.5 h-4.5 object-contain" 
-                          />
+                          <TeamLogo teamName={block.match.away_team} logoUrl={block.match.away_team_logo} size={20} />
                         </h2>
                       );
                     })()}

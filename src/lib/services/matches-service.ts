@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/client';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { Match } from '@/types';
+import { Match, TeamLineupConfig } from '@/types';
+import { isLiveLineupLocked } from '@/lib/analyst-personal-state';
 import { isMatchOnOrAfterSept2026 } from '@/lib/utils/date-utils';
 import { getAnalysisVideosMapFromSupabase, upsertAnalysisVideoToSupabase } from './botonera-service';
 
@@ -84,6 +85,10 @@ export async function saveMatchesToSupabase(matches: Match[]): Promise<boolean> 
   const filteredMatches = (matches || []).filter(m => isMatchOnOrAfterSept2026(m.date));
   if (filteredMatches.length === 0) return true;
   matches = filteredMatches;
+
+  // Checked before any await: matches whose lineups are personal to an open live session
+  // (see analyst-personal-state) are saved without their lineup columns.
+  const lineupLockedIds = new Set(matches.filter((m) => isLiveLineupLocked(m.id)).map((m) => m.id));
 
   const mySeqs = new Map<string, number>();
   matches.forEach((m) => {
@@ -186,26 +191,44 @@ export async function saveMatchesToSupabase(matches: Match[]): Promise<boolean> 
     const freshRows = rows.filter((row) => _matchSaveSeq[row.id] === mySeqs.get(row.id));
     if (freshRows.length === 0) return true;
 
-    let { error } = await supabase
-      .from('matches')
-      .upsert(freshRows, { onConflict: 'id' });
+    const upsertMatchRows = async (batch: Record<string, any>[]) => {
+      if (batch.length === 0) return null;
+      let { error } = await supabase
+        .from('matches')
+        .upsert(batch, { onConflict: 'id' });
 
-    // Esquema antiguo sin las columnas de vídeo/botonera/alineaciones → reintento sin ellas
-    if (error && /Could not find the '.+' column/.test(error.message)) {
-      console.warn(
-        `La tabla 'matches' de Supabase no tiene las columnas requeridas (${error.message}). ` +
-        'Ejecuta supabase/migrations/0009_add_lineups_to_matches_and_analyses.sql en el SQL Editor. ' +
-        'Mientras tanto se guarda el partido omitiendo las columnas no encontradas.'
-      );
+      // Esquema antiguo sin las columnas de vídeo/botonera/alineaciones → reintento sin ellas
+      if (error && /Could not find the '.+' column/.test(error.message)) {
+        console.warn(
+          `La tabla 'matches' de Supabase no tiene las columnas requeridas (${error.message}). ` +
+          'Ejecuta supabase/migrations/0009_add_lineups_to_matches_and_analyses.sql en el SQL Editor. ' +
+          'Mientras tanto se guarda el partido omitiendo las columnas no encontradas.'
+        );
 
-      const strippedRows = freshRows.map((row) => {
+        const strippedRows = batch.map((row) => {
+          const copy: Record<string, any> = { ...row };
+          OPTIONAL_MATCH_COLUMNS.forEach((col) => delete copy[col]);
+          return copy;
+        });
+
+        ({ error } = await supabase.from('matches').upsert(strippedRows, { onConflict: 'id' }));
+      }
+      return error;
+    };
+
+    // Rows without lineups go in their own upsert: in a mixed batch PostgREST would write
+    // the missing columns as NULL instead of leaving them untouched.
+    const lockedRows = freshRows
+      .filter((row) => lineupLockedIds.has(row.id))
+      .map((row) => {
         const copy: Record<string, any> = { ...row };
-        OPTIONAL_MATCH_COLUMNS.forEach((col) => delete copy[col]);
+        delete copy.home_lineup;
+        delete copy.away_lineup;
         return copy;
       });
-
-      ({ error } = await supabase.from('matches').upsert(strippedRows, { onConflict: 'id' }));
-    }
+    const error =
+      (await upsertMatchRows(freshRows.filter((row) => !lineupLockedIds.has(row.id)))) ||
+      (await upsertMatchRows(lockedRows));
 
     if (error) {
       console.error('Error upserting matches to Supabase:', error.message);
@@ -256,6 +279,51 @@ export async function deleteMatchFromSupabase(matchId: string): Promise<boolean>
     return true;
   } catch (err: any) {
     console.error('Error deleting match from Supabase:', err.message);
+    return false;
+  }
+}
+
+// Saves only the given teams' lineups (the ones an analyst touched in a live session) to
+// matches and match_analyses, leaving the other team as it is. Keys starting with "_" stored
+// inside home_lineup (period adjustments / analyst fallbacks) are kept.
+export async function saveTeamLineupsToSupabase(
+  matchId: string,
+  lineups: { home_lineup?: TeamLineupConfig | null; away_lineup?: TeamLineupConfig | null }
+): Promise<boolean> {
+  const keys = (['home_lineup', 'away_lineup'] as const).filter((k) => k in lineups);
+  if (!matchId || keys.length === 0) return true;
+  try {
+    let supabase: any;
+    try {
+      supabase = createAdminClient();
+    } catch {
+      supabase = createClient();
+    }
+
+    const metaOf = (prev: any) =>
+      prev && typeof prev === 'object'
+        ? Object.fromEntries(Object.entries(prev).filter(([k]) => k.startsWith('_')))
+        : {};
+
+    let ok = true;
+    for (const [table, idColumn] of [['matches', 'id'], ['match_analyses', 'match_id']] as const) {
+      const { data: rows } = await supabase.from(table).select(`${idColumn}, home_lineup, away_lineup`).eq(idColumn, matchId);
+      const existing = rows && rows.length > 0 ? rows[0] : null;
+      if (!existing) continue;
+      const payload: Record<string, any> = { updated_at: new Date().toISOString() };
+      keys.forEach((k) => {
+        const lineup = lineups[k];
+        payload[k] = lineup ? { ...metaOf(existing[k]), ...lineup } : (Object.keys(metaOf(existing[k])).length > 0 ? metaOf(existing[k]) : null);
+      });
+      const { error } = await supabase.from(table).update(payload).eq(idColumn, matchId);
+      if (error) {
+        console.warn(`Could not save team lineups to ${table}:`, error.message);
+        ok = false;
+      }
+    }
+    return ok;
+  } catch (err: any) {
+    console.warn('Could not save team lineups to Supabase:', err?.message || err);
     return false;
   }
 }

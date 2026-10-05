@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 import { BotoneraButton, BotoneraTemplate } from '@/types';
 import { dbStore } from '@/lib/store/db-store';
+import { TeamLogo } from '@/components/player/PlayerBadge';
 import { BotoneraDashboardConfigModal } from './BotoneraDashboardConfigModal';
 
 interface BotoneraPanelEditorProps {
@@ -1174,11 +1175,7 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
             }`}
             title={`Fijar sólo a ${homeTeamName || 'Shabab Al Ordon Club'}`}
           >
-            {homeTeamLogo ? (
-              <img src={homeTeamLogo} alt="" className="w-3.5 h-3.5 object-contain rounded bg-slate-950 p-0.5" />
-            ) : (
-              <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
-            )}
+            <TeamLogo teamName={homeTeamName || 'Shabab Al Ordon Club'} logoUrl={homeTeamLogo} size={16} />
             <span className="truncate max-w-[160px]">{homeTeamName || 'Shabab Al Ordon Club'}</span>
           </button>
 
@@ -1192,11 +1189,7 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
             }`}
             title={`Fijar sólo a ${awayTeamName || 'Rival'}`}
           >
-            {awayTeamLogo ? (
-              <img src={awayTeamLogo} alt="" className="w-3.5 h-3.5 object-contain rounded bg-slate-950 p-0.5" />
-            ) : (
-              <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />
-            )}
+            <TeamLogo teamName={awayTeamName || 'Rival'} logoUrl={awayTeamLogo} size={16} />
             <span className="truncate max-w-[160px]">{awayTeamName || 'Rival'}</span>
           </button>
         </div>

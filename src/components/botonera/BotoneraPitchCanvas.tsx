@@ -10,7 +10,99 @@ export interface EventPitchMarker {
   startY: number | null;
   endX?: number | null;
   endY?: number | null;
+  outcome?: string | null;
+  player_number?: string | number | null;
+  player_name?: string | null;
+  color?: string | null;
   isSelected?: boolean;
+  curveType?: 'convex' | 'concave' | 'straight' | null;
+  cornerSide?: 'left' | 'right' | null;
+  period?: number | null;
+}
+
+export type PitchOutcomeShape = 'goal' | 'saved' | 'missed' | 'blocked' | 'other';
+
+export function getPitchOutcomeStyle(outcome?: string | null) {
+  const o = (outcome || '').toLowerCase().trim();
+  if (o.includes('gol') || o.includes('goal') || o.includes('tanto')) {
+    return {
+      type: 'goal' as PitchOutcomeShape,
+      label: 'Gol',
+      color: '#10b981',       // Emerald
+      stroke: '#ffffff',
+      ringColor: '#fbbf24',   // Gold ring
+      haloColor: 'rgba(16, 185, 129, 0.45)',
+      arrowMarker: 'url(#vector-arrow-emerald)',
+      textColor: '#ffffff',
+    };
+  }
+  if (
+    o.includes('parada') ||
+    o.includes('atajad') ||
+    o.includes('puerta') ||
+    o.includes('porter') ||
+    o.includes('poste') ||
+    o.includes('larguero') ||
+    o.includes('palo')
+  ) {
+    return {
+      type: 'saved' as PitchOutcomeShape,
+      label: 'A Puerta / Parada',
+      color: '#0284c7',       // Sky/Ocean Blue
+      stroke: '#ffffff',
+      ringColor: '#38bdf8',
+      haloColor: 'rgba(2, 132, 199, 0.45)',
+      arrowMarker: 'url(#vector-arrow-sky)',
+      textColor: '#ffffff',
+    };
+  }
+  if (
+    o.includes('fuera') ||
+    o.includes('desviad') ||
+    o.includes('fall') ||
+    o.includes('alto') ||
+    o.includes('ancho') ||
+    o.includes('miss')
+  ) {
+    return {
+      type: 'missed' as PitchOutcomeShape,
+      label: 'Fuera / Desviado',
+      color: '#ef4444',       // Red / Coral
+      stroke: '#ffffff',
+      ringColor: '#f87171',
+      haloColor: 'rgba(239, 68, 68, 0.45)',
+      arrowMarker: 'url(#vector-arrow-rose)',
+      textColor: '#ffffff',
+    };
+  }
+  if (
+    o.includes('bloque') ||
+    o.includes('tapon') ||
+    o.includes('rechaz') ||
+    o.includes('defens') ||
+    o.includes('cortad')
+  ) {
+    return {
+      type: 'blocked' as PitchOutcomeShape,
+      label: 'Bloqueado',
+      color: '#f59e0b',       // Amber / Gold
+      stroke: '#ffffff',
+      ringColor: '#fbbf24',
+      haloColor: 'rgba(245, 158, 11, 0.45)',
+      arrowMarker: 'url(#vector-arrow-amber)',
+      textColor: '#ffffff',
+    };
+  }
+  return {
+    type: 'other' as PitchOutcomeShape,
+    label: outcome || 'Acción',
+    color: '#f59e0b',
+    stroke: '#ffffff',
+    ringColor: '#fbbf24',
+    haloColor: 'rgba(245, 158, 11, 0.35)',
+    arrowMarker: 'url(#vector-arrow-amber)',
+    textColor: '#ffffff',
+  };
 }
 
 interface BotoneraPitchCanvasProps {
@@ -390,16 +482,39 @@ export const BotoneraPitchCanvas: React.FC<BotoneraPitchCanvasProps> = ({
                 <feMergeNode in="SourceGraphic" />
               </feMerge>
             </filter>
+            {/* Colored Outcome Arrow Markers */}
             <marker
-              id="vector-arrow"
+              id="vector-arrow-emerald"
               viewBox="0 0 10 10"
               refX="6"
               refY="5"
-              markerWidth="8"
-              markerHeight="8"
+              markerWidth="10"
+              markerHeight="10"
               orient="auto-start-reverse"
             >
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="#34d399" />
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#10b981" stroke="#ffffff" strokeWidth="1" />
+            </marker>
+            <marker
+              id="vector-arrow-sky"
+              viewBox="0 0 10 10"
+              refX="6"
+              refY="5"
+              markerWidth="10"
+              markerHeight="10"
+              orient="auto-start-reverse"
+            >
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#38bdf8" stroke="#ffffff" strokeWidth="1" />
+            </marker>
+            <marker
+              id="vector-arrow-rose"
+              viewBox="0 0 10 10"
+              refX="6"
+              refY="5"
+              markerWidth="10"
+              markerHeight="10"
+              orient="auto-start-reverse"
+            >
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#ef4444" stroke="#ffffff" strokeWidth="1" />
             </marker>
             <marker
               id="vector-arrow-amber"
@@ -424,27 +539,76 @@ export const BotoneraPitchCanvas: React.FC<BotoneraPitchCanvasProps> = ({
               <path d="M 0 0 L 10 5 L 0 10 z" fill="#ff0055" stroke="#ffffff" strokeWidth="1.5" />
             </marker>
 
-            {/* Heatmap Continuous Gradients & Blur Filters */}
+            {/* Heatmap Multi-layer Continuous Gradients & Blur Filters */}
             <radialGradient id="heat-blob-base" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#ef4444" stopOpacity="0.85" />
-              <stop offset="35%" stopColor="#f59e0b" stopOpacity="0.65" />
-              <stop offset="65%" stopColor="#10b981" stopOpacity="0.35" />
-              <stop offset="85%" stopColor="#06b6d4" stopOpacity="0.15" />
-              <stop offset="100%" stopColor="#06b6d4" stopOpacity="0" />
+              <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.75" />
+              <stop offset="35%" stopColor="#10b981" stopOpacity="0.5" />
+              <stop offset="70%" stopColor="#06b6d4" stopOpacity="0.25" />
+              <stop offset="90%" stopColor="#082f49" stopOpacity="0.08" />
+              <stop offset="100%" stopColor="#082f49" stopOpacity="0" />
+            </radialGradient>
+            <radialGradient id="heat-blob-mid" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#ef4444" stopOpacity="0.9" />
+              <stop offset="35%" stopColor="#f97316" stopOpacity="0.75" />
+              <stop offset="70%" stopColor="#f59e0b" stopOpacity="0.35" />
+              <stop offset="100%" stopColor="#f59e0b" stopOpacity="0" />
             </radialGradient>
             <radialGradient id="heat-blob-hot" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#ffffff" stopOpacity="0.95" />
-              <stop offset="25%" stopColor="#ef4444" stopOpacity="0.85" />
-              <stop offset="60%" stopColor="#f59e0b" stopOpacity="0.55" />
-              <stop offset="85%" stopColor="#10b981" stopOpacity="0.2" />
-              <stop offset="100%" stopColor="#022c22" stopOpacity="0" />
+              <stop offset="0%" stopColor="#ffffff" stopOpacity="0.98" />
+              <stop offset="25%" stopColor="#fef08a" stopOpacity="0.9" />
+              <stop offset="55%" stopColor="#ef4444" stopOpacity="0.65" />
+              <stop offset="85%" stopColor="#f97316" stopOpacity="0.2" />
+              <stop offset="100%" stopColor="#450a0a" stopOpacity="0" />
             </radialGradient>
+
+            {/* Left Corner Heatmap Gradients (Cyan / Blue palette) */}
+            <radialGradient id="heat-blob-left-base" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#06b6d4" stopOpacity="0.9" />
+              <stop offset="35%" stopColor="#3b82f6" stopOpacity="0.7" />
+              <stop offset="65%" stopColor="#0284c7" stopOpacity="0.35" />
+              <stop offset="85%" stopColor="#0369a1" stopOpacity="0.15" />
+              <stop offset="100%" stopColor="#0369a1" stopOpacity="0" />
+            </radialGradient>
+            <radialGradient id="heat-blob-left-hot" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#ffffff" stopOpacity="0.95" />
+              <stop offset="25%" stopColor="#38bdf8" stopOpacity="0.9" />
+              <stop offset="60%" stopColor="#06b6d4" stopOpacity="0.65" />
+              <stop offset="85%" stopColor="#3b82f6" stopOpacity="0.25" />
+              <stop offset="100%" stopColor="#082f49" stopOpacity="0" />
+            </radialGradient>
+
+            {/* Right Corner Heatmap Gradients (Orange / Amber / Red palette) */}
+            <radialGradient id="heat-blob-right-base" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#ef4444" stopOpacity="0.9" />
+              <stop offset="35%" stopColor="#f97316" stopOpacity="0.7" />
+              <stop offset="65%" stopColor="#f59e0b" stopOpacity="0.35" />
+              <stop offset="85%" stopColor="#ea580c" stopOpacity="0.15" />
+              <stop offset="100%" stopColor="#ea580c" stopOpacity="0" />
+            </radialGradient>
+            <radialGradient id="heat-blob-right-hot" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#ffffff" stopOpacity="0.95" />
+              <stop offset="25%" stopColor="#fbbf24" stopOpacity="0.9" />
+              <stop offset="60%" stopColor="#f97316" stopOpacity="0.65" />
+              <stop offset="85%" stopColor="#ef4444" stopOpacity="0.25" />
+              <stop offset="100%" stopColor="#450a0a" stopOpacity="0" />
+            </radialGradient>
+
             <radialGradient id="heat-blob-selected" cx="50%" cy="50%" r="50%">
               <stop offset="0%" stopColor="#ffffff" stopOpacity="1" />
               <stop offset="30%" stopColor="#ff0055" stopOpacity="0.9" />
               <stop offset="70%" stopColor="#ff0055" stopOpacity="0.4" />
               <stop offset="100%" stopColor="#ff0055" stopOpacity="0" />
             </radialGradient>
+
+            <filter id="heat-blur-wide" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur in="SourceGraphic" stdDeviation="22" />
+            </filter>
+            <filter id="heat-blur-mid" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur in="SourceGraphic" stdDeviation="12" />
+            </filter>
+            <filter id="heat-blur-core" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur in="SourceGraphic" stdDeviation="6" />
+            </filter>
             <filter id="heat-blur-strong" x="-50%" y="-50%" width="200%" height="200%">
               <feGaussianBlur in="SourceGraphic" stdDeviation="18" />
             </filter>
@@ -459,6 +623,13 @@ export const BotoneraPitchCanvas: React.FC<BotoneraPitchCanvasProps> = ({
                 <line x1={margin} y1={height / 2} x2={width - margin} y2={height / 2} />
                 <circle cx={width / 2} cy={height / 2} r="91.5" />
                 <circle cx={width / 2} cy={height / 2} r="3.5" fill="rgba(255, 255, 255, 0.9)" />
+              </>
+            )}
+
+            {isHalfPitch && (
+              <>
+                <path d={`M ${width / 2 - 91.5} ${height - margin} A 91.5 91.5 0 0 1 ${width / 2 + 91.5} ${height - margin}`} />
+                <circle cx={width / 2} cy={height - margin} r="3.5" fill="rgba(255, 255, 255, 0.9)" />
               </>
             )}
 
@@ -599,38 +770,79 @@ export const BotoneraPitchCanvas: React.FC<BotoneraPitchCanvasProps> = ({
             );
           })()}
 
-          {/* HEATMAP LAYER (Continuous thermal density visualization) */}
+          {/* HEATMAP LAYER (Multi-layer continuous thermal density visualization) */}
           {isHeatmap && pointsList && pointsList.length > 0 && (
             <g className="heatmap-layer">
-              {/* Diffuse base layer with blur */}
-              <g filter="url(#heat-blur-strong)">
+              {/* Layer 1: Diffuse wide ambient aura */}
+              <g filter="url(#heat-blur-wide)">
                 {pointsList.map((pt, idx) => {
                   if (pt.startX === null || pt.startY === null) return null;
+                  const baseFill = pt.isSelected
+                    ? 'url(#heat-blob-selected)'
+                    : pt.cornerSide === 'left'
+                    ? 'url(#heat-blob-left-base)'
+                    : pt.cornerSide === 'right'
+                    ? 'url(#heat-blob-right-base)'
+                    : 'url(#heat-blob-base)';
+
                   return (
                     <circle
                       key={`heat-base-${pt.id || idx}`}
                       cx={toSvgX(pt.startY)}
                       cy={toSvgY(pt.startX)}
-                      r={pt.isSelected ? "110" : "85"}
-                      fill={pt.isSelected ? "url(#heat-blob-selected)" : "url(#heat-blob-base)"}
+                      r={pt.isSelected ? '110' : '92'}
+                      fill={baseFill}
+                      opacity={pt.isSelected ? 1 : 0.8}
+                    />
+                  );
+                })}
+              </g>
+
+              {/* Layer 2: Mid-density thermal body */}
+              <g filter="url(#heat-blur-mid)">
+                {pointsList.map((pt, idx) => {
+                  if (pt.startX === null || pt.startY === null) return null;
+                  const midFill = pt.isSelected
+                    ? 'url(#heat-blob-selected)'
+                    : pt.cornerSide === 'left'
+                    ? 'url(#heat-blob-left-hot)'
+                    : pt.cornerSide === 'right'
+                    ? 'url(#heat-blob-right-hot)'
+                    : 'url(#heat-blob-mid)';
+
+                  return (
+                    <circle
+                      key={`heat-mid-${pt.id || idx}`}
+                      cx={toSvgX(pt.startY)}
+                      cy={toSvgY(pt.startX)}
+                      r={pt.isSelected ? '72' : '56'}
+                      fill={midFill}
                       opacity={pt.isSelected ? 1 : 0.85}
                     />
                   );
                 })}
               </g>
 
-              {/* Core intense thermal layer */}
-              <g filter="url(#heat-blur-strong)">
+              {/* Layer 3: High-intensity thermal core */}
+              <g filter="url(#heat-blur-core)">
                 {pointsList.map((pt, idx) => {
                   if (pt.startX === null || pt.startY === null) return null;
+                  const hotFill = pt.isSelected
+                    ? 'url(#heat-blob-selected)'
+                    : pt.cornerSide === 'left'
+                    ? 'url(#heat-blob-left-hot)'
+                    : pt.cornerSide === 'right'
+                    ? 'url(#heat-blob-right-hot)'
+                    : 'url(#heat-blob-hot)';
+
                   return (
                     <circle
                       key={`heat-core-${pt.id || idx}`}
                       cx={toSvgX(pt.startY)}
                       cy={toSvgY(pt.startX)}
-                      r={pt.isSelected ? "65" : "48"}
-                      fill={pt.isSelected ? "url(#heat-blob-selected)" : "url(#heat-blob-hot)"}
-                      opacity={pt.isSelected ? 1 : 0.9}
+                      r={pt.isSelected ? '44' : '30'}
+                      fill={hotFill}
+                      opacity={pt.isSelected ? 1 : 0.95}
                     />
                   );
                 })}
@@ -640,6 +852,14 @@ export const BotoneraPitchCanvas: React.FC<BotoneraPitchCanvasProps> = ({
               {pointsList.map((pt, idx) => {
                 if (pt.startX === null || pt.startY === null) return null;
                 const isSelected = pt.isSelected;
+                const dotFill = isSelected
+                  ? '#ff0055'
+                  : pt.cornerSide === 'left'
+                  ? '#38bdf8'
+                  : pt.cornerSide === 'right'
+                  ? '#fb923c'
+                  : '#ffffff';
+
                 return (
                   <g
                     key={`heat-interactive-${pt.id || idx}`}
@@ -684,12 +904,12 @@ export const BotoneraPitchCanvas: React.FC<BotoneraPitchCanvasProps> = ({
                         <circle
                           cx={toSvgX(pt.startY)}
                           cy={toSvgY(pt.startX)}
-                          r="6"
-                          fill="#ffffff"
-                          fillOpacity="0.75"
+                          r="5.5"
+                          fill={dotFill}
+                          fillOpacity="0.85"
                           stroke="#000000"
                           strokeWidth="1.5"
-                          className="transition-all duration-150 group-hover/heat-point:r-10 group-hover/heat-point:fill-amber-400 group-hover/heat-point:fill-opacity-1"
+                          className="transition-all duration-150 group-hover/heat-point:r-9 group-hover/heat-point:fill-amber-400 group-hover/heat-point:fill-opacity-1"
                         />
                       </>
                     )}
@@ -705,6 +925,10 @@ export const BotoneraPitchCanvas: React.FC<BotoneraPitchCanvasProps> = ({
               {pointsList.map((pt, idx) => {
                 if (pt.startX === null || pt.startY === null) return null;
                 const isSelected = pt.isSelected;
+                const cx = toSvgX(pt.startY);
+                const cy = toSvgY(pt.startX);
+                const style = getPitchOutcomeStyle(pt.outcome);
+                const dorsalStr = pt.player_number != null && pt.player_number !== '' ? String(pt.player_number) : '';
 
                 return (
                   <g
@@ -717,103 +941,255 @@ export const BotoneraPitchCanvas: React.FC<BotoneraPitchCanvasProps> = ({
                     }}
                     className="cursor-pointer group/marker"
                   >
-                    {/* Glowing outer halo if selected or hovering */}
-                    {isSelected ? (
-                      <circle
-                        cx={toSvgX(pt.startY)}
-                        cy={toSvgY(pt.startX)}
-                        r="28"
-                        fill="rgba(255, 0, 85, 0.5)"
-                        stroke="#ff0055"
-                        strokeWidth="3.5"
-                        className="animate-pulse"
-                        filter="url(#vector-glow)"
-                      />
+                    <title>
+                      {pt.player_name ? `${pt.player_name}${dorsalStr ? ` (#${dorsalStr})` : ''}` : 'Acción'} - {pt.outcome || 'Tiro'}
+                    </title>
+
+                    {/* 1. OUTCOME-BASED ORIGIN SHAPE & HALO */}
+                    {style.type === 'goal' && (
+                      <>
+                        {/* Double-ring halo for Goal */}
+                        <circle
+                          cx={cx}
+                          cy={cy}
+                          r={isSelected ? 26 : 21}
+                          fill={isSelected ? 'rgba(255, 0, 85, 0.45)' : style.haloColor}
+                          stroke={isSelected ? '#ff0055' : style.color}
+                          strokeWidth="2"
+                          className="animate-pulse"
+                          filter="url(#vector-glow)"
+                        />
+                        {/* Outer gold rim circle */}
+                        <circle
+                          cx={cx}
+                          cy={cy}
+                          r={isSelected ? 17 : 14.5}
+                          fill={isSelected ? '#ff0055' : style.color}
+                          stroke={isSelected ? '#ffffff' : '#fbbf24'}
+                          strokeWidth={isSelected ? '3.5' : '2.5'}
+                          className="transition-all duration-150 group-hover/marker:r-17"
+                        />
+                      </>
+                    )}
+
+                    {style.type === 'saved' && (() => {
+                      const s = isSelected ? 17 : 14;
+                      const haloS = s + 7;
+                      return (
+                        <>
+                          {/* Diamond Halo */}
+                          <polygon
+                            points={`${cx},${cy - haloS} ${cx + haloS},${cy} ${cx},${cy + haloS} ${cx - haloS},${cy}`}
+                            fill={isSelected ? 'rgba(255, 0, 85, 0.45)' : style.haloColor}
+                            stroke={isSelected ? '#ff0055' : style.color}
+                            strokeWidth="2"
+                            className="animate-pulse"
+                            filter="url(#vector-glow)"
+                          />
+                          {/* Diamond Body */}
+                          <polygon
+                            points={`${cx},${cy - s} ${cx + s},${cy} ${cx},${cy + s} ${cx - s},${cy}`}
+                            fill={isSelected ? '#ff0055' : style.color}
+                            stroke={isSelected ? '#ffffff' : '#e0f2fe'}
+                            strokeWidth={isSelected ? '3.5' : '2.5'}
+                            className="transition-all duration-150 group-hover/marker:scale-110"
+                          />
+                        </>
+                      );
+                    })()}
+
+                    {style.type === 'missed' && (() => {
+                      const s = isSelected ? 17 : 14;
+                      const haloS = s + 7;
+                      return (
+                        <>
+                          {/* Triangle Halo */}
+                          <polygon
+                            points={`${cx},${cy - haloS * 1.15} ${cx + haloS * 1.15},${cy + haloS * 0.85} ${cx - haloS * 1.15},${cy + haloS * 0.85}`}
+                            fill={isSelected ? 'rgba(255, 0, 85, 0.45)' : style.haloColor}
+                            stroke={isSelected ? '#ff0055' : style.color}
+                            strokeWidth="2"
+                            className="animate-pulse"
+                            filter="url(#vector-glow)"
+                          />
+                          {/* Triangle Body */}
+                          <polygon
+                            points={`${cx},${cy - s * 1.15} ${cx + s * 1.15},${cy + s * 0.85} ${cx - s * 1.15},${cy + s * 0.85}`}
+                            fill={isSelected ? '#ff0055' : style.color}
+                            stroke={isSelected ? '#ffffff' : '#ffe4e6'}
+                            strokeWidth={isSelected ? '3.5' : '2.5'}
+                            className="transition-all duration-150 group-hover/marker:scale-110"
+                          />
+                        </>
+                      );
+                    })()}
+
+                    {style.type === 'blocked' && (() => {
+                      const s = isSelected ? 16 : 13.5;
+                      const dx = s * 0.866;
+                      const haloS = s + 7;
+                      const haloDx = haloS * 0.866;
+                      return (
+                        <>
+                          {/* Hexagon Halo */}
+                          <polygon
+                            points={`${cx},${cy - haloS} ${cx + haloDx},${cy - haloS * 0.5} ${cx + haloDx},${cy + haloS * 0.5} ${cx},${cy + haloS} ${cx - haloDx},${cy + haloS * 0.5} ${cx - haloDx},${cy - haloS * 0.5}`}
+                            fill={isSelected ? 'rgba(255, 0, 85, 0.45)' : style.haloColor}
+                            stroke={isSelected ? '#ff0055' : style.color}
+                            strokeWidth="2"
+                            className="animate-pulse"
+                            filter="url(#vector-glow)"
+                          />
+                          {/* Hexagon Body */}
+                          <polygon
+                            points={`${cx},${cy - s} ${cx + dx},${cy - s * 0.5} ${cx + dx},${cy + s * 0.5} ${cx},${cy + s} ${cx - dx},${cy + s * 0.5} ${cx - dx},${cy - s * 0.5}`}
+                            fill={isSelected ? '#ff0055' : style.color}
+                            stroke={isSelected ? '#ffffff' : '#fef3c7'}
+                            strokeWidth={isSelected ? '3.5' : '2.5'}
+                            className="transition-all duration-150 group-hover/marker:scale-110"
+                          />
+                        </>
+                      );
+                    })()}
+
+                    {style.type === 'other' && (
+                      <>
+                        <circle
+                          cx={cx}
+                          cy={cy}
+                          r={isSelected ? 26 : 20}
+                          fill={isSelected ? 'rgba(255, 0, 85, 0.45)' : style.haloColor}
+                          stroke={isSelected ? '#ff0055' : style.color}
+                          strokeWidth="2"
+                          className="animate-pulse"
+                          filter="url(#vector-glow)"
+                        />
+                        <circle
+                          cx={cx}
+                          cy={cy}
+                          r={isSelected ? 16 : 13.5}
+                          fill={isSelected ? '#ff0055' : style.color}
+                          stroke="#ffffff"
+                          strokeWidth={isSelected ? '3.5' : '2.5'}
+                          className="transition-all duration-150 group-hover/marker:r-16"
+                        />
+                      </>
+                    )}
+
+                    {/* 2. DORSAL NUMBER OR INNER CORE INSIDE ORIGIN SHAPE */}
+                    {dorsalStr ? (
+                      <text
+                        x={cx}
+                        y={style.type === 'missed' ? cy + 2.5 : cy}
+                        textAnchor="middle"
+                        dominantBaseline="central"
+                        fill="#ffffff"
+                        fontSize={dorsalStr.length > 2 ? '9' : dorsalStr.length === 2 ? '10.5' : '12'}
+                        fontWeight="900"
+                        style={{ textShadow: '0 1px 3px rgba(0,0,0,0.95)' }}
+                        className="font-mono select-none pointer-events-none"
+                      >
+                        {dorsalStr}
+                      </text>
                     ) : (
                       <circle
-                        cx={toSvgX(pt.startY)}
-                        cy={toSvgY(pt.startX)}
-                        r="22"
-                        fill="rgba(245, 158, 11, 0.35)"
-                        stroke="#f59e0b"
-                        strokeWidth="2"
-                        className="animate-pulse"
+                        cx={cx}
+                        cy={style.type === 'missed' ? cy + 1.5 : cy}
+                        r={isSelected ? 4.5 : 3.5}
+                        fill="#ffffff"
+                        className="pointer-events-none"
                       />
                     )}
 
-                    {/* Origin Circle (Enlarged, vibrant Amber/Gold with pure white contrast border) */}
-                    <circle
-                      cx={toSvgX(pt.startY)}
-                      cy={toSvgY(pt.startX)}
-                      r={isSelected ? "16" : "14"}
-                      fill={isSelected ? "#ff0055" : "#f59e0b"}
-                      stroke="#ffffff"
-                      strokeWidth={isSelected ? "4" : "3"}
-                      filter="url(#vector-glow)"
-                      className="transition-all duration-150 group-hover/marker:fill-amber-300 group-hover/marker:r-16"
-                    />
+                    {/* 3. VECTOR ARROW LINE & DESTINATION TARGET */}
+                    {isVectorMode && pt.endX != null && pt.endY != null && (() => {
+                      const x1 = toSvgX(pt.startY);
+                      const y1 = toSvgY(pt.startX);
+                      const x2 = toSvgX(pt.endY);
+                      const y2 = toSvgY(pt.endX);
 
-                    {/* Inner Target Bullseye Center Dot */}
-                    <circle
-                      cx={toSvgX(pt.startY)}
-                      cy={toSvgY(pt.startX)}
-                      r={isSelected ? "5" : "4.5"}
-                      fill={isSelected ? "#ffffff" : "#090d16"}
-                    />
+                      let pathD = `M ${x1} ${y1} L ${x2} ${y2}`;
 
-                    {/* Vector Arrow Line */}
-                    {isVectorMode && pt.endX != null && pt.endY != null && (
-                      <g filter="url(#vector-glow)">
-                        {/* High contrast dark outline line underneath vector */}
-                        <line
-                          x1={toSvgX(pt.startY)}
-                          y1={toSvgY(pt.startX)}
-                          x2={toSvgX(pt.endY)}
-                          y2={toSvgY(pt.endX)}
-                          stroke="#000000"
-                          strokeWidth={isSelected ? "11" : "7"}
-                          strokeOpacity="0.75"
-                          strokeLinecap="round"
-                        />
+                      if (pt.curveType === 'convex' || pt.curveType === 'concave') {
+                        const dist = Math.hypot(x2 - x1, y2 - y1) || 1;
+                        const mx = (x1 + x2) / 2;
+                        const my = (y1 + y2) / 2;
+                        // Perpendicular normal unit vector: (-dy/dist, dx/dist)
+                        const nx = -(y2 - y1) / dist;
+                        const ny = (x2 - x1) / dist;
 
-                        {/* Foreground vector line */}
-                        <line
-                          x1={toSvgX(pt.startY)}
-                          y1={toSvgY(pt.startX)}
-                          x2={toSvgX(pt.endY)}
-                          y2={toSvgY(pt.endX)}
-                          stroke={isSelected ? "#ff0055" : "#fbbf24"}
-                          strokeWidth={isSelected ? "6" : "4"}
-                          strokeOpacity="1"
-                          markerEnd={isSelected ? "url(#vector-arrow-selected)" : "url(#vector-arrow-amber)"}
-                          className="transition-all duration-150 group-hover/marker:stroke-amber-300 group-hover/marker:stroke-[5.5px]"
-                        />
+                        // Arc curvature magnitude (subtle, elegant tactical curve)
+                        const arcMagnitude = Math.min(38, Math.max(16, dist * 0.22));
+                        const isLeft = pt.cornerSide ? pt.cornerSide === 'left' : (pt.startY ?? 0) < 50;
 
-                        {/* Destination Pulsing Halo */}
-                        {isSelected && (
-                          <circle
-                            cx={toSvgX(pt.endY)}
-                            cy={toSvgY(pt.endX)}
-                            r="22"
-                            fill="rgba(255, 0, 85, 0.45)"
-                            stroke="#ff0055"
-                            strokeWidth="2.5"
-                            className="animate-pulse"
+                        let ctrlX = mx;
+                        let ctrlY = my;
+
+                        if (pt.curveType === 'convex') {
+                          // Abierto (Convexa): curves inward towards goal line / outswinger arc
+                          const sign = isLeft ? -1 : 1;
+                          ctrlX = mx + nx * arcMagnitude * sign;
+                          ctrlY = my - Math.abs(ny * arcMagnitude);
+                        } else if (pt.curveType === 'concave') {
+                          // Cerrado (Cóncava): curves outward toward penalty spot / inswinger arc
+                          const sign = isLeft ? 1 : -1;
+                          ctrlX = mx + nx * arcMagnitude * sign;
+                          ctrlY = my + Math.abs(ny * arcMagnitude);
+                        }
+
+                        pathD = `M ${x1.toFixed(1)} ${y1.toFixed(1)} Q ${ctrlX.toFixed(1)} ${ctrlY.toFixed(1)} ${x2.toFixed(1)} ${y2.toFixed(1)}`;
+                      }
+
+                      return (
+                        <g filter="url(#vector-glow)">
+                          {/* High contrast dark outline line underneath vector */}
+                          <path
+                            d={pathD}
+                            fill="none"
+                            stroke="#000000"
+                            strokeWidth={isSelected ? '11' : '7'}
+                            strokeOpacity="0.8"
+                            strokeLinecap="round"
                           />
-                        )}
 
-                        {/* Destination Target Circle */}
-                        <circle
-                          cx={toSvgX(pt.endY)}
-                          cy={toSvgY(pt.endX)}
-                          r={isSelected ? "13" : "9"}
-                          fill={isSelected ? "#ff0055" : "#38bdf8"}
-                          stroke="#ffffff"
-                          strokeWidth="2.5"
-                          className="transition-all duration-150 group-hover/marker:fill-sky-300 group-hover/marker:r-11"
-                        />
-                      </g>
-                    )}
+                          {/* Foreground vector line */}
+                          <path
+                            d={pathD}
+                            fill="none"
+                            stroke={isSelected ? '#ff0055' : style.color}
+                            strokeWidth={isSelected ? '6' : '4'}
+                            strokeOpacity="1"
+                            strokeLinecap="round"
+                            markerEnd={isSelected ? 'url(#vector-arrow-selected)' : style.arrowMarker}
+                            className="transition-all duration-150 group-hover/marker:stroke-[5.5px]"
+                          />
+
+                          {/* Destination Pulsing Halo */}
+                          {isSelected && (
+                            <circle
+                              cx={x2}
+                              cy={y2}
+                              r="22"
+                              fill="rgba(255, 0, 85, 0.45)"
+                              stroke="#ff0055"
+                              strokeWidth="2.5"
+                              className="animate-pulse"
+                            />
+                          )}
+
+                          {/* Destination Target Circle */}
+                          <circle
+                            cx={x2}
+                            cy={y2}
+                            r={isSelected ? '13' : '9'}
+                            fill={isSelected ? '#ff0055' : style.color}
+                            stroke="#ffffff"
+                            strokeWidth="2.5"
+                            className="transition-all duration-150 group-hover/marker:r-11"
+                          />
+                        </g>
+                      );
+                    })()}
                   </g>
                 );
               })}

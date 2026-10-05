@@ -36,6 +36,8 @@ import { calculateEventVideoTime, formatVideoTime } from '@/lib/analytics/video-
 interface BotoneraEventLogProps {
   events: NormalizedEvent[];
   onDeleteEvent?: (eventId: string) => void;
+  /** Whether the current analyst may delete this event (only their own); hides the delete button otherwise */
+  canDeleteEvent?: (event: NormalizedEvent) => boolean;
   onUpdateEvent?: (updatedEvent: NormalizedEvent) => void;
   onClearAllEvents?: () => void;
   onRestoreDeletedEvents?: () => void;
@@ -68,6 +70,7 @@ interface BotoneraEventLogProps {
 export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
   events,
   onDeleteEvent,
+  canDeleteEvent,
   onUpdateEvent,
   onClearAllEvents,
   onRestoreDeletedEvents,
@@ -723,7 +726,7 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
                               >
                                 <Pencil className="w-3.5 h-3.5" />
                               </button>
-                              {onDeleteEvent && (
+                              {onDeleteEvent && (!canDeleteEvent || canDeleteEvent(evt)) && (
                                 <button
                                   onClick={() => setDeletingEventTarget(evt)}
                                   className="p-1 rounded bg-slate-950/50 hover:bg-red-900/60 text-slate-300 hover:text-red-300 border border-slate-700 transition cursor-pointer"

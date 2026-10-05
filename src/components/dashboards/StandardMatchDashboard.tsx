@@ -39,6 +39,7 @@ import {
 } from 'lucide-react';
 import { PdfLanguageModal, type PdfReportLanguage } from './PdfLanguageModal';
 import { downloadPdfTechnicalReport } from '@/lib/services/pdf-report-generator';
+import { snapshotSvgsForCapture } from '@/lib/utils/pdf-capture';
 import { calculateMatchScoresFromEvents, isEventOfHomeTeam, isEventOfAwayTeam, isGoalEvent } from '@/lib/analytics/dashboard-engine';
 
 const COLOR_MAP: Record<string, string> = {
@@ -135,6 +136,9 @@ export const StandardMatchDashboard: React.FC<StandardMatchDashboardProps> = ({
         windowHeight: 4000,
         scrollX: 0,
         scrollY: 0,
+        // Campogramas (SVG) sized to the 1920px virtual layout instead of the real screen,
+        // otherwise they come out cropped at the sides on wide monitors.
+        onclone: (doc: Document) => snapshotSvgsForCapture(doc),
       };
 
       // 1. Capture the main summary section exactly as rendered (score, lineups, comparison bars, evolution).
@@ -2488,6 +2492,50 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({
     );
   }, [awayEvents, selectedAwayZone, selectedAwayDescriptor]);
 
+  // Helper to extract corner trajectory curvature and side
+  const extractCornerCurveAndSide = (evt: NormalizedEvent): {
+    curveType: 'convex' | 'concave' | 'straight' | null;
+    cornerSide: 'left' | 'right' | null;
+  } => {
+    const descList: string[] = [];
+    if (Array.isArray(evt.metadata?.descriptors)) descList.push(...evt.metadata.descriptors);
+    if (evt.subcategory) descList.push(...evt.subcategory.split(',').map((s) => s.trim()));
+    if (evt.outcome) descList.push(evt.outcome);
+    if (evt.metadata?.tipo) descList.push(String(evt.metadata.tipo));
+    if (evt.metadata?.type) descList.push(String(evt.metadata.type));
+    if (evt.metadata?.lanzamiento) descList.push(String(evt.metadata.lanzamiento));
+    if (evt.metadata?.trajectory) descList.push(String(evt.metadata.trajectory));
+
+    const descText = descList.join(' ').toLowerCase();
+
+    // Curve Type: Abierto = Convexa, Cerrado = Cóncava, Plano/Corto/Directo = Recta
+    let curveType: 'convex' | 'concave' | 'straight' | null = null;
+    if (descText.includes('abiert') || descText.includes('outswing')) {
+      curveType = 'convex';
+    } else if (descText.includes('cerrad') || descText.includes('inswing')) {
+      curveType = 'concave';
+    } else if (
+      descText.includes('plano') ||
+      descText.includes('corto') ||
+      descText.includes('direct') ||
+      descText.includes('rect')
+    ) {
+      curveType = 'straight';
+    }
+
+    // Corner Side (Left / Right)
+    let cornerSide: 'left' | 'right' | null = null;
+    if (descText.includes('izq') || descText.includes('left')) {
+      cornerSide = 'left';
+    } else if (descText.includes('der') || descText.includes('right')) {
+      cornerSide = 'right';
+    } else if (evt.y !== undefined && evt.y !== null) {
+      cornerSide = evt.y < 50 ? 'left' : 'right';
+    }
+
+    return { curveType, cornerSide };
+  };
+
   // Process data (zones, descriptors, points) for a team using filtered subsets
   const processTeamData = (
     teamEvents: NormalizedEvent[],
@@ -2500,6 +2548,13 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({
     const pointsList: EventPitchMarker[] = [];
 
     // Pitch Canvas zone counts & points from descFilteredEvts
+    const isCorner =
+      (name || '').toLowerCase().includes('corner') ||
+      (name || '').toLowerCase().includes('córner') ||
+      (name || '').toLowerCase().includes('esquina') ||
+      (button?.name || '').toLowerCase().includes('corner') ||
+      (button?.name || '').toLowerCase().includes('córner');
+
     descFilteredEvts.forEach((evt) => {
       const z = (evt.metadata?.zone as string) || evt.subcategory;
       if (z) {
@@ -2507,12 +2562,28 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({
       }
 
       if (evt.x !== undefined && evt.x !== null && evt.y !== undefined && evt.y !== null) {
+        const dorsal =
+          evt.metadata?.player_number ||
+          evt.metadata?.dorsal ||
+          evt.metadata?.player_dorsal ||
+          evt.metadata?.number ||
+          null;
+
+        const { curveType, cornerSide } = isCorner ? extractCornerCurveAndSide(evt) : { curveType: null, cornerSide: null };
+        const p = resolveEventPeriod(evt);
+
         pointsList.push({
           id: evt.event_id,
           startX: evt.x,
           startY: evt.y,
           endX: evt.end_x ?? null,
           endY: evt.end_y ?? null,
+          outcome: evt.outcome || (evt.metadata?.result as string) || (evt.metadata?.outcome as string) || null,
+          player_number: dorsal,
+          player_name: evt.player_name || evt.metadata?.player_name || null,
+          curveType,
+          cornerSide,
+          period: p,
         });
       }
     });
@@ -2738,233 +2809,369 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({
     onSelectDescriptor: (descriptor: string | null) => void,
     onSelectEventId: (eventId: string | null) => void,
     isHome: boolean
-  ) => (
-    <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 space-y-3 flex flex-col h-full overflow-hidden justify-between">
-      {/* Team Header */}
-      <div className="flex items-center justify-between border-b border-slate-800 pb-2.5 shrink-0">
-        <div className="flex items-center gap-3 truncate">
-          <TeamLogo teamName={teamName} logoUrl={teamLogoUrl} size={36} />
-          <div className="truncate">
-            <h4 className="text-xs sm:text-sm font-black text-white truncate">{teamName}</h4>
-            <span className="text-[9px] text-slate-400 uppercase font-extrabold tracking-wider block truncate">
-              {isHome ? 'EQUIPO LOCAL' : 'EQUIPO VISITANTE'}
-            </span>
-          </div>
-        </div>
-        <span className="px-2 py-1 rounded-xl bg-slate-900 font-mono text-[10px] font-bold border border-slate-800 text-amber-400 shrink-0">
-          {actionEventsList.length} / {allEventsList.length} acc.
-        </span>
-      </div>
+  ) => {
+    const isRecoveryCategory = (() => {
+      const norm = (name || '').toLowerCase().trim();
+      const btnNorm = (button?.name || '').toLowerCase().trim();
+      return (
+        norm.includes('recuperaci') ||
+        norm.includes('recovery') ||
+        norm.includes('recuperar') ||
+        norm.includes('robo') ||
+        norm.includes('intercep') ||
+        btnNorm.includes('recuperaci') ||
+        btnNorm.includes('recovery') ||
+        btnNorm.includes('recuperar') ||
+        btnNorm.includes('robo') ||
+        btnNorm.includes('intercep') ||
+        pitchViewType === 'heatmap'
+      );
+    })();
 
-      {/* Active Zone Filter Badge */}
-      {selectedZone && (
-        <div className="bg-emerald-500/10 border border-emerald-500/40 text-emerald-300 px-2 py-1 rounded-lg text-[10px] font-bold flex items-center justify-between shrink-0">
-          <span className="truncate">📍 Zona: "{selectedZone}"</span>
-          <button
-            onClick={() => onSelectZone(null)}
-            className="p-0.5 hover:bg-emerald-500/20 rounded text-emerald-400 cursor-pointer ml-1"
-            title="Quitar filtro de zona"
-          >
-            <X className="w-3 h-3" />
-          </button>
-        </div>
-      )}
+    const pointsListWithSelection = teamData.pointsList.map((pt) => ({
+      ...pt,
+      isSelected: selectedEventId ? pt.id === selectedEventId : false,
+    }));
 
-      {/* Gráficas de Pizza Separadas por Categoría de Descriptor (Sin barras de desplazamiento internas) */}
-      {renderGroupedPieCharts(teamData.descriptorGroups, selectedDescriptor, onSelectDescriptor)}
+    const p1PointsList = pointsListWithSelection.filter((pt) => pt.period === 1);
+    const p2PointsList = pointsListWithSelection.filter((pt) => pt.period === 2);
 
-      {/* Gráfica de Descriptores Moderna (Ocupa todo el espacio de arriba a abajo flex-1) */}
-      <div className="bg-slate-900/90 p-3 rounded-2xl border border-slate-800 space-y-2.5 flex-1 flex flex-col min-h-0 shadow-inner backdrop-blur-md overflow-hidden">
-        <div className="flex items-center justify-between border-b border-slate-800/80 pb-2 shrink-0">
-          <div className="flex items-center gap-1.5">
-            <div className="p-1 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400">
-              <BarChart3 className="w-3.5 h-3.5" />
+    let p1Count = 0;
+    let p2Count = 0;
+    allEventsList.forEach((evt) => {
+      const p = resolveEventPeriod(evt);
+      if (p === 2) p2Count++;
+      else p1Count++;
+    });
+    const totalPeriodAcc = allEventsList.length;
+    const p1Pct = totalPeriodAcc > 0 ? Math.round((p1Count / totalPeriodAcc) * 100) : 0;
+    const p2Pct = totalPeriodAcc > 0 ? Math.round((p2Count / totalPeriodAcc) * 100) : 0;
+
+    return (
+      <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 space-y-3 flex flex-col h-full overflow-hidden justify-between">
+        {/* Team Header */}
+        <div className="flex items-center justify-between border-b border-slate-800 pb-2.5 shrink-0">
+          <div className="flex items-center gap-3 truncate">
+            <TeamLogo teamName={teamName} logoUrl={teamLogoUrl} size={36} />
+            <div className="truncate">
+              <h4 className="text-xs sm:text-sm font-black text-white truncate">{teamName}</h4>
+              <span className="text-[9px] text-slate-400 uppercase font-extrabold tracking-wider block truncate">
+                {isHome ? 'EQUIPO LOCAL' : 'EQUIPO VISITANTE'}
+              </span>
             </div>
-            <h5 className="text-[11px] font-black text-slate-100 uppercase tracking-wider">
-              Descriptores ({teamData.descriptorStats.length})
-            </h5>
           </div>
-          <span className="text-[9px] text-slate-400 font-mono bg-slate-950 px-2 py-0.5 rounded-full border border-slate-800">
-            Total & %
+          <span className="px-2 py-1 rounded-xl bg-slate-900 font-mono text-[10px] font-bold border border-slate-800 text-amber-400 shrink-0">
+            {actionEventsList.length} / {allEventsList.length} acc.
           </span>
         </div>
 
-        {teamData.descriptorStats.length === 0 ? (
-          <p className="text-[11px] text-slate-500 italic py-4 text-center">Sin descriptores registrados.</p>
+        {/* Active Zone Filter Badge */}
+        {selectedZone && (
+          <div className="bg-emerald-500/10 border border-emerald-500/40 text-emerald-300 px-2 py-1 rounded-lg text-[10px] font-bold flex items-center justify-between shrink-0">
+            <span className="truncate">📍 Zona: "{selectedZone}"</span>
+            <button
+              onClick={() => onSelectZone(null)}
+              className="p-0.5 hover:bg-emerald-500/20 rounded text-emerald-400 cursor-pointer ml-1"
+              title="Quitar filtro de zona"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        )}
+
+        {/* Gráficas de Pizza Separadas por Categoría de Descriptor (Sin barras de desplazamiento internas) */}
+        {!isRecoveryCategory && renderGroupedPieCharts(teamData.descriptorGroups, selectedDescriptor, onSelectDescriptor)}
+
+        {/* Gráfica de Descriptores Moderna O BIEN los 2 Campogramas por Parte (1ª y 2ªP) si es Recuperaciones */}
+        {isRecoveryCategory ? (
+          <div className="bg-slate-900/90 p-3 rounded-2xl border border-slate-800 space-y-2.5 flex-1 flex flex-col min-h-0 shadow-inner backdrop-blur-md overflow-hidden">
+            <div className="flex items-center justify-between border-b border-slate-800/80 pb-2 shrink-0">
+              <div className="flex items-center gap-1.5">
+                <div className="p-1 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400">
+                  <Clock className="w-3.5 h-3.5" />
+                </div>
+                <h5 className="text-[11px] font-black text-slate-100 uppercase tracking-wider">
+                  Recuperaciones por Parte
+                </h5>
+              </div>
+              <span className="text-[9px] text-slate-400 font-mono bg-slate-950 px-2 py-0.5 rounded-full border border-slate-800">
+                1ª vs 2ªP
+              </span>
+            </div>
+
+            {/* 2 Campogramas pequeños de cada parte */}
+            <div className="space-y-2.5 flex-1 overflow-y-auto pr-1 scrollbar-thin min-h-0 flex flex-col justify-between">
+              {/* Mini Campograma 1: 1ª Parte */}
+              <div className="bg-slate-950/90 p-2 rounded-xl border border-slate-800/90 space-y-1 flex flex-col">
+                <div className="flex items-center justify-between text-[9.5px] font-bold pb-1 border-b border-slate-800/80">
+                  <span className="text-cyan-400 flex items-center gap-1 font-extrabold">
+                    <Clock className="w-3 h-3" />
+                    <span>1ª Parte</span>
+                  </span>
+                  <span className="font-mono text-cyan-300 font-black bg-cyan-950/70 px-1.5 py-0.2 rounded border border-cyan-500/30 text-[9px]">
+                    {p1Count} acc. ({p1Pct}%)
+                  </span>
+                </div>
+                <div className="w-full flex items-center justify-center">
+                  <BotoneraPitchCanvas
+                    hideHeader={true}
+                    hideFooter={true}
+                    startX={null}
+                    startY={null}
+                    endX={null}
+                    endY={null}
+                    onSetCoords={() => {}}
+                    selectedZone={selectedZone}
+                    onSelectZone={(zName) => onSelectZone(zName === selectedZone ? null : zName)}
+                    onSelectMarker={(mId) => {
+                      onSelectEventId(mId === selectedEventId ? null : mId);
+                      if (mId) {
+                        const matchEvt = allEventsList.find((e) => e.event_id === mId);
+                        if (matchEvt) handleOpenVideoPopup(matchEvt, isHome);
+                      }
+                    }}
+                    initialMode="heatmap"
+                    lockMode={true}
+                    pitchViewMode="full"
+                    zoneCounts={teamData.zoneCounts}
+                    pointsList={p1PointsList}
+                  />
+                </div>
+              </div>
+
+              {/* Mini Campograma 2: 2ª Parte */}
+              <div className="bg-slate-950/90 p-2 rounded-xl border border-slate-800/90 space-y-1 flex flex-col">
+                <div className="flex items-center justify-between text-[9.5px] font-bold pb-1 border-b border-slate-800/80">
+                  <span className="text-indigo-400 flex items-center gap-1 font-extrabold">
+                    <Clock className="w-3 h-3" />
+                    <span>2ª Parte</span>
+                  </span>
+                  <span className="font-mono text-indigo-300 font-black bg-indigo-950/70 px-1.5 py-0.2 rounded border border-indigo-500/30 text-[9px]">
+                    {p2Count} acc. ({p2Pct}%)
+                  </span>
+                </div>
+                <div className="w-full flex items-center justify-center">
+                  <BotoneraPitchCanvas
+                    hideHeader={true}
+                    hideFooter={true}
+                    startX={null}
+                    startY={null}
+                    endX={null}
+                    endY={null}
+                    onSetCoords={() => {}}
+                    selectedZone={selectedZone}
+                    onSelectZone={(zName) => onSelectZone(zName === selectedZone ? null : zName)}
+                    onSelectMarker={(mId) => {
+                      onSelectEventId(mId === selectedEventId ? null : mId);
+                      if (mId) {
+                        const matchEvt = allEventsList.find((e) => e.event_id === mId);
+                        if (matchEvt) handleOpenVideoPopup(matchEvt, isHome);
+                      }
+                    }}
+                    initialMode="heatmap"
+                    lockMode={true}
+                    pitchViewMode="full"
+                    zoneCounts={teamData.zoneCounts}
+                    pointsList={p2PointsList}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
         ) : (
-          <div className="space-y-2 flex-1 overflow-y-auto pr-1 scrollbar-thin min-h-0">
-            {teamData.descriptorStats.map((desc) => {
-              const isSelected = selectedDescriptor?.toLowerCase().trim() === desc.name.toLowerCase().trim();
-              const hasZoneFilter = Boolean(selectedZone);
-              const isDescriptorInZone = hasZoneFilter && desc.zoneCount > 0;
+          <div className="bg-slate-900/90 p-3 rounded-2xl border border-slate-800 space-y-2.5 flex-1 flex flex-col min-h-0 shadow-inner backdrop-blur-md overflow-hidden">
+            <div className="flex items-center justify-between border-b border-slate-800/80 pb-2 shrink-0">
+              <div className="flex items-center gap-1.5">
+                <div className="p-1 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400">
+                  <BarChart3 className="w-3.5 h-3.5" />
+                </div>
+                <h5 className="text-[11px] font-black text-slate-100 uppercase tracking-wider">
+                  Descriptores ({teamData.descriptorStats.length})
+                </h5>
+              </div>
+              <span className="text-[9px] text-slate-400 font-mono bg-slate-950 px-2 py-0.5 rounded-full border border-slate-800">
+                Total & %
+              </span>
+            </div>
 
-              // Choose icon based on descriptor text
-              const dLower = desc.name.toLowerCase();
-              const IconComponent = dLower.includes('remate') || dLower.includes('disparo') || dLower.includes('gol')
-                ? Target
-                : dLower.includes('parada') || dLower.includes('defens') || dLower.includes('falta')
-                ? Shield
-                : dLower.includes('lanzamiento') || dLower.includes('pase') || dLower.includes('centro')
-                ? Activity
-                : Tag;
+            {teamData.descriptorStats.length === 0 ? (
+              <p className="text-[11px] text-slate-500 italic py-4 text-center">Sin descriptores registrados.</p>
+            ) : (
+              <div className="space-y-2 flex-1 overflow-y-auto pr-1 scrollbar-thin min-h-0">
+                {teamData.descriptorStats.map((desc) => {
+                  const isSelected = selectedDescriptor?.toLowerCase().trim() === desc.name.toLowerCase().trim();
+                  const hasZoneFilter = Boolean(selectedZone);
+                  const isDescriptorInZone = hasZoneFilter && desc.zoneCount > 0;
 
-              return (
-                <div
-                  key={desc.name}
-                  onClick={() => onSelectDescriptor(isSelected ? null : desc.name)}
-                  className={`relative overflow-hidden p-2.5 rounded-xl border transition-all duration-200 cursor-pointer select-none group ${
-                    isSelected
-                      ? 'bg-gradient-to-r from-emerald-950/80 via-emerald-900/60 to-slate-950 border-emerald-400 ring-2 ring-emerald-500/40 shadow-lg shadow-emerald-950/50 scale-[1.01]'
-                      : isDescriptorInZone
-                      ? 'bg-gradient-to-r from-amber-950/40 via-slate-950 to-slate-950 border-amber-500/60 text-amber-200'
-                      : hasZoneFilter && desc.zoneCount === 0
-                      ? 'bg-slate-950/60 border-slate-800/60 opacity-40 hover:opacity-80'
-                      : 'bg-slate-950/90 border-slate-800/90 hover:border-slate-700 hover:bg-slate-900/80'
-                  }`}
-                  title="Haz clic para filtrar el campograma por este descriptor"
-                >
-                  <div className="flex items-center justify-between text-[11px] mb-1.5">
+                  // Choose icon based on descriptor text
+                  const dLower = desc.name.toLowerCase();
+                  const IconComponent = dLower.includes('remate') || dLower.includes('disparo') || dLower.includes('gol')
+                    ? Target
+                    : dLower.includes('parada') || dLower.includes('defens') || dLower.includes('falta')
+                    ? Shield
+                    : dLower.includes('lanzamiento') || dLower.includes('pase') || dLower.includes('centro')
+                    ? Activity
+                    : Tag;
+
+                  return (
+                    <div
+                      key={desc.name}
+                      onClick={() => onSelectDescriptor(isSelected ? null : desc.name)}
+                      className={`relative overflow-hidden p-2.5 rounded-xl border transition-all duration-200 cursor-pointer select-none group ${
+                        isSelected
+                          ? 'bg-gradient-to-r from-emerald-950/80 via-emerald-900/60 to-slate-950 border-emerald-400 ring-2 ring-emerald-500/40 shadow-lg shadow-emerald-950/50 scale-[1.01]'
+                          : isDescriptorInZone
+                          ? 'bg-gradient-to-r from-amber-950/40 via-slate-950 to-slate-950 border-amber-500/60 text-amber-200'
+                          : hasZoneFilter && desc.zoneCount === 0
+                          ? 'bg-slate-950/60 border-slate-800/60 opacity-40 hover:opacity-80'
+                          : 'bg-slate-950/90 border-slate-800/90 hover:border-slate-700 hover:bg-slate-900/80'
+                      }`}
+                      title="Haz clic para filtrar el campograma por este descriptor"
+                    >
+                      <div className="flex items-center justify-between text-[11px] mb-1.5">
+                        <div className="flex items-center gap-1.5 truncate">
+                          <IconComponent className={`w-3.5 h-3.5 shrink-0 ${
+                            isSelected ? 'text-emerald-400' : isDescriptorInZone ? 'text-amber-400' : 'text-cyan-400'
+                          }`} />
+                          <span className={`font-bold truncate ${
+                            isSelected ? 'text-emerald-300' : isDescriptorInZone ? 'text-amber-200' : 'text-slate-200'
+                          }`}>
+                            {isSelected ? '✓ ' : ''}{desc.name}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0 ml-1.5 font-mono">
+                          {hasZoneFilter && (
+                            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md border ${
+                              desc.zoneCount > 0
+                                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                                : 'bg-slate-900 text-slate-500 border-slate-800'
+                            }`}>
+                              📍 {desc.zoneCount} en zona
+                            </span>
+                          )}
+
+                          <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full border ${
+                            isSelected
+                              ? 'bg-emerald-400 text-slate-950 border-emerald-300'
+                              : 'bg-slate-900 text-cyan-300 border-slate-800'
+                          }`}>
+                            {desc.totalCount} acc. <span className="text-slate-400 font-medium">({desc.pct}%)</span>
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Modern Animated Gradient Gauge Bar */}
+                      <div className="w-full bg-slate-950 h-2 rounded-full overflow-hidden p-0.5 border border-slate-800/80 shadow-inner">
+                        <div
+                          className={`h-full rounded-full transition-all duration-500 ${
+                            isSelected
+                              ? 'bg-gradient-to-r from-emerald-400 via-teal-300 to-amber-400 shadow-[0_0_10px_rgba(52,211,153,0.8)]'
+                              : isDescriptorInZone
+                              ? 'bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-300 shadow-[0_0_8px_rgba(245,158,11,0.6)]'
+                              : 'bg-gradient-to-r from-cyan-500 via-emerald-400 to-amber-400 opacity-80'
+                          }`}
+                          style={{
+                            width: `${Math.max(4, Math.min(100, desc.pct))}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Lista de Acciones del Equipo */}
+        <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800 space-y-2 shrink-0 max-h-44 flex flex-col min-h-0">
+          <h5 className="text-[11px] font-black text-slate-200 uppercase tracking-wider flex items-center justify-between border-b border-slate-800/80 pb-1.5 shrink-0">
+            <span className="flex items-center gap-1">
+              <Clock className="w-3 h-3 text-cyan-400" />
+              <span>Acciones ({actionEventsList.length})</span>
+            </span>
+            {(selectedZone || selectedDescriptor || selectedEventId) && (
+              <button
+                onClick={() => {
+                  onSelectZone(null);
+                  onSelectDescriptor(null);
+                  onSelectEventId(null);
+                }}
+                className="text-[9px] text-rose-400 hover:text-rose-300 underline font-bold cursor-pointer"
+              >
+                Reset
+              </button>
+            )}
+          </h5>
+
+          {actionEventsList.length === 0 ? (
+            <p className="text-[11px] text-slate-500 italic py-2 text-center">Sin acciones que coincidan.</p>
+          ) : (
+            <div className="space-y-1.5 overflow-y-auto pr-1 flex-1 scrollbar-thin min-h-0">
+              {actionEventsList.map((evt) => {
+                const isEvtSelected = selectedEventId === evt.event_id;
+
+                return (
+                  <div
+                    key={evt.event_id}
+                    onClick={() => onSelectEventId(isEvtSelected ? null : evt.event_id)}
+                    className={`flex items-center justify-between border rounded-lg p-1.5 transition text-[11px] cursor-pointer select-none ${
+                      isEvtSelected
+                        ? 'bg-rose-500/25 border-rose-400 text-rose-200 ring-2 ring-rose-400 shadow-lg shadow-rose-950/40'
+                        : 'bg-slate-950 border-slate-800 hover:border-rose-500/50'
+                    }`}
+                    title="Haz clic para seleccionar y resaltar su flecha en el campograma"
+                  >
                     <div className="flex items-center gap-1.5 truncate">
-                      <IconComponent className={`w-3.5 h-3.5 shrink-0 ${
-                        isSelected ? 'text-emerald-400' : isDescriptorInZone ? 'text-amber-400' : 'text-cyan-400'
-                      }`} />
-                      <span className={`font-bold truncate ${
-                        isSelected ? 'text-emerald-300' : isDescriptorInZone ? 'text-amber-200' : 'text-slate-200'
+                      <span className={`font-mono font-black px-1 py-0.5 rounded border text-[9px] shrink-0 ${
+                        isEvtSelected
+                          ? 'bg-rose-500 text-white border-rose-400'
+                          : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
                       }`}>
-                        {isSelected ? '✓ ' : ''}{desc.name}
+                        {evt.minute}' {evt.period === 1 ? '1ªP' : '2ªP'}
+                      </span>
+                      <span className={`font-bold truncate ${isEvtSelected ? 'text-rose-300' : 'text-white'}`}>
+                        {isEvtSelected ? '📍 ' : ''}{evt.player_name || name}
                       </span>
                     </div>
 
-                    <div className="flex items-center gap-1.5 shrink-0 ml-1.5 font-mono">
-                      {hasZoneFilter && (
-                        <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md border ${
-                          desc.zoneCount > 0
-                            ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                            : 'bg-slate-900 text-slate-500 border-slate-800'
-                        }`}>
-                          📍 {desc.zoneCount} en zona
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {evt.outcome && (
+                        <span
+                          className={`text-[9px] font-bold px-1 py-0.5 rounded border ${
+                            evt.outcome.toLowerCase().includes('éxito') ||
+                            evt.outcome.toLowerCase().includes('exito') ||
+                            evt.outcome.toLowerCase().includes('gol')
+                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                              : 'bg-red-500/20 text-red-300 border-red-500/40'
+                          }`}
+                        >
+                          {evt.outcome}
                         </span>
                       )}
-
-                      <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full border ${
-                        isSelected
-                          ? 'bg-emerald-400 text-slate-950 border-emerald-300'
-                          : 'bg-slate-900 text-cyan-300 border-slate-800'
-                      }`}>
-                        {desc.totalCount} acc. <span className="text-slate-400 font-medium">({desc.pct}%)</span>
-                      </span>
+                      {onSelectVideoEvt && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectVideoEvt(evt);
+                          }}
+                          className="px-1.5 py-0.5 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[9px] flex items-center gap-0.5 shadow transition cursor-pointer"
+                          title="Ver vídeo"
+                        >
+                          <Play className="w-2.5 h-2.5 fill-slate-950" />
+                        </button>
+                      )}
                     </div>
                   </div>
-
-                  {/* Modern Animated Gradient Gauge Bar */}
-                  <div className="w-full bg-slate-950 h-2 rounded-full overflow-hidden p-0.5 border border-slate-800/80 shadow-inner">
-                    <div
-                      className={`h-full rounded-full transition-all duration-500 ${
-                        isSelected
-                          ? 'bg-gradient-to-r from-emerald-400 via-teal-300 to-amber-400 shadow-[0_0_10px_rgba(52,211,153,0.8)]'
-                          : isDescriptorInZone
-                          ? 'bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-300 shadow-[0_0_8px_rgba(245,158,11,0.6)]'
-                          : 'bg-gradient-to-r from-cyan-500 via-emerald-400 to-amber-400 opacity-80'
-                      }`}
-                      style={{
-                        width: `${Math.max(4, Math.min(100, desc.pct))}%`,
-                      }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* Lista de Acciones del Equipo */}
-      <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800 space-y-2 shrink-0 max-h-44 flex flex-col min-h-0">
-        <h5 className="text-[11px] font-black text-slate-200 uppercase tracking-wider flex items-center justify-between border-b border-slate-800/80 pb-1.5 shrink-0">
-          <span className="flex items-center gap-1">
-            <Clock className="w-3 h-3 text-cyan-400" />
-            <span>Acciones ({actionEventsList.length})</span>
-          </span>
-          {(selectedZone || selectedDescriptor || selectedEventId) && (
-            <button
-              onClick={() => {
-                onSelectZone(null);
-                onSelectDescriptor(null);
-                onSelectEventId(null);
-              }}
-              className="text-[9px] text-rose-400 hover:text-rose-300 underline font-bold cursor-pointer"
-            >
-              Reset
-            </button>
+                );
+              })}
+            </div>
           )}
-        </h5>
-
-        {actionEventsList.length === 0 ? (
-          <p className="text-[11px] text-slate-500 italic py-2 text-center">Sin acciones que coincidan.</p>
-        ) : (
-          <div className="space-y-1.5 overflow-y-auto pr-1 flex-1 scrollbar-thin min-h-0">
-            {actionEventsList.map((evt) => {
-              const isEvtSelected = selectedEventId === evt.event_id;
-
-              return (
-                <div
-                  key={evt.event_id}
-                  onClick={() => onSelectEventId(isEvtSelected ? null : evt.event_id)}
-                  className={`flex items-center justify-between border rounded-lg p-1.5 transition text-[11px] cursor-pointer select-none ${
-                    isEvtSelected
-                      ? 'bg-rose-500/25 border-rose-400 text-rose-200 ring-2 ring-rose-400 shadow-lg shadow-rose-950/40'
-                      : 'bg-slate-950 border-slate-800 hover:border-rose-500/50'
-                  }`}
-                  title="Haz clic para seleccionar y resaltar su flecha en el campograma"
-                >
-                  <div className="flex items-center gap-1.5 truncate">
-                    <span className={`font-mono font-black px-1 py-0.5 rounded border text-[9px] shrink-0 ${
-                      isEvtSelected
-                        ? 'bg-rose-500 text-white border-rose-400'
-                        : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
-                    }`}>
-                      {evt.minute}' {evt.period === 1 ? '1ªP' : '2ªP'}
-                    </span>
-                    <span className={`font-bold truncate ${isEvtSelected ? 'text-rose-300' : 'text-white'}`}>
-                      {isEvtSelected ? '📍 ' : ''}{evt.player_name || name}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    {evt.outcome && (
-                      <span
-                        className={`text-[9px] font-bold px-1 py-0.5 rounded border ${
-                          evt.outcome.toLowerCase().includes('éxito') ||
-                          evt.outcome.toLowerCase().includes('exito') ||
-                          evt.outcome.toLowerCase().includes('gol')
-                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                            : 'bg-red-500/20 text-red-300 border-red-500/40'
-                        }`}
-                      >
-                        {evt.outcome}
-                      </span>
-                    )}
-                    {onSelectVideoEvt && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onSelectVideoEvt(evt);
-                        }}
-                        className="px-1.5 py-0.5 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[9px] flex items-center gap-0.5 shadow transition cursor-pointer"
-                        title="Ver vídeo"
-                      >
-                        <Play className="w-2.5 h-2.5 fill-slate-950" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const renderTeamPitch = (
     teamName: string,
@@ -2994,19 +3201,59 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({
       descFilteredEvents.forEach((evt) => {
         const g = getGoalCoords(evt);
         if (g) {
+          const dorsal =
+            evt.metadata?.player_number ||
+            evt.metadata?.dorsal ||
+            evt.metadata?.player_dorsal ||
+            evt.metadata?.number ||
+            null;
           list.push({
             id: evt.event_id,
             x: g.x,
             y: g.y,
             zone: g.zone,
-            outcome: evt.outcome,
-            player_name: evt.player_name,
+            outcome: evt.outcome || (evt.metadata?.result as string) || (evt.metadata?.outcome as string) || null,
+            player_name: evt.player_name || evt.metadata?.player_name || null,
+            player_number: dorsal,
             isSelected: selectedEventId ? evt.event_id === selectedEventId : false,
           });
         }
       });
       return list;
     }, [descFilteredEvents, selectedEventId]);
+
+    const isRecoveryCategory = useMemo(() => {
+      const norm = (name || '').toLowerCase().trim();
+      const btnNorm = (button?.name || '').toLowerCase().trim();
+      return (
+        norm.includes('recuperaci') ||
+        norm.includes('recovery') ||
+        norm.includes('recuperar') ||
+        norm.includes('robo') ||
+        norm.includes('intercep') ||
+        btnNorm.includes('recuperaci') ||
+        btnNorm.includes('recovery') ||
+        btnNorm.includes('recuperar') ||
+        btnNorm.includes('robo') ||
+        btnNorm.includes('intercep') ||
+        pitchViewType === 'heatmap'
+      );
+    }, [name, button, pitchViewType]);
+
+    const isCornerCategory = useMemo(() => {
+      const norm = (name || '').toLowerCase().trim();
+      const btnNorm = (button?.name || '').toLowerCase().trim();
+      return (
+        norm.includes('corner') ||
+        norm.includes('córner') ||
+        norm.includes('saque de esquina') ||
+        norm.includes('esquina') ||
+        btnNorm.includes('corner') ||
+        btnNorm.includes('córner') ||
+        btnNorm.includes('saque de esquina') ||
+        btnNorm.includes('esquina')
+      );
+    }, [name, button]);
 
     const isGoalOrRemateCategory = useMemo(() => {
       const norm = (name || '').toLowerCase().trim();
@@ -3022,7 +3269,34 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({
       );
     }, [name, button]);
 
-    const isDualCampograma = isGoalOrRemateCategory || goalPointsList.length > 0;
+    const isDualCampograma = isCornerCategory || isGoalOrRemateCategory || goalPointsList.length > 0;
+
+    const cornerHeatmapPoints: EventPitchMarker[] = useMemo(() => {
+      return pointsListWithSelection.map((pt) => ({
+        ...pt,
+        startX: pt.endX ?? pt.startX,
+        startY: pt.endY ?? pt.startY,
+        endX: null,
+        endY: null,
+      }));
+    }, [pointsListWithSelection]);
+
+    // Split recovery / heatmap points by 1st and 2nd half
+    const p1PointsList = useMemo(() => {
+      return pointsListWithSelection.filter((pt) => pt.period === 1);
+    }, [pointsListWithSelection]);
+
+    const p2PointsList = useMemo(() => {
+      return pointsListWithSelection.filter((pt) => pt.period === 2);
+    }, [pointsListWithSelection]);
+
+    const leftCornersCount = useMemo(() => {
+      return pointsListWithSelection.filter((pt) => pt.cornerSide === 'left').length;
+    }, [pointsListWithSelection]);
+
+    const rightCornersCount = useMemo(() => {
+      return pointsListWithSelection.filter((pt) => pt.cornerSide === 'right').length;
+    }, [pointsListWithSelection]);
 
     const selectedEventGoalCoords = useMemo(() => {
       if (!selectedEventId) return null;
@@ -3030,19 +3304,91 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({
       return selEvt ? getGoalCoords(selEvt) : null;
     }, [selectedEventId, allEventsList]);
 
+    // Player stats for this team in this action
+    const playerStats = useMemo(() => {
+      const map: Record<string, { count: number; goals: number; dorsal?: string; events: NormalizedEvent[] }> = {};
+      allEventsList.forEach((evt) => {
+        const pName = evt.player_name || evt.metadata?.player_name || 'Sin Asignar';
+        const dorsal = evt.metadata?.player_number || evt.metadata?.dorsal || evt.metadata?.player_dorsal;
+        const isGoal = (evt.outcome || '').toLowerCase().includes('gol') || (evt.category || '').toLowerCase().includes('gol');
+        if (!map[pName]) {
+          map[pName] = { count: 0, goals: 0, dorsal, events: [] };
+        }
+        map[pName].count++;
+        if (isGoal) map[pName].goals++;
+        if (dorsal && !map[pName].dorsal) map[pName].dorsal = dorsal;
+        map[pName].events.push(evt);
+      });
+      return Object.entries(map)
+        .map(([pName, d]) => ({
+          name: pName,
+          ...d,
+          pct: allEventsList.length > 0 ? Math.round((d.count / allEventsList.length) * 100) : 0,
+        }))
+        .sort((a, b) => b.count - a.count);
+    }, [allEventsList]);
+
+    // Period stats for this team
+    const periodStats = useMemo(() => {
+      let p1 = 0;
+      let p2 = 0;
+      allEventsList.forEach((evt) => {
+        const p = resolveEventPeriod(evt);
+        if (p === 2) p2++;
+        else p1++;
+      });
+      const total = allEventsList.length;
+      return {
+        p1,
+        p2,
+        p1Pct: total > 0 ? Math.round((p1 / total) * 100) : 0,
+        p2Pct: total > 0 ? Math.round((p2 / total) * 100) : 0,
+      };
+    }, [allEventsList]);
+
+    // Outcome stats for this team
+    const outcomeStats = useMemo(() => {
+      const counts: Record<string, number> = {};
+      allEventsList.forEach((evt) => {
+        const out = evt.outcome || (evt.metadata?.result as string) || 'Registrado';
+        counts[out] = (counts[out] || 0) + 1;
+      });
+      const total = allEventsList.length;
+      return Object.entries(counts)
+        .map(([outName, count]) => ({
+          name: outName,
+          count,
+          pct: total > 0 ? Math.round((count / total) * 100) : 0,
+        }))
+        .sort((a, b) => b.count - a.count);
+    }, [allEventsList]);
+
+    // Zone breakdown for this team
+    const zoneBreakdown = useMemo(() => {
+      const entries = Object.entries(teamData.zoneCounts);
+      const total = allEventsList.length;
+      return entries
+        .map(([zName, count]) => ({
+          name: zName,
+          count,
+          pct: total > 0 ? Math.round((count / total) * 100) : 0,
+        }))
+        .sort((a, b) => b.count - a.count);
+    }, [teamData.zoneCounts, allEventsList]);
+
     return (
-      <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 space-y-2 flex flex-col justify-between h-full">
+      <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 space-y-3 flex flex-col h-full overflow-y-auto">
         {/* Team Shield Header */}
         <div className="flex items-center justify-between border-b border-slate-800 pb-2.5 shrink-0">
           <div className="flex items-center gap-3 min-w-0">
-            <TeamLogo teamName={teamName} size={36} />
+            <TeamLogo teamName={teamName} logoUrl={isHome ? match.home_team_logo : match.away_team_logo} size={36} />
             <div className="min-w-0">
               <h4 className="text-xs sm:text-sm font-black text-white truncate leading-tight">
                 {teamName}
               </h4>
               <span className="text-[9px] font-extrabold uppercase tracking-wider text-amber-400 block truncate">
                 {isHome ? 'CAMPOGRAMA LOCAL' : 'CAMPOGRAMA VISITANTE'}
-                {isDualCampograma && ' (DOBLE VISTA)'}
+                {isCornerCategory ? ' (DOBLE MEDIOCAMPO)' : isRecoveryCategory ? ' (MAPA DE CALOR)' : isDualCampograma ? ' (DOBLE VISTA)' : ''}
               </span>
             </div>
           </div>
@@ -3065,7 +3411,7 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({
               }`}
             >
               <Eye className="w-3 h-3" />
-              <span>Vista Doble</span>
+              <span>{isCornerCategory ? 'Doble Vista' : 'Vista Doble'}</span>
             </button>
             <button
               type="button"
@@ -3076,7 +3422,7 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              <span>⚽ Terreno</span>
+              <span>{isCornerCategory ? '🏹 Flechas' : '⚽ Terreno'}</span>
             </button>
             <button
               type="button"
@@ -3087,8 +3433,51 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              <span>🥅 Portería</span>
+              <span>{isCornerCategory ? '🔥 Mapa Calor' : '🥅 Portería'}</span>
             </button>
+          </div>
+        )}
+
+        {/* Leyenda de Formas según Resultado de Tiro (Solo en Remates / Tiros) */}
+        {isGoalOrRemateCategory && (
+          <div className="flex items-center justify-between gap-1.5 px-2.5 py-1.5 bg-slate-900/80 rounded-xl border border-slate-800 text-[9px] font-bold text-slate-300 overflow-x-auto scrollbar-none shrink-0">
+            <span className="text-[8.5px] uppercase font-black text-slate-400 shrink-0">Forma Origen / Tiro:</span>
+            <div className="flex items-center gap-2.5 shrink-0">
+              <span className="flex items-center gap-1 text-emerald-400 shrink-0">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 border border-amber-300 inline-block shrink-0" />
+                <span>Gol (Balón/Círculo)</span>
+              </span>
+              <span className="flex items-center gap-1 text-sky-400 shrink-0">
+                <span className="w-2 h-2 rotate-45 bg-sky-500 border border-sky-200 inline-block shrink-0" />
+                <span>A Puerta (Rombo)</span>
+              </span>
+              <span className="flex items-center gap-1 text-red-400 shrink-0">
+                <span className="w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-b-[7px] border-b-red-500 inline-block shrink-0" />
+                <span>Fuera (Triángulo)</span>
+              </span>
+              <span className="flex items-center gap-1 text-amber-400 shrink-0">
+                <span className="w-2.5 h-2.5 bg-amber-500 border border-amber-200 rounded-[1.5px] inline-block shrink-0" />
+                <span>Bloqueado</span>
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Leyenda de Curvas de Trayectoria (Solo en Córners) */}
+        {isCornerCategory && (
+          <div className="flex items-center justify-between gap-1.5 px-2.5 py-1.5 bg-slate-900/80 rounded-xl border border-slate-800 text-[8.5px] font-bold text-slate-300 overflow-x-auto scrollbar-none shrink-0">
+            <span className="text-[8.5px] uppercase font-black text-amber-400 shrink-0">Curva de Saque:</span>
+            <div className="flex items-center gap-2.5 shrink-0">
+              <span className="text-cyan-300 font-extrabold flex items-center gap-0.5">
+                <span>⤴️ Abierto (Convexa)</span>
+              </span>
+              <span className="text-pink-300 font-extrabold flex items-center gap-0.5">
+                <span>⤵️ Cerrado (Cóncava)</span>
+              </span>
+              <span className="text-emerald-300 font-extrabold flex items-center gap-0.5">
+                <span>➡️ Plano / Corto (Recta)</span>
+              </span>
+            </div>
           </div>
         )}
 
@@ -3140,17 +3529,19 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({
           );
         })()}
 
-        {/* Main Campogramas Container */}
-        <div className="flex-1 flex flex-col gap-3 justify-center pt-1 pb-1 min-h-0 w-full overflow-hidden">
-          {/* 1. Campograma de Terreno de Juego */}
-          {(pitchTabMode === 'both' || pitchTabMode === 'field') && (
+        {/* ── 1. CAMPOGRAMAS EN LA PARTE SUPERIOR (SIN ESPACIO VACÍO ARRIBA) ── */}
+        <div className="w-full flex flex-col gap-2.5 shrink-0 pt-0.5">
+          {isRecoveryCategory ? (
             <div className="w-full space-y-1">
-              {isDualCampograma && pitchTabMode === 'both' && (
-                <span className="text-[10px] font-black text-emerald-400 uppercase tracking-wider block text-center">
-                  ⚽ 1. Terreno de Juego
+              <div className="flex items-center justify-between px-1">
+                <span className="text-[10px] font-black text-amber-400 uppercase tracking-wider flex items-center gap-1">
+                  <span>🔥 Mapa de Calor Global (Partido Completo)</span>
                 </span>
-              )}
-              <div className="w-full max-w-[310px] sm:max-w-[330px] mx-auto flex items-center justify-center">
+                <span className="text-[9px] font-mono font-bold text-slate-400 bg-slate-900 px-2 py-0.5 rounded-lg border border-slate-800">
+                  {pointsListWithSelection.length} {pointsListWithSelection.length === 1 ? 'Acción' : 'Acciones'}
+                </span>
+              </div>
+              <div className="w-full flex items-center justify-center">
                 <BotoneraPitchCanvas
                   hideHeader={true}
                   hideFooter={true}
@@ -3161,8 +3552,14 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({
                   onSetCoords={() => {}}
                   selectedZone={selectedZone}
                   onSelectZone={(zName) => onSelectZone(zName === selectedZone ? null : zName)}
-                  onSelectMarker={(mId) => onSelectEventId(mId === selectedEventId ? null : mId)}
-                  initialMode={pitchViewType}
+                  onSelectMarker={(mId) => {
+                    onSelectEventId(mId === selectedEventId ? null : mId);
+                    if (mId) {
+                      const matchEvt = allEventsList.find((e) => e.event_id === mId);
+                      if (matchEvt) handleOpenVideoPopup(matchEvt, isHome);
+                    }
+                  }}
+                  initialMode="heatmap"
                   lockMode={true}
                   pitchViewMode="full"
                   zoneCounts={teamData.zoneCounts}
@@ -3170,33 +3567,330 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({
                 />
               </div>
             </div>
+          ) : isCornerCategory ? (
+            <>
+              {/* 1. Campograma de Flechas y Trayectorias (Medio Campo Superior) */}
+              {(pitchTabMode === 'both' || pitchTabMode === 'field') && (
+                <div className="w-full space-y-1">
+                  <div className="flex items-center justify-between px-1">
+                    <span className="text-[10px] font-black text-emerald-400 uppercase tracking-wider flex items-center gap-1">
+                      <span>🏹 1. Flechas y Trayectorias de Córner</span>
+                    </span>
+                    <span className="text-[9px] font-mono font-bold text-slate-400 bg-slate-900 px-2 py-0.5 rounded-lg border border-slate-800">
+                      Medio Campo
+                    </span>
+                  </div>
+                  <div className="w-full flex items-center justify-center">
+                    <BotoneraPitchCanvas
+                      hideHeader={true}
+                      hideFooter={true}
+                      startX={null}
+                      startY={null}
+                      endX={null}
+                      endY={null}
+                      onSetCoords={() => {}}
+                      selectedZone={selectedZone}
+                      onSelectZone={(zName) => onSelectZone(zName === selectedZone ? null : zName)}
+                      onSelectMarker={(mId) => {
+                        onSelectEventId(mId === selectedEventId ? null : mId);
+                        if (mId) {
+                          const matchEvt = allEventsList.find((e) => e.event_id === mId);
+                          if (matchEvt) handleOpenVideoPopup(matchEvt, isHome);
+                        }
+                      }}
+                      initialMode="vector_arrow"
+                      lockMode={true}
+                      pitchViewMode="half"
+                      zoneCounts={teamData.zoneCounts}
+                      pointsList={pointsListWithSelection}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* 2. Campograma de Mapa de Calor por Lado de Lanzamiento (Medio Campo Inferior) */}
+              {(pitchTabMode === 'both' || pitchTabMode === 'goal') && (
+                <div className={`w-full space-y-1 ${pitchTabMode === 'both' ? 'pt-2 border-t border-slate-800/80' : ''}`}>
+                  <div className="flex items-center justify-between px-1">
+                    <span className="text-[10px] font-black text-amber-400 uppercase tracking-wider flex items-center gap-1">
+                      <span>🔥 2. Mapa de Calor por Lado de Saque</span>
+                    </span>
+                    <div className="flex items-center gap-2 text-[9px] font-mono font-extrabold">
+                      <span className="text-cyan-400 flex items-center gap-1 bg-cyan-950/60 px-2 py-0.5 rounded-md border border-cyan-500/30">
+                        <span className="w-2 h-2 rounded-full bg-cyan-400 inline-block animate-pulse" />
+                        <span>Banda Izq: {leftCornersCount}</span>
+                      </span>
+                      <span className="text-orange-400 flex items-center gap-1 bg-orange-950/60 px-2 py-0.5 rounded-md border border-orange-500/30">
+                        <span className="w-2 h-2 rounded-full bg-orange-500 inline-block animate-pulse" />
+                        <span>Banda Der: {rightCornersCount}</span>
+                      </span>
+                    </div>
+                  </div>
+                  <div className="w-full flex items-center justify-center">
+                    <BotoneraPitchCanvas
+                      hideHeader={true}
+                      hideFooter={true}
+                      startX={null}
+                      startY={null}
+                      endX={null}
+                      endY={null}
+                      onSetCoords={() => {}}
+                      selectedZone={selectedZone}
+                      onSelectZone={(zName) => onSelectZone(zName === selectedZone ? null : zName)}
+                      onSelectMarker={(mId) => {
+                        onSelectEventId(mId === selectedEventId ? null : mId);
+                        if (mId) {
+                          const matchEvt = allEventsList.find((e) => e.event_id === mId);
+                          if (matchEvt) handleOpenVideoPopup(matchEvt, isHome);
+                        }
+                      }}
+                      initialMode="heatmap"
+                      lockMode={true}
+                      pitchViewMode="half"
+                      zoneCounts={teamData.zoneCounts}
+                      pointsList={cornerHeatmapPoints}
+                    />
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              {/* 1. Campograma de Terreno de Juego */}
+              {(pitchTabMode === 'both' || pitchTabMode === 'field') && (
+                <div className="w-full space-y-1">
+                  {isDualCampograma && pitchTabMode === 'both' && (
+                    <span className="text-[10px] font-black text-emerald-400 uppercase tracking-wider block text-center">
+                      ⚽ 1. Terreno de Juego
+                    </span>
+                  )}
+                  <div className="w-full flex items-center justify-center">
+                    <BotoneraPitchCanvas
+                      hideHeader={true}
+                      hideFooter={true}
+                      startX={null}
+                      startY={null}
+                      endX={null}
+                      endY={null}
+                      onSetCoords={() => {}}
+                      selectedZone={selectedZone}
+                      onSelectZone={(zName) => onSelectZone(zName === selectedZone ? null : zName)}
+                      onSelectMarker={(mId) => {
+                        onSelectEventId(mId === selectedEventId ? null : mId);
+                        if (mId) {
+                          const matchEvt = allEventsList.find((e) => e.event_id === mId);
+                          if (matchEvt) handleOpenVideoPopup(matchEvt, isHome);
+                        }
+                      }}
+                      initialMode={pitchViewType}
+                      lockMode={true}
+                      pitchViewMode="full"
+                      zoneCounts={teamData.zoneCounts}
+                      pointsList={pointsListWithSelection}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* 2. Campograma de Portería */}
+              {isDualCampograma && (pitchTabMode === 'both' || pitchTabMode === 'goal') && (
+                <div className={`w-full space-y-1 ${pitchTabMode === 'both' ? 'pt-2 border-t border-slate-800/80' : ''}`}>
+                  {pitchTabMode === 'both' && (
+                    <span className="text-[10px] font-black text-amber-400 uppercase tracking-wider block text-center">
+                      🥅 2. Campograma de Portería
+                    </span>
+                  )}
+                  <div className="w-full flex items-center justify-center">
+                    <BotoneraGoalCanvas
+                      goalX={selectedEventGoalCoords?.x ?? null}
+                      goalY={selectedEventGoalCoords?.y ?? null}
+                      goalZone={selectedEventGoalCoords?.zone ?? null}
+                      pointsList={goalPointsList}
+                      onSelectMarker={(mId) => {
+                        onSelectEventId(mId === selectedEventId ? null : mId);
+                        if (mId) {
+                          const matchEvt = allEventsList.find((e) => e.event_id === mId);
+                          if (matchEvt) handleOpenVideoPopup(matchEvt, isHome);
+                        }
+                      }}
+                      readOnly={true}
+                      hideHeader={true}
+                      className="w-full"
+                    />
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* ── 2. GRÁFICAS COMPLEMENTARIAS Y ESTADÍSTICAS DEL EQUIPO EN LA PARTE INFERIOR ── */}
+        <div className="space-y-3 pt-2 border-t border-slate-800/80 flex-1 flex flex-col justify-start">
+          {/* Distribución Temporal (1ª Parte vs 2ª Parte) */}
+          <div className="bg-slate-900/90 p-2.5 rounded-xl border border-slate-800 space-y-1.5 shadow-sm">
+            <div className="flex items-center justify-between text-[10px] font-bold">
+              <span className="text-slate-300 flex items-center gap-1">
+                <Clock className="w-3 h-3 text-cyan-400" />
+                <span>Distribución por Parte</span>
+              </span>
+              <span className="font-mono text-cyan-300 font-extrabold">
+                1ªP: {periodStats.p1} ({periodStats.p1Pct}%) • 2ªP: {periodStats.p2} ({periodStats.p2Pct}%)
+              </span>
+            </div>
+            {/* Horizontal Split Bar */}
+            <div className="grid grid-cols-2 gap-1 h-2 bg-slate-950 rounded-full overflow-hidden p-0.5 border border-slate-800">
+              <div className="flex justify-end h-full">
+                <div
+                  className="h-full rounded-l-full bg-gradient-to-l from-cyan-400 to-blue-500 transition-all duration-500"
+                  style={{ width: `${periodStats.p1Pct}%` }}
+                />
+              </div>
+              <div className="flex justify-start h-full">
+                <div
+                  className="h-full rounded-r-full bg-gradient-to-r from-indigo-400 to-purple-500 transition-all duration-500"
+                  style={{ width: `${periodStats.p2Pct}%` }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Desglose de Efectividad / Resultados */}
+          {outcomeStats.length > 0 && (
+            <div className="bg-slate-900/90 p-2.5 rounded-xl border border-slate-800 space-y-2 shadow-sm">
+              <div className="flex items-center justify-between text-[10px] font-bold border-b border-slate-800/80 pb-1">
+                <span className="text-slate-300 flex items-center gap-1">
+                  <Target className="w-3 h-3 text-emerald-400" />
+                  <span>Resultados ({outcomeStats.length})</span>
+                </span>
+                <span className="font-mono text-emerald-400 text-[9px]">
+                  {allEventsList.length} acc.
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {outcomeStats.map((out) => {
+                  const isGol = out.name.toLowerCase().includes('gol');
+                  const isFuera = out.name.toLowerCase().includes('fuera');
+                  const isParada = out.name.toLowerCase().includes('parada') || out.name.toLowerCase().includes('atajado');
+
+                  const colorClass = isGol
+                    ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30'
+                    : isParada
+                    ? 'text-amber-300 bg-amber-500/10 border-amber-500/30'
+                    : isFuera
+                    ? 'text-rose-300 bg-rose-500/10 border-rose-500/30'
+                    : 'text-cyan-300 bg-cyan-500/10 border-cyan-500/30';
+
+                  return (
+                    <div
+                      key={out.name}
+                      className={`p-1.5 rounded-lg border text-[10px] flex items-center justify-between font-mono ${colorClass}`}
+                    >
+                      <span className="font-bold truncate pr-1">{out.name}</span>
+                      <span className="font-extrabold shrink-0">
+                        {out.count} <span className="text-[9px] opacity-75">({out.pct}%)</span>
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           )}
 
-          {/* 2. Campograma de Portería */}
-          {isDualCampograma && (pitchTabMode === 'both' || pitchTabMode === 'goal') && (
-            <div className={`w-full space-y-1 ${pitchTabMode === 'both' ? 'pt-2 border-t border-slate-800/80' : ''}`}>
-              {pitchTabMode === 'both' && (
-                <span className="text-[10px] font-black text-amber-400 uppercase tracking-wider block text-center">
-                  🥅 2. Campograma de Portería
+          {/* Top Rematadores / Jugadores con Acciones */}
+          {playerStats.length > 0 && (
+            <div className="bg-slate-900/90 p-2.5 rounded-xl border border-slate-800 space-y-2 shadow-sm">
+              <div className="flex items-center justify-between text-[10px] font-bold border-b border-slate-800/80 pb-1">
+                <span className="text-slate-300 flex items-center gap-1">
+                  <User className="w-3 h-3 text-amber-400" />
+                  <span>Jugadores ({playerStats.length})</span>
                 </span>
-              )}
-              <div className="w-full max-w-[310px] sm:max-w-[330px] mx-auto flex items-center justify-center">
-                <BotoneraGoalCanvas
-                  goalX={selectedEventGoalCoords?.x ?? null}
-                  goalY={selectedEventGoalCoords?.y ?? null}
-                  goalZone={selectedEventGoalCoords?.zone ?? null}
-                  pointsList={goalPointsList}
-                  onSelectMarker={(mId) => onSelectEventId(mId === selectedEventId ? null : mId)}
-                  readOnly={true}
-                  hideHeader={true}
-                  className="w-full"
-                />
+                <span className="text-[9px] text-slate-400 font-mono">
+                  Clic para ver clip
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-36 overflow-y-auto pr-1 scrollbar-thin">
+                {playerStats.map((p) => {
+                  const isPlayerActive = p.events.some((e) => e.event_id === selectedEventId);
+                  return (
+                    <button
+                      key={p.name}
+                      type="button"
+                      onClick={() => {
+                        const firstEvt = p.events[0];
+                        if (firstEvt) {
+                          onSelectEventId(firstEvt.event_id);
+                          handleOpenVideoPopup(firstEvt, isHome);
+                        }
+                      }}
+                      className={`w-full text-left p-1.5 rounded-lg border transition-all text-[10px] flex items-center justify-between cursor-pointer ${
+                        isPlayerActive
+                          ? 'bg-amber-500/20 border-amber-400 text-amber-300 ring-1 ring-amber-400/50'
+                          : 'bg-slate-950/80 border-slate-800/90 hover:border-slate-700 text-slate-200'
+                      }`}
+                      title={`Ver acciones de ${p.name}`}
+                    >
+                      <div className="flex items-center gap-1 min-w-0 truncate">
+                        <span className="font-mono text-[9px] text-slate-400">
+                          {p.dorsal ? `#${p.dorsal}` : '•'}
+                        </span>
+                        <span className="font-bold truncate">{p.name}</span>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0 ml-1 font-mono text-[9px]">
+                        {p.goals > 0 && (
+                          <span className="px-1 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-black">
+                            ⚽ {p.goals}
+                          </span>
+                        )}
+                        <span className="px-1.5 py-0.5 rounded bg-slate-900 text-amber-300 font-extrabold border border-slate-800">
+                          {p.count} acc ({p.pct}%)
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Desglose por Zonas si existen */}
+          {zoneBreakdown.length > 0 && (
+            <div className="bg-slate-900/90 p-2.5 rounded-xl border border-slate-800 space-y-1.5 shadow-sm">
+              <div className="flex items-center justify-between text-[10px] font-bold border-b border-slate-800/80 pb-1">
+                <span className="text-slate-300 flex items-center gap-1">
+                  <MapPin className="w-3 h-3 text-indigo-400" />
+                  <span>Zonas Registradas</span>
+                </span>
+                <span className="text-[9px] text-indigo-400 font-mono">
+                  {zoneBreakdown.length} zonas
+                </span>
+              </div>
+              <div className="space-y-1">
+                {zoneBreakdown.slice(0, 3).map((z) => {
+                  const isZoneActive = selectedZone === z.name;
+                  return (
+                    <button
+                      key={z.name}
+                      type="button"
+                      onClick={() => onSelectZone(isZoneActive ? null : z.name)}
+                      className={`w-full text-left p-1 rounded-lg border text-[9px] flex items-center justify-between transition cursor-pointer ${
+                        isZoneActive
+                          ? 'bg-indigo-500/20 border-indigo-400 text-indigo-300'
+                          : 'bg-slate-950/70 border-slate-800 hover:border-slate-700 text-slate-300'
+                      }`}
+                    >
+                      <span className="font-bold truncate">{z.name}</span>
+                      <span className="font-mono font-extrabold text-indigo-300 shrink-0 ml-1">
+                        {z.count} acc ({z.pct}%)
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
         </div>
 
-        <div className="text-[9px] text-slate-500 text-center font-mono truncate shrink-0">
+        <div className="text-[9px] text-slate-500 text-center font-mono truncate shrink-0 pt-1">
           {selectedEventId ? (
             <span className="text-amber-400 font-bold">🎯 Flecha / Ubicación resaltada</span>
           ) : selectedZone ? (

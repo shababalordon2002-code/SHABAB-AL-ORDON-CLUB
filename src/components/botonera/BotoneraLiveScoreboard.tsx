@@ -128,6 +128,8 @@ interface BotoneraLiveScoreboardProps {
   period?: number;
   onUpdateLineup?: (team: 'home' | 'away', config: TeamLineupConfig, updatedPlayers: Player[]) => void;
   onAddEvent?: (evt: NormalizedEvent) => void;
+  /** Deletes an event (used for substitutions removed from the lineup editor) */
+  onDeleteEvent?: (eventId: string) => void;
   onResetSubstitutions?: (team: 'home' | 'away') => void;
   onResetLineupsAndSubstitutions?: (team?: 'home' | 'away' | 'both') => void;
 }
@@ -141,6 +143,7 @@ export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
   period = 1,
   onUpdateLineup,
   onAddEvent,
+  onDeleteEvent,
   onResetSubstitutions,
   onResetLineupsAndSubstitutions,
 }) => {
@@ -553,19 +556,15 @@ export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
             if (onAddEvent) onAddEvent(newEvt);
           }}
           onDeleteSubstitution={(evtId) => {
-            dbStore.deleteNormalizedEvent(evtId);
+            if (onDeleteEvent) onDeleteEvent(evtId);
+            else dbStore.deleteNormalizedEvent(evtId);
           }}
           onSave={(cfg) => {
             setHomeLineup(cfg);
             setEditingLineupTeam(null);
             const updatedPlayers = convertLineupToPlayers(cfg, homeTeamName, 'team_home');
-            if (match?.id) {
-              const existing = dbStore.getMatchById(match.id);
-              if (existing) {
-                dbStore.saveMatch({ ...existing, home_lineup: cfg });
-              }
-              updatedPlayers.forEach((p) => dbStore.savePlayer(p));
-            }
+            // Persisting the lineup (personal per analyst during a live session) is the
+            // parent's job via onUpdateLineup.
             onUpdateLineup?.('home', cfg, updatedPlayers);
           }}
           onCancel={() => setEditingLineupTeam(null)}
@@ -587,19 +586,15 @@ export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
             if (onAddEvent) onAddEvent(newEvt);
           }}
           onDeleteSubstitution={(evtId) => {
-            dbStore.deleteNormalizedEvent(evtId);
+            if (onDeleteEvent) onDeleteEvent(evtId);
+            else dbStore.deleteNormalizedEvent(evtId);
           }}
           onSave={(cfg) => {
             setAwayLineup(cfg);
             setEditingLineupTeam(null);
             const updatedPlayers = convertLineupToPlayers(cfg, awayTeamName, 'team_away');
-            if (match?.id) {
-              const existing = dbStore.getMatchById(match.id);
-              if (existing) {
-                dbStore.saveMatch({ ...existing, away_lineup: cfg });
-              }
-              updatedPlayers.forEach((p) => dbStore.savePlayer(p));
-            }
+            // Persisting the lineup (personal per analyst during a live session) is the
+            // parent's job via onUpdateLineup.
             onUpdateLineup?.('away', cfg, updatedPlayers);
           }}
           onCancel={() => setEditingLineupTeam(null)}
@@ -617,7 +612,7 @@ export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
               const periodVal = Number(subPeriod) || period || 1;
 
               const newEvt: NormalizedEvent = {
-                event_id: `evt_sub_${Date.now()}`,
+                event_id: `evt_sub_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
                 source_event_id: null,
                 match_id: match?.id || 'free_session',
                 team_name: targetTeam,

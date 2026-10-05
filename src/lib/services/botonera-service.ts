@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/client';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { SESSION_PRESERVE_COLUMNS, MATCH_PRESERVE_COLUMNS, isNoOpUpdate, selectWithFallback } from '@/lib/supabase/egress';
 import { BotoneraTemplate, ActiveBotoneraSession, NormalizedEvent } from '@/types';
+import { isLiveLineupLocked } from '@/lib/analyst-personal-state';
 
 // ==================== LIVE SESSION DETECTION ====================
 // Una sesión solo está "en vivo" si algún analista la mantiene abierta en la Botonera:
@@ -345,6 +346,9 @@ export async function saveAnalysisSessionToSupabase(session: ActiveBotoneraSessi
   const matchId = session.selectedMatchId;
   const mySeq = (_sessionSaveSeq[matchId] || 0) + 1;
   _sessionSaveSeq[matchId] = mySeq;
+  // Lineups are personal while the live session is open in this tab: keep the stored ones
+  // here and never push them to matches (see analyst-personal-state).
+  const lineupLocked = isLiveLineupLocked(matchId);
 
   try {
     let supabase: any;
@@ -385,8 +389,8 @@ export async function saveAnalysisSessionToSupabase(session: ActiveBotoneraSessi
       ? session.periodAdjustments
       : (existingSess?.period_adjustments ?? existingMatch?.period_adjustments ?? existingSess?.home_lineup?._period_adjustments ?? existingMatch?.home_lineup?._period_adjustments ?? null);
     const resolvedTemplateId = session.botoneraTemplateId || existingSess?.botonera_template_id || existingMatch?.botonera_template_id || null;
-    const resolvedHomeLineup = session.home_lineup || existingSess?.home_lineup || existingMatch?.home_lineup || null;
-    const resolvedAwayLineup = session.away_lineup || existingSess?.away_lineup || existingMatch?.away_lineup || null;
+    const resolvedHomeLineup = (lineupLocked ? null : session.home_lineup) || existingSess?.home_lineup || existingMatch?.home_lineup || null;
+    const resolvedAwayLineup = (lineupLocked ? null : session.away_lineup) || existingSess?.away_lineup || existingMatch?.away_lineup || null;
 
     const resolvedAnalystName = session.analystName || existingSess?.analyst_name || existingSess?.home_lineup?._analyst_name || null;
     const resolvedMatchTitle = session.matchTitle || existingSess?.match_title || existingSess?.home_lineup?._match_title || null;
@@ -472,6 +476,10 @@ export async function saveAnalysisSessionToSupabase(session: ActiveBotoneraSessi
           away_lineup: resolvedAwayLineup,
           updated_at: new Date().toISOString(),
         };
+        if (lineupLocked) {
+          delete matchPayload.home_lineup;
+          delete matchPayload.away_lineup;
+        }
         // Skip the write when the match already holds these exact values (e.g. the 30s
         // timer heartbeat): a no-op update would still broadcast via Realtime and make
         // every open client re-sync.
@@ -653,30 +661,27 @@ export async function getAnalysisEventsForMatchesFromSupabase(
   }
 }
 
-// Insert a single new event (does NOT overwrite other analysts' events)
+// Insert a single new event (does NOT overwrite other analysts' events).
+// Throws on failure (instead of returning false) so withRetry and the page's background
+// sync queue actually retry it; a swallowed failure left the event only on this screen.
 export async function insertAnalysisEventToSupabase(matchId: string, event: NormalizedEvent): Promise<boolean> {
+  let supabase: any;
   try {
-    let supabase: any;
-    try {
-      supabase = createAdminClient();
-    } catch {
-      supabase = createClient();
-    }
-    const row = { ...normalizedEventToRow(matchId, event), created_at: event.created_at || new Date().toISOString() };
-
-    const { error } = await supabase
-      .from('analysis_events')
-      .upsert([row], { onConflict: 'event_id' });
-
-    if (error) {
-      console.error('Error inserting analysis_event to Supabase:', error.message);
-      return false;
-    }
-    return true;
-  } catch (err: any) {
-    console.error('Error inserting analysis_event to Supabase:', err.message);
-    return false;
+    supabase = createAdminClient();
+  } catch {
+    supabase = createClient();
   }
+  const row = { ...normalizedEventToRow(matchId, event), created_at: event.created_at || new Date().toISOString() };
+
+  const { error } = await supabase
+    .from('analysis_events')
+    .upsert([row], { onConflict: 'event_id' });
+
+  if (error) {
+    console.error('Error inserting analysis_event to Supabase:', error.message);
+    throw new Error(error.message);
+  }
+  return true;
 }
 
 // Batch upsert multiple events in a single HTTP request (fast, robust, avoids connection limit bottlenecks)
@@ -696,6 +701,7 @@ export async function batchUpsertAnalysisEventsToSupabase(matchId: string, event
 
     // Chunk in groups of 100
     const chunkSize = 100;
+    let ok = true;
     for (let i = 0; i < rows.length; i += chunkSize) {
       const chunk = rows.slice(i, i + chunkSize);
       const { error } = await supabase
@@ -704,46 +710,45 @@ export async function batchUpsertAnalysisEventsToSupabase(matchId: string, event
 
       if (error) {
         console.warn('Error in batchUpsertAnalysisEventsToSupabase chunk:', error.message);
+        ok = false;
       }
     }
-    return true;
+    return ok;
   } catch (err: any) {
     console.warn('Error batch upserting analysis events to Supabase:', err.message);
     return false;
   }
 }
 
-// Update a single event in place (does NOT touch other analysts' events)
+// Update a single event in place (does NOT touch other analysts' events).
+// Throws on failure so withRetry / the background sync queue retry it.
 export async function updateAnalysisEventInSupabase(matchId: string, event: NormalizedEvent): Promise<boolean> {
+  let supabase: any;
   try {
-    let supabase: any;
-    try {
-      supabase = createAdminClient();
-    } catch {
-      supabase = createClient();
-    }
-    const row = normalizedEventToRow(matchId, event);
-
-    const { error } = await supabase
-      .from('analysis_events')
-      .update(row)
-      .eq('event_id', event.event_id);
-
-    if (error) {
-      console.error('Error updating analysis_event in Supabase:', error.message);
-      return false;
-    }
-    return true;
-  } catch (err: any) {
-    console.error('Error updating analysis_event in Supabase:', err.message);
-    return false;
+    supabase = createAdminClient();
+  } catch {
+    supabase = createClient();
   }
+  const row = normalizedEventToRow(matchId, event);
+
+  const { error } = await supabase
+    .from('analysis_events')
+    .update(row)
+    .eq('event_id', event.event_id);
+
+  if (error) {
+    console.error('Error updating analysis_event in Supabase:', error.message);
+    throw new Error(error.message);
+  }
+  return true;
 }
 
-// Delete a single event with safety backup (never lost in oblivion)
+// Delete a single event.
+// Throws when the row itself can't be deleted so withRetry / the background sync queue
+// retry it; the mirror cleanups stay best-effort.
 export async function deleteAnalysisEventFromSupabase(
   eventId: string,
-  deletedByName?: string,
+  _deletedByName?: string,
   matchIdHint?: string
 ): Promise<boolean> {
   if (!eventId) return false;
@@ -757,57 +762,32 @@ export async function deleteAnalysisEventFromSupabase(
 
     let resolvedMatchId = matchIdHint || null;
 
-    // 1. Safety backup to analysis_events_trash before deleting
-    try {
+    // Sin hint (p. ej. reintentos de la cola) se averigua el partido para limpiar solo su
+    // copia en match_analyses, en vez de recorrer las de todos los partidos.
+    if (!resolvedMatchId) {
       const { data: eventRow } = await supabase
         .from('analysis_events')
-        .select('*')
+        .select('match_id')
         .eq('event_id', eventId)
         .maybeSingle();
-
-      if (eventRow) {
-        resolvedMatchId = eventRow.match_id || resolvedMatchId;
-        await supabase
-          .from('analysis_events_trash')
-          .upsert([{
-            event_id: eventId,
-            match_id: resolvedMatchId || 'unknown',
-            event_data: eventRow,
-            deleted_by: deletedByName || eventRow.created_by_name || 'Analista',
-            deleted_at: new Date().toISOString()
-          }], { onConflict: 'event_id' })
-          .catch(() => {});
-      } else {
-        await supabase
-          .from('analysis_events_trash')
-          .upsert([{
-            event_id: eventId,
-            match_id: resolvedMatchId || 'unknown',
-            event_data: { event_id: eventId, match_id: resolvedMatchId },
-            deleted_by: deletedByName || 'Analista',
-            deleted_at: new Date().toISOString()
-          }], { onConflict: 'event_id' })
-          .catch(() => {});
-      }
-    } catch {
-      // Non-blocking
+      resolvedMatchId = eventRow?.match_id || null;
     }
 
-    // 2. Delete from analysis_events table
+    // 1. Delete from analysis_events table
     const { error } = await supabase.from('analysis_events').delete().eq('event_id', eventId);
     if (error) {
       console.error('Error deleting analysis_event from Supabase:', error.message);
+      throw new Error(error.message);
     }
 
-    // 3. Atomically remove the event from match_analyses table in Supabase
-    try {
-      let query = supabase.from('match_analyses').select('id, events');
-      if (resolvedMatchId) {
-        query = query.or(`match_id.eq.${resolvedMatchId},id.eq.analysis_${resolvedMatchId}`);
-      }
-      const { data: maList } = await query;
-      if (maList && maList.length > 0) {
-        for (const ma of maList) {
+    // 2. Remove the event from this match's match_analyses copy (best-effort)
+    if (resolvedMatchId) {
+      try {
+        const { data: maList } = await supabase
+          .from('match_analyses')
+          .select('id, events')
+          .or(`match_id.eq.${resolvedMatchId},id.eq.analysis_${resolvedMatchId}`);
+        for (const ma of maList || []) {
           if (Array.isArray(ma.events) && ma.events.some((e: any) => e && e.event_id === eventId)) {
             const clean = ma.events.filter((e: any) => e && e.event_id !== eventId);
             await supabase
@@ -816,38 +796,15 @@ export async function deleteAnalysisEventFromSupabase(
               .eq('id', ma.id);
           }
         }
+      } catch (maErr) {
+        console.warn('Could not clean match_analyses in Supabase:', maErr);
       }
-    } catch (maErr) {
-      console.warn('Could not clean match_analyses in Supabase:', maErr);
-    }
-
-    // 4. Atomically remove the event from analysis_sessions table in Supabase
-    try {
-      let query = supabase.from('analysis_sessions').select('id, events');
-      if (resolvedMatchId) {
-        query = query.eq('match_id', resolvedMatchId);
-      }
-      const { data: sessList } = await query;
-      if (sessList && sessList.length > 0) {
-        for (const s of sessList) {
-          const rawEvents = typeof s.events === 'string' ? JSON.parse(s.events) : (s.events || []);
-          if (Array.isArray(rawEvents) && rawEvents.some((e: any) => e && e.event_id === eventId)) {
-            const clean = rawEvents.filter((e: any) => e && e.event_id !== eventId);
-            await supabase
-              .from('analysis_sessions')
-              .update({ events: clean, last_updated_timestamp: Date.now() })
-              .eq('id', s.id);
-          }
-        }
-      }
-    } catch (sErr) {
-      console.warn('Could not clean analysis_sessions in Supabase:', sErr);
     }
 
     return true;
   } catch (err: any) {
     console.error('Error deleting analysis_event from Supabase:', err.message);
-    return false;
+    throw err;
   }
 }
 
@@ -911,11 +868,16 @@ export function subscribeToAnalysisEvents(
         }
       }
     )
-    // Single filtered DELETE handler (filtered strictly to this match_id)
+    // Supabase Realtime can't filter DELETE events: with `filter` set they never arrive, so a
+    // deletion by one analyst didn't disappear live for the others or the visor. Listen
+    // unfiltered and check the match here (payload.old carries match_id with REPLICA IDENTITY
+    // FULL, migration 0015; without it only the id arrives, and removing an unknown id is a no-op).
     .on(
       'postgres_changes',
-      { event: 'DELETE', schema: 'public', table: 'analysis_events', filter: `match_id=eq.${matchId}` },
+      { event: 'DELETE', schema: 'public', table: 'analysis_events' },
       (payload: any) => {
+        const oldMatchId = payload.old?.match_id;
+        if (oldMatchId && oldMatchId !== matchId) return;
         const eventId = payload.old?.event_id;
         if (eventId && !recentlyDeleted.has(eventId)) {
           recentlyDeleted.add(eventId);

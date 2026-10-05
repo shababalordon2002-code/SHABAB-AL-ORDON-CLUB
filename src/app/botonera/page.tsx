@@ -14,7 +14,6 @@ import {
   saveAnalysisSessionToSupabase,
   subscribeToAnalysisEvents,
   subscribeToAnalysisPresence,
-  subscribeToAnalysisSession,
   subscribeToAnalysisVideo,
   upsertAnalysisVideoToSupabase,
   withRetry,
@@ -23,13 +22,25 @@ import {
 } from '@/lib/services/botonera-service';
 import { saveAnalysisToSupabase, deleteAnalysisFromSupabase } from '@/lib/services/analysis-service';
 import { createMatchChangeBatcher } from '@/lib/supabase/egress';
-import { saveMatchesToSupabase } from '@/lib/services/matches-service';
+import { saveMatchesToSupabase, saveTeamLineupsToSupabase } from '@/lib/services/matches-service';
+import {
+  AnalystTeams,
+  TeamSide,
+  applyAnalystSubs,
+  clearAnalystTeams,
+  eventTeamSide,
+  getAnalystTeams,
+  isSubstitutionEvent,
+  saveAnalystTeams,
+  setLiveLineupLock,
+} from '@/lib/analyst-personal-state';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { Match, Player, NormalizedEvent, BotoneraTemplate, BotoneraButton, BotoneraProjectVideoType, MatchAnalysis, ActiveBotoneraSession, TeamLineupConfig } from '@/types';
 import { setRecordingLocked } from '@/lib/recording-lock';
 import { calculateEventVideoTime, formatVideoTime, openClipPopupWindow } from '@/lib/analytics/video-utils';
 import { calculateMatchScoresFromEvents } from '@/lib/analytics/dashboard-engine';
 import { createClient } from '@/lib/supabase/client';
+import { requestAdminPassword } from '@/components/auth/AdminPasswordPrompt';
 
 import { BotoneraHeader } from '@/components/botonera/BotoneraHeader';
 import { BotoneraPitchCanvas } from '@/components/botonera/BotoneraPitchCanvas';
@@ -163,7 +174,84 @@ export default function BotoneraPage() {
   const [activeClipEvent, setActiveClipEvent] = useState<NormalizedEvent | null>(null);
 
   // Registro colaborativo: analista autenticado + otros analistas conectados al mismo partido
-  const { user, profile } = useAuth();
+  const { user, profile, isAdmin } = useAuth();
+  // Cada analista solo puede borrar sus propios eventos (los registrados por otro analista
+  // quedan protegidos). El admin puede borrar cualquiera; los eventos antiguos sin autor
+  // (created_by vacío) los puede borrar cualquiera porque no se sabe de quién son.
+  const canDeleteEvent = useCallback(
+    (evt: NormalizedEvent | null | undefined) => {
+      if (!evt) return false;
+      // Las sustituciones son personales de cada analista (ver analyst-personal-state)
+      if (isAdmin || !evt.created_by || isSubstitutionEvent(evt)) return true;
+      return !!user && evt.created_by === user.id;
+    },
+    [isAdmin, user]
+  );
+
+  // Alineaciones y sustituciones por analista (como el crono): en cuanto un analista toca un
+  // equipo, ese equipo pasa a ser suyo hasta que sale y guarda; entonces solo los equipos que
+  // tocó sobrescriben lo guardado (el último que guarda cuenta). Ver analyst-personal-state.
+  const isPersonalMatch = Boolean(selectedMatchId && selectedMatchId !== 'free_session');
+  const [analystTeams, setAnalystTeams] = useState<AnalystTeams>({});
+  const analystTeamsRef = useRef<AnalystTeams>({});
+  useEffect(() => {
+    const loaded = isPersonalMatch ? getAnalystTeams(selectedMatchId) : {};
+    analystTeamsRef.current = loaded;
+    setAnalystTeams(loaded);
+  }, [selectedMatchId, isPersonalMatch]);
+
+  const teamNamesOf = (matchId: string): [string | undefined, string | undefined] => {
+    const m = dbStore.getMatchById(matchId) || matches.find((x) => x.id === matchId);
+    return [m?.home_team, m?.away_team];
+  };
+
+  // Aplica un cambio al estado personal del partido abierto. Al tocar un equipo por primera
+  // vez se parte de lo que se ve ahora (alineación guardada + sustituciones actuales).
+  const updateAnalystTeams = (sides: TeamSide[], change: (team: { lineup: TeamLineupConfig | null; subs: NormalizedEvent[] }, side: TeamSide) => { lineup: TeamLineupConfig | null; subs: NormalizedEvent[] }) => {
+    if (!isPersonalMatch) return;
+    const m = dbStore.getMatchById(selectedMatchId) || matches.find((x) => x.id === selectedMatchId);
+    const next: AnalystTeams = { ...analystTeamsRef.current };
+    sides.forEach((side) => {
+      const current = next[side] || {
+        lineup: (side === 'home' ? m?.home_lineup : m?.away_lineup) ?? null,
+        subs: events.filter((e) => isSubstitutionEvent(e) && eventTeamSide(e, m?.home_team, m?.away_team) === side),
+      };
+      next[side] = change(current, side);
+    });
+    analystTeamsRef.current = next;
+    saveAnalystTeams(selectedMatchId, next);
+    setAnalystTeams(next);
+  };
+
+  // Lado de una sustitución del partido abierto, o null si no es sustitución personal.
+  const personalSubSide = (evt: NormalizedEvent | null | undefined): TeamSide | null => {
+    if (!isPersonalMatch || !evt || !isSubstitutionEvent(evt)) return null;
+    const [home, away] = teamNamesOf(selectedMatchId);
+    return eventTeamSide(evt, home, away);
+  };
+
+  // Cualquier carga de eventos (Supabase, copia local, otro analista) se corrige para que las
+  // sustituciones de los equipos tocados sean siempre las de este analista.
+  useEffect(() => {
+    if (!isPersonalMatch || Object.keys(analystTeams).length === 0) return;
+    const [home, away] = teamNamesOf(selectedMatchId);
+    const ownSig = (list: NormalizedEvent[]) =>
+      JSON.stringify(
+        list
+          .filter((e) => {
+            if (!isSubstitutionEvent(e)) return false;
+            const side = eventTeamSide(e, home, away);
+            return !!side && !!analystTeams[side];
+          })
+          .sort((a, b) => (a.event_id < b.event_id ? -1 : 1))
+      );
+    setEvents((prev) => {
+      const next = applyAnalystSubs(prev, analystTeams, home, away);
+      return ownSig(prev) === ownSig(next) ? prev : next;
+    });
+    // teamNamesOf only reads the store / matches for the open match
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [events, analystTeams, selectedMatchId, isPersonalMatch]);
   const [connectedAnalysts, setConnectedAnalysts] = useState<{ userId: string; userName: string }[]>([]);
   // IDs de eventos que este mismo cliente acaba de escribir, para no re-aplicarlos cuando
   // los recibimos de vuelta por el canal realtime (eco de nuestra propia escritura)
@@ -210,7 +298,7 @@ export default function BotoneraPage() {
   // independiente; el que falle sigue en la cola para el próximo ciclo automático.
   const flushPendingSyncQueue = useCallback(() => {
     const entries = Array.from(pendingSyncQueueRef.current.entries());
-    entries.forEach(([id, op]) => {
+    return Promise.allSettled(entries.map(([id, op]) => {
       let action: Promise<any>;
       if (op.kind === 'insert') {
         action = insertAnalysisEventToSupabase(op.targetId, op.event);
@@ -219,10 +307,10 @@ export default function BotoneraPage() {
       } else {
         action = deleteAnalysisEventFromSupabase(op.eventId, op.deleterName);
       }
-      action
+      return action
         .then(() => clearSyncFailed(id))
         .catch((err) => console.warn(`Reintento automático en segundo plano aún falla para ${id}:`, err));
-    });
+    }));
   }, [clearSyncFailed]);
 
   useEffect(() => {
@@ -639,17 +727,8 @@ export default function BotoneraPage() {
           setIsTimerRunning(false);
         }
 
-        if (activeSession.selectedMatchId && (activeSession.home_lineup || activeSession.away_lineup)) {
-          const m = dbStore.getMatchById(activeSession.selectedMatchId);
-          if (m) {
-            dbStore.saveMatch({
-              ...m,
-              home_lineup: activeSession.home_lineup || m.home_lineup || null,
-              away_lineup: activeSession.away_lineup || m.away_lineup || null,
-            });
-            setMatches(dbStore.getMatches());
-          }
-        }
+        // Las alineaciones de la fila compartida de sesión no se aplican: cada analista tiene
+        // las suyas (analyst-personal-state) y las guardadas viven en el partido.
 
         const resolvedVideoUrl = activeSession.videoUrl || analysisFallback?.video_url || matchFallback?.video_url || null;
         const resolvedVideoType =
@@ -727,10 +806,20 @@ export default function BotoneraPage() {
       });
     });
 
+    // Cambios de otros analistas sobre sustituciones de un equipo que este analista ha tocado
+    // se ignoran: ese equipo es suyo hasta que salga y guarde.
+    const isOwnTeamSub = (evt: NormalizedEvent) => {
+      if (!isSubstitutionEvent(evt)) return false;
+      const m = dbStore.getMatchById(selectedMatchId);
+      const side = eventTeamSide(evt, m?.home_team, m?.away_team);
+      return !!side && !!analystTeamsRef.current[side];
+    };
+
     const unsubscribeEvents = subscribeToAnalysisEvents(selectedMatchId, {
       onInsert: (evt) => {
         if (!evt || !evt.event_id) return;
         if (deletedEventIdsRef.current.has(evt.event_id) || dbStore.isEventDeleted(evt.event_id)) return;
+        if (isOwnTeamSub(evt)) return;
 
         if (ownWritesRef.current.has(evt.event_id)) {
           ownWritesRef.current.delete(evt.event_id);
@@ -745,6 +834,7 @@ export default function BotoneraPage() {
       onUpdate: (evt) => {
         if (!evt || !evt.event_id) return;
         if (deletedEventIdsRef.current.has(evt.event_id) || dbStore.isEventDeleted(evt.event_id)) return;
+        if (isOwnTeamSub(evt)) return;
 
         if (ownWritesRef.current.has(evt.event_id)) {
           ownWritesRef.current.delete(evt.event_id);
@@ -755,6 +845,8 @@ export default function BotoneraPage() {
       },
       onDelete: (eventId) => {
         if (!eventId) return;
+        // Sustitución de un equipo que este analista ha tocado: es suya, otro no la quita
+        if (Object.values(analystTeamsRef.current).some((t) => t?.subs.some((sub) => sub.event_id === eventId))) return;
         deletedEventIdsRef.current.add(eventId);
         dbStore.markEventDeleted(eventId);
         ownWritesRef.current.delete(eventId);
@@ -804,38 +896,15 @@ export default function BotoneraPage() {
         )
       : () => {};
 
-    const unsubscribeSession = subscribeToAnalysisSession(selectedMatchId, (update) => {
-      if (update.p1VideoStartSeconds != null || update.p2VideoStartSeconds != null) {
-        setPeriodVideoOffsets((prev) => {
-          const next = { ...prev };
-          if (update.p1VideoStartSeconds != null) next[1] = update.p1VideoStartSeconds;
-          if (update.p2VideoStartSeconds != null) next[2] = update.p2VideoStartSeconds;
-          return next;
-        });
-      }
-      if (update.periodAdjustments !== undefined) {
-        setPeriodAdjustments(update.periodAdjustments || {});
-        periodAdjustmentsRef.current = update.periodAdjustments || {};
-      }
-    });
-
+    // Crono por analista: cada analista lleva su propio cronómetro sincronizado con SU vídeo,
+    // con sus propios inicios de 1ª/2ª parte y ajustes. Por eso los inicios y ajustes que
+    // guardan otros analistas NO se aplican aquí (antes uno movía el crono de todos); al salir
+    // quedan guardados los del último analista que guarda (flushSessionToSupabase).
     const unsubscribeVideo = subscribeToAnalysisVideo(selectedMatchId, (cfg) => {
       if (cfg.videoUrl) {
         setVideoUrl(cfg.videoUrl);
         setVideoType(cfg.videoType || 'link');
         if (cfg.videoSourceName) setVideoSourceName(cfg.videoSourceName);
-      }
-      if (cfg.p1VideoStartSeconds != null || cfg.p2VideoStartSeconds != null) {
-        setPeriodVideoOffsets((prev) => {
-          const next = { ...prev };
-          if (cfg.p1VideoStartSeconds != null) next[1] = cfg.p1VideoStartSeconds;
-          if (cfg.p2VideoStartSeconds != null) next[2] = cfg.p2VideoStartSeconds;
-          return next;
-        });
-      }
-      if (cfg.periodAdjustments !== undefined) {
-        setPeriodAdjustments(cfg.periodAdjustments || {});
-        periodAdjustmentsRef.current = cfg.periodAdjustments || {};
       }
     });
 
@@ -843,7 +912,6 @@ export default function BotoneraPage() {
       cancelled = true;
       unsubscribeEvents();
       unsubscribePresence();
-      unsubscribeSession();
       unsubscribeVideo();
     };
   }, [selectedMatchId, user, profile]);
@@ -875,6 +943,13 @@ export default function BotoneraPage() {
       supabase.removeChannel(channel);
     };
   }, []);
+
+  // Mientras la sesión está abierta, ningún guardado genérico sube alineaciones a Supabase
+  useEffect(() => {
+    if (pageMode !== 'analysis' || !isSessionConfigured || !isPersonalMatch) return;
+    setLiveLineupLock(selectedMatchId, true);
+    return () => setLiveLineupLock(selectedMatchId, false);
+  }, [pageMode, isSessionConfigured, isPersonalMatch, selectedMatchId]);
 
   // Keep app-wide navigation lock in sync with the recording session state
   useEffect(() => {
@@ -1477,6 +1552,62 @@ export default function BotoneraPage() {
     }
   }, [isSyncingToSupabase]);
 
+  // Sobrescribe en Supabase las sustituciones de los equipos que este analista tocó: sube las
+  // suyas y borra todas las que había guardadas de ese equipo. El otro equipo no se toca.
+  // Se suben con ids nuevos: un id ya borrado queda marcado como borrado en otros clientes
+  // (visor, dashboard) y, reutilizado, no volvería a aparecerles.
+  const commitAnalystSubs = async (
+    matchId: string,
+    teams: AnalystTeams
+  ): Promise<{ ok: boolean; renewed: AnalystTeams }> => {
+    const sides = Object.keys(teams) as TeamSide[];
+    if (sides.length === 0) return { ok: true, renewed: teams };
+    const [home, away] = teamNamesOf(matchId);
+    const deleterName = profile?.full_name || user?.email || 'Analista';
+    const now = new Date().toISOString();
+    const newId = () =>
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `evt_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const remote = await getAnalysisEventsFromSupabase(matchId);
+    const renewed: AnalystTeams = { ...teams };
+    let ok = true;
+    for (const side of sides) {
+      const team = teams[side]!;
+      const mine = team.subs.map((e) => ({ ...e, event_id: newId(), match_id: matchId, updated_at: now }));
+      // Primero se suben las nuevas (si falla, no se borra nada y se reintenta al guardar otra vez)
+      if (mine.length > 0 && !(await batchUpsertAnalysisEventsToSupabase(matchId, mine))) {
+        ok = false;
+        continue;
+      }
+      const stale = remote.filter((e) => isSubstitutionEvent(e) && eventTeamSide(e, home, away) === side);
+      const results = await Promise.allSettled(
+        stale.map((e) => deleteAnalysisEventFromSupabase(e.event_id, deleterName, matchId))
+      );
+      if (results.some((r) => r.status === 'rejected')) ok = false;
+      team.subs.forEach((e) => ownWritesRef.current.delete(e.event_id));
+      renewed[side] = { ...team, subs: mine };
+    }
+    return { ok, renewed };
+  };
+
+  // Guarda solo las alineaciones de los equipos que este analista tocó (Supabase + copia local).
+  const commitAnalystLineups = async (matchId: string, teams: AnalystTeams): Promise<boolean> => {
+    const lineups: { home_lineup?: TeamLineupConfig | null; away_lineup?: TeamLineupConfig | null } = {};
+    if (teams.home) lineups.home_lineup = teams.home.lineup;
+    if (teams.away) lineups.away_lineup = teams.away.lineup;
+    const ok = await saveTeamLineupsToSupabase(matchId, lineups);
+    const m = dbStore.getMatchById(matchId);
+    if (m) {
+      // La sesión sigue con el bloqueo de alineaciones puesto: esto solo actualiza la copia local
+      dbStore.saveMatch({ ...m, ...lineups });
+      setMatches(dbStore.getMatches());
+    }
+    const an = dbStore.getAnalyses(matchId)[0];
+    if (an) dbStore.saveAnalysis({ ...an, ...lineups });
+    return ok;
+  };
+
   const flushSessionToSupabase = async (overrideStatus?: 'completed' | 'in_progress'): Promise<boolean> => {
     if (!isSessionConfigured) return true;
     setIsSyncingToSupabase(true);
@@ -1488,7 +1619,57 @@ export default function BotoneraPage() {
       const existingAnalyses = dbStore.getAnalyses(targetId);
       const existingObj = existingAnalyses.find((a) => a.match_id === targetId || a.id === masterAnalysisId);
 
-      const normalizedEvts = events.map((e) => ({ ...e, match_id: targetId }));
+      const isRealMatch = Boolean(selectedMatchId && selectedMatchId !== 'free_session');
+
+      // Solo se suben los cambios PROPIOS pendientes (la cola de reintentos), nunca la lista
+      // local entera: re-subirla resucitaba eventos que otro analista había borrado y revertía
+      // sus ediciones si a esta pantalla se le escapó algún mensaje de Realtime.
+      if (isRealMatch) {
+        await Promise.race([
+          flushPendingSyncQueue(),
+          new Promise((resolve) => setTimeout(resolve, 2500)),
+        ]);
+      }
+
+      // Sustituciones personales: los equipos que este analista tocó sobrescriben lo guardado
+      let teamsToCommit = isRealMatch ? getAnalystTeams(targetId) : {};
+      const committedSides = Object.keys(teamsToCommit) as TeamSide[];
+      let committedSubs = true;
+      if (isRealMatch && committedSides.length > 0) {
+        const { ok, renewed } = await commitAnalystSubs(targetId, teamsToCommit);
+        committedSubs = ok;
+        // La vista de este analista pasa a usar los ids recién guardados
+        teamsToCommit = renewed;
+        analystTeamsRef.current = renewed;
+        saveAnalystTeams(targetId, renewed);
+        setAnalystTeams(renewed);
+      }
+      const [commitHome, commitAway] = teamNamesOf(targetId);
+      const isCommittedSub = (e: NormalizedEvent) => {
+        if (!isSubstitutionEvent(e)) return false;
+        const side = eventTeamSide(e, commitHome, commitAway);
+        return !!side && committedSides.includes(side);
+      };
+
+      // La copia consolidada (match_analyses.events) se construye desde analysis_events, que es la
+      // fuente de verdad compartida, más los eventos propios que aún no se han confirmado allí.
+      const localEvts = events.map((e) => ({ ...e, match_id: targetId }));
+      let normalizedEvts = localEvts;
+      if (isRealMatch) {
+        const remoteEvts = await getAnalysisEventsFromSupabase(targetId);
+        if (remoteEvts.length > 0) {
+          const remoteIds = new Set(remoteEvts.map((e) => e.event_id));
+          const ownUnconfirmed = localEvts.filter(
+            (e) =>
+              !remoteIds.has(e.event_id) &&
+              !isCommittedSub(e) &&
+              (ownWritesRef.current.has(e.event_id) || pendingSyncQueueRef.current.has(e.event_id))
+          );
+          normalizedEvts = [...remoteEvts, ...ownUnconfirmed].filter(
+            (e) => e && e.event_id && !deletedEventIdsRef.current.has(e.event_id)
+          );
+        }
+      }
       if (normalizedEvts.length > 0) {
         dbStore.saveNormalizedEvents(normalizedEvts, true, targetId);
       }
@@ -1536,15 +1717,35 @@ export default function BotoneraPage() {
         });
       }
 
-      // Guaranteed fast save bounded by a 3.5s timeout so network stalls never freeze the screen
+      // Guaranteed fast save bounded by a 3.5s timeout so network stalls never freeze the screen.
+      // skipEventsTableSync: analysis_events ya está al día (escritura evento a evento + cola);
+      // sin él, saveAnalysisToSupabase volvería a subir todos los eventos de esta copia.
+      dbStore.saveAnalysis(newAnalysis);
       const savePromise = Promise.allSettled([
-        dbStore.saveAnalysisAsync(newAnalysis),
-        selectedMatchId && selectedMatchId !== 'free_session' && normalizedEvts.length > 0
-          ? batchUpsertAnalysisEventsToSupabase(targetId, normalizedEvts)
+        saveAnalysisToSupabase(newAnalysis, { skipEventsTableSync: true }),
+        // Los inicios de 1ª/2ª parte de cada analista son propios durante la sesión; al salir
+        // quedan guardados los del último analista que guarda.
+        isRealMatch
+          ? upsertAnalysisVideoToSupabase(targetId, {
+              p1VideoStartSeconds: resolvedP1,
+              p2VideoStartSeconds: resolvedP2,
+              periodAdjustments: periodAdjustmentsRef.current,
+            })
           : Promise.resolve(true),
       ]);
       const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 3500));
       await Promise.race([savePromise, timeoutPromise]);
+
+      // Alineaciones personales: solo las de los equipos tocados, el otro equipo no se toca.
+      // Si algo falla se conserva el estado personal para volver a intentarlo al guardar otra vez.
+      if (isRealMatch && Object.keys(teamsToCommit).length > 0) {
+        const committedLineups = await commitAnalystLineups(targetId, teamsToCommit);
+        if (committedSubs && committedLineups) {
+          clearAnalystTeams(targetId);
+          analystTeamsRef.current = {};
+          setAnalystTeams({});
+        }
+      }
 
       return true;
     } catch (err) {
@@ -2624,7 +2825,14 @@ export default function BotoneraPage() {
   // categorías (commitEvent) como por el marcador en vivo (BotoneraLiveScoreboard.onAddEvent).
   // Unificada para que ambos flujos reciban el mismo comportamiento de reintento/errores y no
   // diverjan al corregir uno y olvidar el otro.
-  const persistNewEvent = (newEvt: NormalizedEvent) => {
+  const persistNewEvent = (evt: NormalizedEvent) => {
+    // Firma de autor para todos los flujos (botonera y marcador en vivo): es lo que protege
+    // el evento de que otro analista lo borre.
+    const newEvt: NormalizedEvent = {
+      ...evt,
+      created_by: evt.created_by ?? user?.id ?? null,
+      created_by_name: evt.created_by_name ?? (profile?.full_name || user?.email || null),
+    };
     const targetId = (selectedMatchId && selectedMatchId !== 'free_session') ? selectedMatchId : (selectedMatchId || 'free_session');
 
     // 1. Mark as own write to prevent echo loop
@@ -2639,15 +2847,26 @@ export default function BotoneraPage() {
     // 3. Save to local storage safely without wiping other events
     dbStore.saveNormalizedEvents([newEvt], false, targetId);
 
+    // Sustitución: es personal de este analista, no se sube hasta que salga y guarde
+    const subSide = personalSubSide(newEvt);
+    if (subSide) {
+      updateAnalystTeams([subSide], (team) => ({
+        ...team,
+        subs: [...team.subs.filter((e) => e.event_id !== newEvt.event_id), newEvt],
+      }));
+    }
+
     // 4. Instant write to Supabase analysis_events table (row-by-row collaborative persistence).
     // Retried with backoff; if it still fails, it drops into the background sync queue and
     // keeps auto-retrying (interval + reconnect) until it lands — no manual action ever needed.
-    withRetry(() => insertAnalysisEventToSupabase(targetId, newEvt), { label: `insert event ${newEvt.event_id}` })
-      .then(() => clearSyncFailed(newEvt.event_id))
-      .catch((err) => {
-        console.warn('Could not sync new event to Supabase analysis_events after retries, queued for auto-retry:', err);
-        markSyncFailed(newEvt.event_id, { kind: 'insert', targetId, event: newEvt });
-      });
+    if (!subSide) {
+      withRetry(() => insertAnalysisEventToSupabase(targetId, newEvt), { label: `insert event ${newEvt.event_id}` })
+        .then(() => clearSyncFailed(newEvt.event_id))
+        .catch((err) => {
+          console.warn('Could not sync new event to Supabase analysis_events after retries, queued for auto-retry:', err);
+          markSyncFailed(newEvt.event_id, { kind: 'insert', targetId, event: newEvt });
+        });
+    }
 
     // 5. Update match score & event count if event is a goal
     const targetMatch = dbStore.getMatchById(targetId) || matches.find((m) => m.id === targetId);
@@ -2768,6 +2987,19 @@ export default function BotoneraPage() {
 
   const handleDeleteEvent = (eventId: string) => {
     if (!eventId) return;
+    const ownerCheck = events.find((e) => e.event_id === eventId);
+    const subSide = personalSubSide(ownerCheck);
+    if (ownerCheck && subSide) {
+      // Sustitución personal: se quita solo de la vista de este analista hasta que guarde
+      updateAnalystTeams([subSide], (team) => ({ ...team, subs: team.subs.filter((e) => e.event_id !== eventId) }));
+      setEvents((prev) => prev.filter((e) => e.event_id !== eventId));
+      dbStore.deleteNormalizedEvent(eventId, ownerCheck);
+      return;
+    }
+    if (ownerCheck && !canDeleteEvent(ownerCheck)) {
+      alert(`Este evento lo registró ${ownerCheck.created_by_name || 'otro analista'}. Solo puedes borrar tus propios eventos.`);
+      return;
+    }
     const targetId = (selectedMatchId && selectedMatchId !== 'free_session') ? selectedMatchId : (selectedMatchId || 'free_session');
 
     // 1. Mark as deleted so it is NEVER restored by real-time subscriptions, effects, or reload
@@ -2866,6 +3098,13 @@ export default function BotoneraPage() {
 
     setEvents((prev) => prev.filter((e) => !targetIds.has(e.event_id)));
 
+    if (isPersonalMatch) {
+      // Las sustituciones son personales: se vacían para este analista y se guardan al salir
+      updateAnalystTeams([team], (t) => ({ ...t, subs: [] }));
+      targets.forEach((e) => dbStore.deleteNormalizedEvent(e.event_id, e));
+      return;
+    }
+
     // 2. Remove from local store
     targets.forEach((e) => {
       deletedEventIdsRef.current.add(e.event_id);
@@ -2879,12 +3118,27 @@ export default function BotoneraPage() {
     if (targetId) {
       const deleterName = profile?.full_name || user?.email || 'Analista';
       targets.forEach((e) => {
-        deleteAnalysisEventFromSupabase(e.event_id, deleterName, targetId).catch((err) =>
-          console.warn('Could not sync substitution reset to Supabase:', err)
-        );
+        deleteAnalysisEventFromSupabase(e.event_id, deleterName, targetId).catch((err) => {
+          console.warn('Could not sync substitution reset to Supabase, queued for auto-retry:', err);
+          markSyncFailed(e.event_id, { kind: 'delete', eventId: e.event_id, deleterName });
+        });
       });
     }
   };
+
+  const buildFreshLineup = (side: TeamSide): TeamLineupConfig => ({
+    formation: '4-3-3',
+    circleStyle: { primaryColor: side === 'home' ? '#ef4444' : '#3b82f6', secondaryColor: '#ffffff', pattern: 'solid' },
+    starters: Array.from({ length: 11 }, (_, i) => ({
+      id: `${side === 'home' ? 'h' : 'a'}_st_${i + 1}`,
+      number: i + 1,
+      name: '',
+      position: i === 0 ? 'POR' : 'JUG',
+      isStarter: true,
+    })),
+    substitutes: [],
+    customPositions: {},
+  });
 
   const handleResetLineupsAndSubstitutions = (scope: 'home' | 'away' | 'both' = 'both') => {
     const currentM = matches.find((m) => m.id === selectedMatchId) || selectedMatch || (selectedMatchId && selectedMatchId !== 'free_session' ? dbStore.getMatchById(selectedMatchId) : null) || matches[0];
@@ -2916,6 +3170,18 @@ export default function BotoneraPage() {
     // 1. Pure state update
     setEvents((prev) => prev.filter((e) => !subIdsToDelete.has(e.event_id)));
 
+    if (isPersonalMatch) {
+      // Alineación y sustituciones personales: solo cambian para este analista y, al salir y
+      // guardar, solo sobrescriben los equipos reseteados.
+      const sides: TeamSide[] = scope === 'both' ? ['home', 'away'] : [scope];
+      updateAnalystTeams(sides, (_team, side) => ({
+        lineup: side === 'home' ? buildFreshLineup('home') : buildFreshLineup('away'),
+        subs: [],
+      }));
+      subsToDelete.forEach((s) => dbStore.deleteNormalizedEvent(s.event_id, s));
+      return;
+    }
+
     // 2. Remove from local store
     subsToDelete.forEach((s) => {
       deletedEventIdsRef.current.add(s.event_id);
@@ -2928,40 +3194,16 @@ export default function BotoneraPage() {
     if (targetId) {
       const deleterName = profile?.full_name || user?.email || 'Analista';
       subsToDelete.forEach((s) => {
-        deleteAnalysisEventFromSupabase(s.event_id, deleterName, targetId).catch((err) =>
-          console.warn('Could not sync substitution deletion to Supabase:', err)
-        );
+        deleteAnalysisEventFromSupabase(s.event_id, deleterName, targetId).catch((err) => {
+          console.warn('Could not sync substitution deletion to Supabase, queued for auto-retry:', err);
+          markSyncFailed(s.event_id, { kind: 'delete', eventId: s.event_id, deleterName });
+        });
       });
     }
 
     // 2. Build clean default lineups
-    const freshHomeLineup: TeamLineupConfig = {
-      formation: '4-3-3',
-      circleStyle: { primaryColor: '#ef4444', secondaryColor: '#ffffff', pattern: 'solid' },
-      starters: Array.from({ length: 11 }, (_, i) => ({
-        id: `h_st_${i + 1}`,
-        number: i + 1,
-        name: '',
-        position: i === 0 ? 'POR' : 'JUG',
-        isStarter: true,
-      })),
-      substitutes: [],
-      customPositions: {},
-    };
-
-    const freshAwayLineup: TeamLineupConfig = {
-      formation: '4-3-3',
-      circleStyle: { primaryColor: '#3b82f6', secondaryColor: '#ffffff', pattern: 'solid' },
-      starters: Array.from({ length: 11 }, (_, i) => ({
-        id: `a_st_${i + 1}`,
-        number: i + 1,
-        name: '',
-        position: i === 0 ? 'POR' : 'JUG',
-        isStarter: true,
-      })),
-      substitutes: [],
-      customPositions: {},
-    };
+    const freshHomeLineup = buildFreshLineup('home');
+    const freshAwayLineup = buildFreshLineup('away');
 
     const newHomeLineup = (scope === 'home' || scope === 'both') ? freshHomeLineup : (currentM?.home_lineup || null);
     const newAwayLineup = (scope === 'away' || scope === 'both') ? freshAwayLineup : (currentM?.away_lineup || null);
@@ -3013,6 +3255,24 @@ export default function BotoneraPage() {
   const handleUpdateEvent = (updatedEvt: NormalizedEvent) => {
     const targetId = (selectedMatchId && selectedMatchId !== 'free_session') ? selectedMatchId : (selectedMatchId || 'free_session');
 
+    const previous = events.find((e) => e.event_id === updatedEvt.event_id);
+    const oldSide = personalSubSide(previous);
+    const newSide = personalSubSide(updatedEvt);
+    if (oldSide || newSide) {
+      // Sustitución personal: solo cambia para este analista hasta que guarde
+      const sides = Array.from(new Set([oldSide, newSide].filter(Boolean))) as TeamSide[];
+      updateAnalystTeams(sides, (team, side) => ({
+        ...team,
+        subs: [
+          ...team.subs.filter((e) => e.event_id !== updatedEvt.event_id),
+          ...(side === newSide ? [updatedEvt] : []),
+        ],
+      }));
+      setEvents((prev) => prev.map((e) => (e.event_id === updatedEvt.event_id ? updatedEvt : e)));
+      dbStore.saveNormalizedEvents([updatedEvt], false, targetId);
+      return;
+    }
+
     // 1. Mark as own write to avoid echo loop
     ownWritesRef.current.add(updatedEvt.event_id);
 
@@ -3056,6 +3316,43 @@ export default function BotoneraPage() {
 
   const handleClearAllEvents = async () => {
     if (events.length === 0) return;
+
+    // Si hay eventos de otros analistas, "vaciar" solo borra los propios y deja los demás.
+    // Las sustituciones (personales, se gestionan desde la alineación) tampoco se tocan aquí.
+    const mine = events.filter((e) => canDeleteEvent(e) && !personalSubSide(e));
+    const othersCount = events.length - mine.length;
+    if (othersCount > 0) {
+      if (mine.length === 0) {
+        alert('No hay eventos tuyos que borrar: los demás son de otros analistas o sustituciones.');
+        return;
+      }
+      const okMine = confirm(
+        `Se borrarán tus ${mine.length} eventos. Los ${othersCount} restantes (de otros analistas o sustituciones) se mantienen. ¿Continuar?`
+      );
+      if (!okMine) return;
+
+      const mineIds = new Set(mine.map((e) => e.event_id));
+      dbStore.backupDeletedEvents(mine);
+      setEvents((prev) => prev.filter((e) => !mineIds.has(e.event_id)));
+      mine.forEach((e) => {
+        deletedEventIdsRef.current.add(e.event_id);
+        ownWritesRef.current.delete(e.event_id);
+        dbStore.markEventDeleted(e.event_id);
+        dbStore.deleteNormalizedEvent(e.event_id, e);
+      });
+      const targetId = selectedMatchId && selectedMatchId !== 'free_session' ? selectedMatchId : null;
+      if (targetId) {
+        const deleterName = profile?.full_name || user?.email || 'Analista';
+        mine.forEach((e) => {
+          deleteAnalysisEventFromSupabase(e.event_id, deleterName, targetId).catch((err) => {
+            console.warn('Could not sync event deletion to Supabase, queued for auto-retry:', err);
+            markSyncFailed(e.event_id, { kind: 'delete', eventId: e.event_id, deleterName });
+          });
+        });
+      }
+      return;
+    }
+
     const ok = confirm(
       '¿Seguro que deseas vaciar todos los eventos de este análisis? Los registros se eliminarán permanentemente de Supabase.'
     );
@@ -3197,6 +3494,12 @@ export default function BotoneraPage() {
   };
 
   const selectedMatch = matches.find((m) => m.id === selectedMatchId);
+  // El partido tal como lo ve este analista: con su alineación en los equipos que ha tocado
+  const analystMatch: Match | undefined = selectedMatch && {
+    ...selectedMatch,
+    ...(analystTeams.home ? { home_lineup: analystTeams.home.lineup } : {}),
+    ...(analystTeams.away ? { away_lineup: analystTeams.away.lineup } : {}),
+  };
   const activeMatchObj = selectedMatch || (selectedMatchId && selectedMatchId !== 'free_session' ? dbStore.getMatchById(selectedMatchId) : null) || matches[0] || null;
   const currentHomeTeamName = activeMatchObj?.home_team || 'Shabab Al Ordon Club';
   const currentAwayTeamName = activeMatchObj?.away_team || 'Al Ramtha';
@@ -3720,11 +4023,12 @@ export default function BotoneraPage() {
         <div className="space-y-4 animate-fade-in">
           {/* Top Live Broadcast Scoreboard Banner */}
           <BotoneraLiveScoreboard
-            match={selectedMatch || null}
+            match={analystMatch || null}
             events={events}
             timerSeconds={timerSeconds}
             period={period}
             onAddEvent={(newEvt) => persistNewEvent(newEvt)}
+            onDeleteEvent={handleDeleteEvent}
             onResetSubstitutions={handleResetTeamSubstitutions}
             onResetLineupsAndSubstitutions={handleResetLineupsAndSubstitutions}
             onUpdateLineup={(team, config, updatedPlayers) => {
@@ -3736,7 +4040,10 @@ export default function BotoneraPage() {
                 ...prev.filter((p) => (p.team_name || '').toLowerCase().trim() !== teamName.toLowerCase().trim()),
                 ...updatedPlayers,
               ]);
-              if (currentM) {
+              if (isPersonalMatch) {
+                // Alineación personal de este analista: se guarda (solo este equipo) al salir
+                updateAnalystTeams([team], (t) => ({ ...t, lineup: config }));
+              } else if (currentM) {
                 const key = team === 'home' ? 'home_lineup' : 'away_lineup';
                 const updatedMatch = {
                   ...currentM,
@@ -3825,6 +4132,7 @@ export default function BotoneraPage() {
                 <BotoneraEventLog
                   events={events}
                   onDeleteEvent={handleDeleteEvent}
+                  canDeleteEvent={canDeleteEvent}
                   onUpdateEvent={handleUpdateEvent}
                   onClearAllEvents={handleClearAllEvents}
                   onRestoreDeletedEvents={handleRestoreDeletedEvents}
@@ -4008,6 +4316,7 @@ export default function BotoneraPage() {
                 <BotoneraEventLog
                   events={events}
                   onDeleteEvent={handleDeleteEvent}
+                  canDeleteEvent={canDeleteEvent}
                   onUpdateEvent={handleUpdateEvent}
                   onClearAllEvents={handleClearAllEvents}
                   onRestoreDeletedEvents={handleRestoreDeletedEvents}
@@ -4224,7 +4533,7 @@ export default function BotoneraPage() {
           initialGlobalDescriptors={eventModalData.activeDescriptors}
           players={players}
           selectedPlayerId={selectedPlayerId}
-          currentMatch={matches.find((m) => m.id === selectedMatchId) || selectedMatch || (selectedMatchId && selectedMatchId !== 'free_session' ? dbStore.getMatchById(selectedMatchId) : null) || matches[0] || null}
+          currentMatch={analystMatch || (selectedMatchId && selectedMatchId !== 'free_session' ? dbStore.getMatchById(selectedMatchId) : null) || matches[0] || null}
           clickTimestamp={eventModalData.clickTimestamp}
           clickPeriod={eventModalData.clickPeriod}
           matchEvents={events}
@@ -4490,6 +4799,7 @@ export default function BotoneraPage() {
               <button
                 onClick={async () => {
                   const toDelete = deleteConfirmAnalysis;
+                  if (!(await requestAdminPassword())) return;
                   setDeleteConfirmAnalysis(null);
                   if (toDelete) {
                     setSavedAnalyses((prev) => prev.filter((a) => a.id !== toDelete.id && a.match_id !== toDelete.match_id));

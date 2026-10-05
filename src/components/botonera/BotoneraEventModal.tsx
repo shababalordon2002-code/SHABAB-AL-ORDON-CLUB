@@ -22,6 +22,7 @@ import {
   ChevronUp,
 } from 'lucide-react';
 import { dbStore } from '@/lib/store/db-store';
+import { TeamLogo } from '@/components/player/PlayerBadge';
 
 interface ExtendedPlayer extends Player {
   isSubstitutedIn?: boolean;
@@ -1007,17 +1008,7 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
                           : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-red-500/40 hover:text-white'
                       }`}
                     >
-                      {homeTeamLogo ? (
-                        <img
-                          src={homeTeamLogo}
-                          alt={homeTeamName}
-                          className="w-5 h-5 object-contain rounded bg-slate-950 p-0.5 shrink-0"
-                        />
-                      ) : (
-                        <div className="w-5 h-5 rounded-md flex items-center justify-center text-[11px] bg-red-600/30 border border-red-500/50 text-red-300 shrink-0 font-black">
-                          🛡️
-                        </div>
-                      )}
+                      <TeamLogo teamName={homeTeamName} logoUrl={homeTeamLogo} size={22} />
                       <div className="min-w-0 flex-1">
                         <span className="text-[9px] uppercase tracking-wider block font-bold text-red-400 leading-none">
                           Local ({homeFormation})
@@ -1043,17 +1034,7 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
                           : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-blue-500/40 hover:text-white'
                       }`}
                     >
-                      {awayTeamLogo ? (
-                        <img
-                          src={awayTeamLogo}
-                          alt={awayTeamName}
-                          className="w-5 h-5 object-contain rounded bg-slate-950 p-0.5 shrink-0"
-                        />
-                      ) : (
-                        <div className="w-5 h-5 rounded-md flex items-center justify-center text-[11px] bg-blue-600/30 border border-blue-500/50 text-blue-300 shrink-0 font-black">
-                          🛡️
-                        </div>
-                      )}
+                      <TeamLogo teamName={awayTeamName} logoUrl={awayTeamLogo} size={22} />
                       <div className="min-w-0 flex-1">
                         <span className="text-[9px] uppercase tracking-wider block font-bold text-blue-400 leading-none">
                           Visitante ({awayFormation})

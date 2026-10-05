@@ -20,11 +20,13 @@ import {
   Plus
 } from 'lucide-react';
 import { dbStore } from '@/lib/store/db-store';
+import { requestAdminPassword } from '@/components/auth/AdminPasswordPrompt';
 import { Match, MatchAnalysis, ActiveBotoneraSession, NormalizedEvent } from '@/types';
 import { MatchAnalysisSelectorModal } from '@/components/analysis/MatchAnalysisSelectorModal';
 import { AnalysisVisor } from '@/components/analysis/AnalysisVisor';
 import { calculateMatchScoresFromEvents } from '@/lib/analytics/dashboard-engine';
 import { isSessionLive } from '@/lib/services/botonera-service';
+import { TeamLogo } from '@/components/player/PlayerBadge';
 
 export default function PartidosPage() {
   const [matches, setMatches] = useState<Match[]>([]);
@@ -99,7 +101,8 @@ export default function PartidosPage() {
     }
   };
 
-  const handleDeleteAnalysis = (analysisId: string) => {
+  const handleDeleteAnalysis = async (analysisId: string) => {
+    if (!(await requestAdminPassword())) return;
     dbStore.deleteAnalysis(analysisId);
     if (selectedMatchForAnalysis) {
       const updatedList = dbStore.getAnalyses(selectedMatchForAnalysis.match.id);
@@ -184,18 +187,7 @@ export default function PartidosPage() {
             {/* Home Team */}
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2.5 overflow-hidden">
-                {isShababHome || m.home_team_logo ? (
-                  <img 
-                    src={isShababHome ? '/logo.png' : (m.home_team_logo || '/logo.png')} 
-                    alt={m.home_team} 
-                    className="w-6 h-6 object-contain shrink-0 rounded"
-                    onError={(e) => { (e.target as HTMLImageElement).src = '/logo.png'; }}
-                  />
-                ) : (
-                  <div className="w-6 h-6 rounded bg-slate-800 flex items-center justify-center text-[10px] font-bold text-slate-400 shrink-0">
-                    {m.home_team.substring(0, 2).toUpperCase()}
-                  </div>
-                )}
+                <TeamLogo teamName={m.home_team} logoUrl={m.home_team_logo} size={24} />
                 <span className={`font-bold text-xs truncate ${isShababHome ? 'text-amber-400' : 'text-slate-200'}`}>
                   {m.home_team}
                 </span>
@@ -213,18 +205,7 @@ export default function PartidosPage() {
             {/* Away Team */}
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2.5 overflow-hidden">
-                {isShababAway || m.away_team_logo ? (
-                  <img 
-                    src={isShababAway ? '/logo.png' : (m.away_team_logo || '/logo.png')} 
-                    alt={m.away_team} 
-                    className="w-6 h-6 object-contain shrink-0 rounded"
-                    onError={(e) => { (e.target as HTMLImageElement).src = '/logo.png'; }}
-                  />
-                ) : (
-                  <div className="w-6 h-6 rounded bg-slate-800 flex items-center justify-center text-[10px] font-bold text-slate-400 shrink-0">
-                    {m.away_team.substring(0, 2).toUpperCase()}
-                  </div>
-                )}
+                <TeamLogo teamName={m.away_team} logoUrl={m.away_team_logo} size={24} />
                 <span className={`font-bold text-xs truncate ${isShababAway ? 'text-amber-400' : 'text-slate-200'}`}>
                   {m.away_team}
                 </span>

@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { Match, MatchAnalysis } from '@/types';
 import { calculateMatchScoresFromEvents } from '@/lib/analytics/dashboard-engine';
+import { TeamLogo } from '@/components/player/PlayerBadge';
 
 interface MatchAnalysisSelectorModalProps {
   match: Match;
@@ -64,15 +65,7 @@ export const MatchAnalysisSelectorModal: React.FC<MatchAnalysisSelectorModalProp
             </div>
 
             <h2 className="text-base sm:text-lg font-extrabold text-white truncate flex items-center gap-2">
-              <img
-                src={isShababHome ? '/logo.png' : (match.home_team_logo || '/logo.png')}
-                alt=""
-                className="w-5 h-5 object-contain"
-                onError={(e) => {
-                  const target = e.currentTarget;
-                  if (target) target.src = '/logo.png';
-                }}
-              />
+              <TeamLogo teamName={match.home_team} logoUrl={match.home_team_logo} size={22} />
               <span>{match.home_team}</span>
               {(() => {
                 const allEvts = analyses.flatMap((a) => a.events || []);
@@ -90,15 +83,7 @@ export const MatchAnalysisSelectorModal: React.FC<MatchAnalysisSelectorModalProp
                 );
               })()}
               <span>{match.away_team}</span>
-              <img
-                src={isShababAway ? '/logo.png' : (match.away_team_logo || '/logo.png')}
-                alt=""
-                className="w-5 h-5 object-contain"
-                onError={(e) => {
-                  const target = e.currentTarget;
-                  if (target) target.src = '/logo.png';
-                }}
-              />
+              <TeamLogo teamName={match.away_team} logoUrl={match.away_team_logo} size={22} />
             </h2>
           </div>
 

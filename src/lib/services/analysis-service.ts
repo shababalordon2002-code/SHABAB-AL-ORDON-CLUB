@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/client';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { MatchAnalysis, NormalizedEvent } from '@/types';
+import { isLiveLineupLocked } from '@/lib/analyst-personal-state';
 import { ANALYSIS_PRESERVE_COLUMNS, MATCH_PRESERVE_COLUMNS, isNoOpUpdate, selectWithFallback } from '@/lib/supabase/egress';
 import { rowToNormalizedEvent, getAnalysisVideosMapFromSupabase, getAnalysisVideoFromSupabase, upsertAnalysisVideoToSupabase } from '@/lib/services/botonera-service';
 
@@ -173,6 +174,8 @@ export async function saveAnalysisToSupabase(
 
   const mySeq = (_analysisSaveSeq[analysis.match_id] || 0) + 1;
   _analysisSaveSeq[analysis.match_id] = mySeq;
+  // Lineups are personal while a live session is open here: don't push them (see analyst-personal-state).
+  const lineupLocked = isLiveLineupLocked(analysis.match_id);
 
   try {
     let supabase: any;
@@ -230,22 +233,6 @@ export async function saveAnalysisToSupabase(
     // Events safety: ONLY delete from analysis_events table if explicitClear is intentionally requested by user action
     const isExplicitClear = options?.explicitClear === true;
 
-    // Query analysis_events_trash to guarantee deleted events are NEVER consolidated or revived
-    const trashEventIds = new Set<string>();
-    try {
-      const { data: trashRows } = await supabase
-        .from('analysis_events_trash')
-        .select('event_id')
-        .eq('match_id', analysis.match_id);
-      if (trashRows && trashRows.length > 0) {
-        trashRows.forEach((t: any) => {
-          if (t && t.event_id) trashEventIds.add(t.event_id);
-        });
-      }
-    } catch {
-      // Non-blocking
-    }
-
     let consolidatedEvents: any[] = [];
     if (isExplicitClear) {
       // User explicitly requested to clear all events
@@ -258,11 +245,11 @@ export async function saveAnalysisToSupabase(
     } else if (options?.skipEventsTableSync) {
       // Fast-path: individual events are already maintained in real time via insert/update/deleteAnalysisEventToSupabase
       consolidatedEvents = (analysis.events && Array.isArray(analysis.events))
-        ? analysis.events.filter((e: any) => e && e.event_id && !trashEventIds.has(e.event_id))
+        ? analysis.events.filter((e: any) => e && e.event_id)
         : [];
     } else {
       const incomingEvents: any[] = (analysis.events && Array.isArray(analysis.events))
-        ? analysis.events.filter((e: any) => e && e.event_id && !trashEventIds.has(e.event_id))
+        ? analysis.events.filter((e: any) => e && e.event_id)
         : [];
       let tableEvents: any[] = [];
       try {
@@ -280,7 +267,7 @@ export async function saveAnalysisToSupabase(
       const eventMap = new Map<string, any>();
       if (tableEvents.length > 0) {
         tableEvents.forEach((r: any) => {
-          if (r && r.event_id && !trashEventIds.has(r.event_id)) {
+          if (r && r.event_id) {
             const parsedMeta = typeof r.metadata === 'string' ? JSON.parse(r.metadata) : (r.metadata || {});
             const rNorm = {
               event_id: r.event_id,
@@ -320,7 +307,7 @@ export async function saveAnalysisToSupabase(
 
       // Apply incoming active events
       incomingEvents.forEach((e: any) => {
-        if (e && e.event_id && !trashEventIds.has(e.event_id)) {
+        if (e && e.event_id) {
           const prev = eventMap.get(e.event_id);
           if (!prev || new Date(e.updated_at || 0).getTime() >= new Date(prev.updated_at || 0).getTime()) {
             eventMap.set(e.event_id, e);
@@ -342,7 +329,7 @@ export async function saveAnalysisToSupabase(
       )
     ).join(', ') || analysis.analyst_name || 'Analista SAO';
 
-    const cleanFinalEvents = consolidatedEvents.filter((e: any) => e && e.event_id && !trashEventIds.has(e.event_id));
+    const cleanFinalEvents = consolidatedEvents.filter((e: any) => e && e.event_id);
 
     const row: Record<string, any> = {
       id: targetId,
@@ -362,6 +349,10 @@ export async function saveAnalysisToSupabase(
       events: cleanFinalEvents,
       updated_at: new Date().toISOString(),
     };
+    if (lineupLocked) {
+      delete row.home_lineup;
+      delete row.away_lineup;
+    }
 
     // Ensure analysis_events table in Supabase has every event saved row-by-row
     if (!options?.skipEventsTableSync && cleanFinalEvents.length > 0) {

@@ -6,6 +6,7 @@ import { Player, TeamCircleStyle } from '@/types';
 import { Shield, RefreshCw, Plus, X, ArrowRightLeft, ArrowUp } from 'lucide-react';
 import { dbStore } from '@/lib/store/db-store';
 import { TeamCircleIcon } from '@/components/botonera/TeamLineupModal';
+import { TeamLogo } from '@/components/player/PlayerBadge';
 
 export interface SubstitutionRecord {
   id?: string;
@@ -139,11 +140,7 @@ export const TacticalLineupPitch: React.FC<TacticalLineupPitchProps> = ({
       {/* Header Info */}
       <div className="flex items-center justify-between px-1">
         <div className="flex items-center gap-2">
-          {teamLogo ? (
-            <img src={teamLogo} alt={teamName} className="w-5 h-5 object-contain rounded bg-slate-950 p-0.5" />
-          ) : (
-            <Shield className="w-4 h-4" style={{ color: primaryColor }} />
-          )}
+          <TeamLogo teamName={teamName} logoUrl={teamLogo} size={20} />
           <span className="font-extrabold text-xs text-white truncate max-w-[110px] sm:max-w-[150px]">
             {teamName}
           </span>

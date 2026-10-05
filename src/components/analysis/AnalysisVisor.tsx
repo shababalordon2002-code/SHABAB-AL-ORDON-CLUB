@@ -37,15 +37,11 @@ export const AnalysisVisor: React.FC<AnalysisVisorProps> = ({
 }) => {
   const [liveEvents, setLiveEvents] = useState<NormalizedEvent[]>(() => analysis.events || []);
 
+  // The analysis prop (match_analyses copy) only seeds the list until the live data arrives;
+  // merging it in later could bring back events another analyst has already deleted.
   useEffect(() => {
     if (analysis.events && analysis.events.length > 0) {
-      setLiveEvents((prev) => {
-        if (prev.length === 0) return analysis.events || [];
-        const map = new Map<string, NormalizedEvent>();
-        (analysis.events || []).forEach((e) => map.set(e.event_id, e));
-        prev.forEach((e) => map.set(e.event_id, e));
-        return Array.from(map.values()).sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
-      });
+      setLiveEvents((prev) => (prev.length === 0 ? analysis.events || [] : prev));
     }
   }, [analysis.events]);
 
@@ -58,21 +54,14 @@ export const AnalysisVisor: React.FC<AnalysisVisorProps> = ({
       getAnalysisEventsFromSupabase(analysis.match_id).then((remoteEvents) => {
         if (cancelled) return;
         const deletedIds = dbStore.getDeletedEventIds();
+        // The visor never writes, so Supabase is the whole truth: replace instead of merging,
+        // otherwise events deleted while the connection was down would stay on screen.
         if (remoteEvents && remoteEvents.length > 0) {
-          setLiveEvents((prev) => {
-            const map = new Map<string, NormalizedEvent>();
-            remoteEvents.forEach((e) => {
-              if (e && e.event_id && !deletedIds.has(e.event_id)) {
-                map.set(e.event_id, e);
-              }
-            });
-            prev.forEach((e) => {
-              if (e && e.event_id && !map.has(e.event_id) && !deletedIds.has(e.event_id)) {
-                map.set(e.event_id, e);
-              }
-            });
-            return Array.from(map.values()).sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
-          });
+          setLiveEvents(
+            remoteEvents
+              .filter((e) => e && e.event_id && !deletedIds.has(e.event_id))
+              .sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0))
+          );
         }
       });
     };

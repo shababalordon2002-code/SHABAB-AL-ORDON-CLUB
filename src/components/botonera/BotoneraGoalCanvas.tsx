@@ -15,6 +15,7 @@ export interface GoalPointMarker {
   zone?: string | null;
   outcome?: string | null;
   player_name?: string | null;
+  player_number?: string | number | null;
   isSelected?: boolean;
 }
 
@@ -205,10 +206,10 @@ export const BotoneraGoalCanvas: React.FC<BotoneraGoalCanvasProps> = ({
       )}
 
       {/* SVG Canvas */}
-      <div className="relative p-2 flex items-center justify-center select-none bg-gradient-to-b from-slate-950 via-slate-900/60 to-slate-950">
+      <div className={`relative ${hideHeader ? 'p-1' : 'p-2'} w-full flex items-center justify-center select-none bg-gradient-to-b from-slate-950 via-slate-900/60 to-slate-950`}>
         <svg
           viewBox="0 0 600 360"
-          className={`w-full max-w-[560px] h-auto rounded-xl shadow-inner ${readOnly ? '' : 'cursor-crosshair'}`}
+          className={`w-full h-auto rounded-xl shadow-inner ${readOnly ? '' : 'cursor-crosshair'}`}
           onClick={handleGoalClick}
         >
           <defs>
@@ -344,18 +345,20 @@ export const BotoneraGoalCanvas: React.FC<BotoneraGoalCanvasProps> = ({
             const isSelected = pt.isSelected || (internalX === pt.x && internalY === pt.y);
 
             const outLower = (pt.outcome || '').toLowerCase();
-            const isGoal = outLower.includes('gol');
-            const isSave = outLower.includes('parada') || outLower.includes('atajad');
-            const isMiss = outLower.includes('fuera') || outLower.includes('fall');
+            const isGoal = outLower.includes('gol') || outLower.includes('goal') || outLower.includes('tanto');
+            const isSave = outLower.includes('parada') || outLower.includes('atajad') || outLower.includes('puerta') || outLower.includes('porter') || outLower.includes('poste') || outLower.includes('larguero') || outLower.includes('palo');
+            const isMiss = outLower.includes('fuera') || outLower.includes('fall') || outLower.includes('alto') || outLower.includes('desviad') || outLower.includes('ancho');
+            const isBlocked = outLower.includes('bloque') || outLower.includes('tapon') || outLower.includes('rechaz') || outLower.includes('defens');
 
-            const markerColor = isGoal ? '#10b981' : isSave ? '#38bdf8' : isMiss ? '#ef4444' : '#f59e0b';
-            const strokeColor = isGoal ? '#047857' : isSave ? '#0284c7' : isMiss ? '#991b1b' : '#b45309';
+            const markerColor = isGoal ? '#10b981' : isSave ? '#38bdf8' : isMiss ? '#ef4444' : isBlocked ? '#f59e0b' : '#f59e0b';
+            const strokeColor = isGoal ? '#047857' : isSave ? '#0284c7' : isMiss ? '#b91c1c' : isBlocked ? '#b45309' : '#d97706';
+            const dorsalStr = pt.player_number != null && pt.player_number !== '' ? String(pt.player_number) : '';
 
             return (
               <g
                 key={pt.id}
                 transform={`translate(${svgX}, ${svgY})`}
-                className="cursor-pointer transition-all duration-200"
+                className="cursor-pointer transition-all duration-200 group/goal-point"
                 onClick={(e) => {
                   if (onSelectMarker) {
                     e.stopPropagation();
@@ -363,25 +366,72 @@ export const BotoneraGoalCanvas: React.FC<BotoneraGoalCanvasProps> = ({
                   }
                 }}
               >
+                <title>
+                  {pt.player_name ? `${pt.player_name}${dorsalStr ? ` (#${dorsalStr})` : ''}` : 'Disparo'} - {pt.outcome || 'Tiro'} ({pt.x}%, {pt.y}%)
+                </title>
+
                 {isSelected ? (
                   <g filter="url(#ball-glow)">
-                    <circle cx="0" cy="0" r="16" fill="none" stroke="#f59e0b" strokeWidth="2" strokeDasharray="3 2" />
-                    <circle cx="0" cy="0" r="22" fill="#f59e0b" fillOpacity="0.2" />
-                    <line x1="-12" y1="0" x2="12" y2="0" stroke="#f59e0b" strokeWidth="1.5" />
-                    <line x1="0" y1="-12" x2="0" y2="12" stroke="#f59e0b" strokeWidth="1.5" />
-                    <circle cx="0" cy="0" r="10" fill="#ffffff" stroke="#0f172a" strokeWidth="1.5" />
-                    <polygon points="0,-4 3.8,-1.2 2.4,3.2 -2.4,3.2 -3.8,-1.2" fill="#0f172a" />
-                    <g transform="translate(0, -26)">
-                      <rect x="-48" y="-12" width="96" height="16" rx="4" fill="#0f172a" stroke="#f59e0b" strokeWidth="1" />
-                      <text x="0" y="-1" fill="#fbbf24" fontSize="8.5" fontWeight="bold" textAnchor="middle">
-                        🎯 {pt.player_name || 'Disparo'} ({pt.x}%, {pt.y}%)
+                    <circle cx="0" cy="0" r="18" fill="none" stroke="#ff0055" strokeWidth="2.5" strokeDasharray="3 2" className="animate-pulse" />
+                    <circle cx="0" cy="0" r="24" fill="#ff0055" fillOpacity="0.25" />
+                    <line x1="-14" y1="0" x2="14" y2="0" stroke="#ff0055" strokeWidth="1.8" />
+                    <line x1="0" y1="-14" x2="0" y2="14" stroke="#ff0055" strokeWidth="1.8" />
+                    {/* Inner Badge with Dorsal */}
+                    <circle cx="0" cy="0" r="11" fill="#090d16" stroke="#ff0055" strokeWidth="2.5" />
+                    {dorsalStr ? (
+                      <text
+                        x="0"
+                        y="0"
+                        textAnchor="middle"
+                        dominantBaseline="central"
+                        fill="#ffffff"
+                        fontSize={dorsalStr.length > 2 ? '8.5' : dorsalStr.length === 2 ? '10' : '11.5'}
+                        fontWeight="900"
+                        className="font-mono select-none pointer-events-none"
+                      >
+                        {dorsalStr}
+                      </text>
+                    ) : (
+                      <circle cx="0" cy="0" r="4.5" fill="#ffffff" />
+                    )}
+                    <g transform="translate(0, -28)">
+                      <rect x="-52" y="-12" width="104" height="17" rx="4" fill="#090d16" stroke="#ff0055" strokeWidth="1.2" />
+                      <text x="0" y="-0.5" fill="#ff0055" fontSize="8.5" fontWeight="900" textAnchor="middle" className="font-mono">
+                        🎯 {pt.player_name ? `${pt.player_name}${dorsalStr ? ` (#${dorsalStr})` : ''}` : 'Disparo'} ({pt.x}%, {pt.y}%)
                       </text>
                     </g>
                   </g>
                 ) : (
-                  <g>
-                    <circle cx="0" cy="0" r="8" fill={markerColor} stroke={strokeColor} strokeWidth="1.8" />
-                    <circle cx="0" cy="0" r="3.5" fill="#ffffff" />
+                  <g filter="url(#ball-glow)">
+                    {/* Outer glow ring */}
+                    <circle cx="0" cy="0" r="15" fill={markerColor} fillOpacity="0.18" className="transition-all duration-150 group-hover/goal-point:fillOpacity-40" />
+                    {/* Badge base */}
+                    <circle
+                      cx="0" cy="0"
+                      r="10.5"
+                      fill="#090d16"
+                      stroke={markerColor}
+                      strokeWidth="2.2"
+                      className="transition-all duration-150 group-hover/goal-point:r-12"
+                    />
+                    {/* Dorsal in the exact same color as the point */}
+                    {dorsalStr ? (
+                      <text
+                        x="0"
+                        y="0"
+                        textAnchor="middle"
+                        dominantBaseline="central"
+                        fill={markerColor}
+                        fontSize={dorsalStr.length > 2 ? '8.5' : dorsalStr.length === 2 ? '10' : '11.5'}
+                        fontWeight="900"
+                        className="font-mono select-none pointer-events-none"
+                        style={{ filter: `drop-shadow(0 0 3px ${markerColor}99)` }}
+                      >
+                        {dorsalStr}
+                      </text>
+                    ) : (
+                      <circle cx="0" cy="0" r="4" fill={markerColor} />
+                    )}
                   </g>
                 )}
               </g>

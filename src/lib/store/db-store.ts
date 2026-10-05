@@ -968,14 +968,11 @@ export const dbStore = {
   async syncActiveSessionFromSupabase(matchId?: string): Promise<ActiveBotoneraSession | null> {
     const remoteSession = await getAnalysisSessionFromSupabase(matchId);
     if (remoteSession) {
-      // The remote row is pushed throttled (every ~30s), so a local copy of the same match
-      // that was updated later holds fresher values (e.g. a just-edited period start).
+      // La fila remota es compartida por todos los analistas del partido (la escribe el último
+      // latido de cualquiera). La sesión local es la de ESTE analista: su crono, periodo e
+      // inicios de parte propios, así que para el mismo partido siempre gana y no se pisa.
       const local = this.getActiveBotoneraSession();
-      if (
-        local &&
-        local.selectedMatchId === remoteSession.selectedMatchId &&
-        (local.lastUpdatedTimestamp || 0) > (remoteSession.lastUpdatedTimestamp || 0)
-      ) {
+      if (local && local.selectedMatchId === remoteSession.selectedMatchId) {
         return local;
       }
       setToStorage(STORAGE_KEYS.BOTONERA_ACTIVE_SESSION, remoteSession);
