@@ -8,6 +8,7 @@ import { dbStore } from '@/lib/store/db-store';
 import { isGoalEvent } from '@/lib/analytics/dashboard-engine';
 import { TeamLineupModal, TeamCircleIcon, getFormationPositions } from './TeamLineupModal';
 import { TeamLogo } from '@/components/player/PlayerBadge';
+import { ensureValidLineup, isValidLineup } from '@/lib/live-lineups';
 
 export function MiniCampogramaWidget({
   config,
@@ -22,8 +23,9 @@ export function MiniCampogramaWidget({
   matchEvents?: NormalizedEvent[];
   onClick: () => void;
 }) {
-  const positions = getFormationPositions(config.formation || '4-3-3');
-  const starters = config.starters || [];
+  const safeConfig = ensureValidLineup(config, isHomeTeam ? 'home' : 'away');
+  const positions = getFormationPositions(safeConfig.formation || '4-3-3');
+  const starters = safeConfig.starters || [];
 
   // Extract team substitutions to reflect active players on micro campograma
   const activeStarters = React.useMemo(() => {
@@ -45,8 +47,8 @@ export function MiniCampogramaWidget({
       return (
         subTeamNorm === normTarget ||
         (isSao && (subTeamNorm.includes('shabab') || subTeamNorm.includes('ordon') || subTeamNorm.includes('sao'))) ||
-        (isHomeTeam && evt.team_id === 'home_team') ||
-        (!isHomeTeam && evt.team_id === 'away_team')
+        (isHomeTeam && (evt.team_id === 'home_team' || evt.metadata?.team_side === 'home')) ||
+        (!isHomeTeam && (evt.team_id === 'away_team' || evt.metadata?.team_side === 'away'))
       );
     });
 
@@ -54,11 +56,18 @@ export function MiniCampogramaWidget({
       const outName = (evt.metadata?.player_out || evt.player_name || '').toLowerCase().trim();
       const inName = (evt.metadata?.player_in || '').trim();
       const inNum = evt.metadata?.player_in_number ?? evt.metadata?.dorsal;
+      const outNum = evt.metadata?.player_out_number;
+      const outId = evt.metadata?.player_out_id;
 
       if (outName && inName) {
-        const idx = list.findIndex((p) => {
-          const pNorm = (p.name || '').toLowerCase().trim();
-          return pNorm === outName || pNorm.includes(outName) || outName.includes(pNorm);
+        const idx = list.findIndex((p, pIdx) => {
+          if (outId && p.id === outId) return true;
+          if (outNum != null && p.number === outNum) return true;
+          const pName = (p.name || '').toLowerCase().trim();
+          if (pName && (pName === outName || outName.includes(pName) || pName.includes(outName))) return true;
+          const pDorsalLabel = `jugador #${p.number || pIdx + 1}`.toLowerCase();
+          const pDorsalShort = `#${p.number || pIdx + 1}`.toLowerCase();
+          return outName === pDorsalLabel || outName.includes(pDorsalShort);
         });
         if (idx !== -1) {
           list[idx] = {
@@ -78,7 +87,7 @@ export function MiniCampogramaWidget({
       type="button"
       onClick={onClick}
       className="relative w-12 h-16 sm:w-14 sm:h-20 rounded-xl border border-emerald-500/60 bg-emerald-950/90 overflow-hidden shadow-md hover:border-amber-400 hover:scale-105 transition cursor-pointer shrink-0 group select-none"
-      title={`Campograma Táctico (${config.formation || '4-3-3'}). Haz clic para ver y editar.`}
+      title={`Campograma Táctico (${safeConfig.formation || '4-3-3'}). Haz clic para ver y editar.`}
     >
       {/* Mini Checkered Grass Pattern */}
       <div
@@ -100,7 +109,7 @@ export function MiniCampogramaWidget({
       {activeStarters.map((player, idx) => {
         const origId = starters[idx]?.id || player.id;
         const presetPos = positions[idx] || { x: 50, y: 50, role: 'JUG' };
-        const activePos = (config.customPositions && (config.customPositions[origId] || config.customPositions[player.id])) || {
+        const activePos = (safeConfig.customPositions && (safeConfig.customPositions[origId] || safeConfig.customPositions[player.id])) || {
           x: player.x ?? presetPos.x,
           y: player.y ?? presetPos.y,
         };
@@ -114,7 +123,7 @@ export function MiniCampogramaWidget({
             }}
             className="absolute -translate-x-1/2 -translate-y-1/2 z-10 pointer-events-none"
           >
-            <TeamCircleIcon style={config.circleStyle} number={player.number || idx + 1} size={11} />
+            <TeamCircleIcon style={safeConfig.circleStyle} number={player.number || idx + 1} size={11} />
           </div>
         );
       })}
@@ -135,8 +144,6 @@ interface BotoneraLiveScoreboardProps {
   onResetLineupsAndSubstitutions?: (team?: 'home' | 'away' | 'both') => void;
 }
 
-
-
 export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
   match,
   events,
@@ -155,57 +162,23 @@ export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
 
   // Lineup & Circle Kit State
   const [homeLineup, setHomeLineup] = useState<TeamLineupConfig>(() => {
-    if (match?.home_lineup) return match.home_lineup;
-    if (match?.id) {
-      const dbm = dbStore.getMatchById(match.id);
-      if (dbm?.home_lineup) return dbm.home_lineup;
-    }
-    return {
-      formation: '4-3-3',
-      circleStyle: { primaryColor: '#ef4444', secondaryColor: '#ffffff', pattern: 'solid' },
-      starters: Array.from({ length: 11 }, (_, i) => ({
-        id: `h_st_${i + 1}`,
-        number: i + 1,
-        name: '',
-        position: i === 0 ? 'POR' : 'JUG',
-        isStarter: true,
-      })),
-      substitutes: [],
-    };
+    const raw = match?.home_lineup || (match?.id ? dbStore.getMatchById(match.id)?.home_lineup : null);
+    return ensureValidLineup(raw, 'home');
   });
 
   const [awayLineup, setAwayLineup] = useState<TeamLineupConfig>(() => {
-    if (match?.away_lineup) return match.away_lineup;
-    if (match?.id) {
-      const dbm = dbStore.getMatchById(match.id);
-      if (dbm?.away_lineup) return dbm.away_lineup;
-    }
-    return {
-      formation: '4-3-3',
-      circleStyle: { primaryColor: '#3b82f6', secondaryColor: '#ffffff', pattern: 'solid' },
-      starters: Array.from({ length: 11 }, (_, i) => ({
-        id: `a_st_${i + 1}`,
-        number: i + 1,
-        name: '',
-        position: i === 0 ? 'POR' : 'JUG',
-        isStarter: true,
-      })),
-      substitutes: [],
-    };
+    const raw = match?.away_lineup || (match?.id ? dbStore.getMatchById(match.id)?.away_lineup : null);
+    return ensureValidLineup(raw, 'away');
   });
 
   useEffect(() => {
-    if (match?.home_lineup) {
-      setHomeLineup(match.home_lineup);
-    } else if (match?.id) {
-      const dbm = dbStore.getMatchById(match.id);
-      if (dbm?.home_lineup) setHomeLineup(dbm.home_lineup);
+    const rawHome = match?.home_lineup || (match?.id ? dbStore.getMatchById(match.id)?.home_lineup : null);
+    if (isValidLineup(rawHome)) {
+      setHomeLineup(ensureValidLineup(rawHome, 'home'));
     }
-    if (match?.away_lineup) {
-      setAwayLineup(match.away_lineup);
-    } else if (match?.id) {
-      const dbm = dbStore.getMatchById(match.id);
-      if (dbm?.away_lineup) setAwayLineup(dbm.away_lineup);
+    const rawAway = match?.away_lineup || (match?.id ? dbStore.getMatchById(match.id)?.away_lineup : null);
+    if (isValidLineup(rawAway)) {
+      setAwayLineup(ensureValidLineup(rawAway, 'away'));
     }
   }, [match?.id, match?.home_lineup, match?.away_lineup]);
 
@@ -604,13 +577,19 @@ export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
               const minVal = subMinute !== '' ? Number(subMinute) : Math.floor(timerSeconds / 60) || 1;
               const periodVal = Number(subPeriod) || period || 1;
 
+              const currentLineup = addSubTeam === 'home' ? homeLineup : awayLineup;
+              const selectedOutPlayer = currentLineup.starters.find((p, idx) => {
+                const label = p.name || `Jugador #${p.number || idx + 1}`;
+                return label === subPlayerOut || p.name === subPlayerOut || `#${p.number}` === subPlayerOut;
+              });
+
               const newEvt: NormalizedEvent = {
                 event_id: `evt_sub_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
                 source_event_id: null,
                 match_id: match?.id || 'free_session',
                 team_name: targetTeam,
                 team_id: addSubTeam === 'home' ? 'home_team' : 'away_team',
-                player_id: null,
+                player_id: selectedOutPlayer?.id || null,
                 player_name: subPlayerOut,
                 event_type: 'Sustitución',
                 category: 'Cambio',
@@ -626,7 +605,10 @@ export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
                 end_y: null,
                 outcome: 'Éxito',
                 metadata: {
+                  team_side: addSubTeam,
                   player_out: subPlayerOut,
+                  player_out_id: selectedOutPlayer?.id,
+                  player_out_number: selectedOutPlayer?.number,
                   player_in: subPlayerIn,
                   player_in_number: subPlayerInNum !== '' ? Number(subPlayerInNum) : undefined,
                   dorsal: subPlayerInNum !== '' ? Number(subPlayerInNum) : undefined,

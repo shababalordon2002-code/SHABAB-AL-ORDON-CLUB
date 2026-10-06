@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/client';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { Match, TeamLineupConfig } from '@/types';
-import { isLiveLineupLocked } from '@/lib/live-lineups';
+import { isLiveLineupLocked, isValidLineup } from '@/lib/live-lineups';
 import { isMatchOnOrAfterSept2026 } from '@/lib/utils/date-utils';
 import { getAnalysisVideosMapFromSupabase, upsertAnalysisVideoToSupabase } from './botonera-service';
 
@@ -19,14 +19,20 @@ export async function getMatchesFromSupabase(): Promise<Match[]> {
       return [];
     }
 
-    const rawList = (data || []).map((row: any) => ({
-      ...row,
-      home_lineup: typeof row.home_lineup === 'string' ? JSON.parse(row.home_lineup) : (row.home_lineup || null),
-      away_lineup: typeof row.away_lineup === 'string' ? JSON.parse(row.away_lineup) : (row.away_lineup || null),
-      period_adjustments: typeof row.period_adjustments === 'string'
+    const rawList = (data || []).map((row: any) => {
+      const parsedHome = typeof row.home_lineup === 'string' ? JSON.parse(row.home_lineup) : (row.home_lineup || null);
+      const parsedAway = typeof row.away_lineup === 'string' ? JSON.parse(row.away_lineup) : (row.away_lineup || null);
+      const periodAdj = typeof row.period_adjustments === 'string'
         ? JSON.parse(row.period_adjustments)
-        : (row.period_adjustments || row.home_lineup?._period_adjustments || null),
-    })) as Match[];
+        : (row.period_adjustments || parsedHome?._period_adjustments || null);
+
+      return {
+        ...row,
+        home_lineup: isValidLineup(parsedHome) ? parsedHome : null,
+        away_lineup: isValidLineup(parsedAway) ? parsedAway : null,
+        period_adjustments: periodAdj,
+      };
+    }) as Match[];
 
     const filtered = rawList.filter(m => isMatchOnOrAfterSept2026(m.date));
 
@@ -147,12 +153,16 @@ export async function saveMatchesToSupabase(matches: Match[]): Promise<boolean> 
         ? m.period_adjustments
         : (ex?.period_adjustments ?? an?.period_adjustments ?? ex?.home_lineup?._period_adjustments ?? an?.home_lineup?._period_adjustments ?? null);
       const resolvedTemplateId = m.botonera_template_id || ex?.botonera_template_id || an?.botonera_template_id || null;
-      const resolvedHomeLineup = m.home_lineup || ex?.home_lineup || an?.home_lineup || null;
-      const resolvedAwayLineup = m.away_lineup || ex?.away_lineup || an?.away_lineup || null;
+      const validHomeLineup = isValidLineup(m.home_lineup)
+        ? m.home_lineup
+        : (isValidLineup(ex?.home_lineup) ? ex.home_lineup : (isValidLineup(an?.home_lineup) ? an.home_lineup : null));
+      const validAwayLineup = isValidLineup(m.away_lineup)
+        ? m.away_lineup
+        : (isValidLineup(ex?.away_lineup) ? ex.away_lineup : (isValidLineup(an?.away_lineup) ? an.away_lineup : null));
 
       // Ensure _period_adjustments is preserved inside home_lineup as robust fallback
-      const safeHomeLineup = resolvedHomeLineup
-        ? { ...resolvedHomeLineup, ...(resolvedAdjustments ? { _period_adjustments: resolvedAdjustments } : {}) }
+      const safeHomeLineup = validHomeLineup
+        ? { ...validHomeLineup, ...(resolvedAdjustments ? { _period_adjustments: resolvedAdjustments } : {}) }
         : (resolvedAdjustments ? { _period_adjustments: resolvedAdjustments } : null);
 
       return {
@@ -181,7 +191,7 @@ export async function saveMatchesToSupabase(matches: Match[]): Promise<boolean> 
         period_adjustments: resolvedAdjustments,
         botonera_template_id: resolvedTemplateId,
         home_lineup: safeHomeLineup,
-        away_lineup: resolvedAwayLineup,
+        away_lineup: validAwayLineup,
         updated_at: new Date().toISOString()
       };
     });

@@ -15,6 +15,7 @@ import { BotoneraGoalCanvas, type GoalPointMarker, GOAL_ZONES } from '@/componen
 import { TeamLogo } from '@/components/player/PlayerBadge';
 import { dbStore } from '@/lib/store/db-store';
 import { calculateEventVideoTime, resolveEventPeriod, extractYouTubeVideoId } from '@/lib/analytics/video-utils';
+import { isValidLineup } from '@/lib/live-lineups';
 import {
   BarChart3,
   Calendar,
@@ -302,16 +303,16 @@ export const StandardMatchDashboard: React.FC<StandardMatchDashboardProps> = ({
 
   // Resolved lineup configs from match or dbStore fallback
   const homeLineupConfig = useMemo(() => {
-    if (match?.home_lineup) return match.home_lineup;
+    if (isValidLineup(match?.home_lineup)) return match.home_lineup;
     const analyses = dbStore.getAnalyses(match.id);
-    if (analyses.length > 0 && analyses[0].home_lineup) return analyses[0].home_lineup;
+    if (analyses.length > 0 && isValidLineup(analyses[0].home_lineup)) return analyses[0].home_lineup;
     return null;
   }, [match]);
 
   const awayLineupConfig = useMemo(() => {
-    if (match?.away_lineup) return match.away_lineup;
+    if (isValidLineup(match?.away_lineup)) return match.away_lineup;
     const analyses = dbStore.getAnalyses(match.id);
-    if (analyses.length > 0 && analyses[0].away_lineup) return analyses[0].away_lineup;
+    if (analyses.length > 0 && isValidLineup(analyses[0].away_lineup)) return analyses[0].away_lineup;
     return null;
   }, [match]);
 

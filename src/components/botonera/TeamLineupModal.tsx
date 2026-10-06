@@ -6,6 +6,7 @@ import { TeamLineupConfig, TeamCircleStyle, LineupPlayerItem, NormalizedEvent } 
 import { dbStore } from '@/lib/store/db-store';
 import { X, Check, Shield, Users, Palette, Sparkles, Plus, Trash2, Layout, User, RefreshCw, ArrowRightLeft } from 'lucide-react';
 import { TeamLogo } from '@/components/player/PlayerBadge';
+import { ensureValidLineup } from '@/lib/live-lineups';
 
 export const FORMATION_PRESETS = [
   '4-3-3',
@@ -270,34 +271,23 @@ export const TeamLineupModal: React.FC<TeamLineupModalProps> = ({
   onSave,
   onCancel,
 }) => {
-  const [formation, setFormation] = useState<string>(initialConfig?.formation || '4-3-3');
+  const safeInitial = ensureValidLineup(initialConfig, isHomeTeam ? 'home' : 'away');
+  const [formation, setFormation] = useState<string>(safeInitial.formation || '4-3-3');
 
   // Circle style
   const [primaryColor, setPrimaryColor] = useState<string>(
-    initialConfig?.circleStyle?.primaryColor || (isHomeTeam ? '#ef4444' : '#3b82f6')
+    safeInitial.circleStyle?.primaryColor || (isHomeTeam ? '#ef4444' : '#3b82f6')
   );
   const [secondaryColor, setSecondaryColor] = useState<string>(
-    initialConfig?.circleStyle?.secondaryColor || '#ffffff'
+    safeInitial.circleStyle?.secondaryColor || '#ffffff'
   );
   const [pattern, setPattern] = useState<'solid' | 'striped' | 'split' | 'ring'>(
-    initialConfig?.circleStyle?.pattern || 'solid'
+    safeInitial.circleStyle?.pattern || 'solid'
   );
 
   // Starters & Substitutes
-  const [starters, setStarters] = useState<LineupPlayerItem[]>(
-    initialConfig?.starters ||
-      Array.from({ length: 11 }, (_, i) => ({
-        id: `starter_${i + 1}`,
-        number: i + 1,
-        name: '',
-        position: i === 0 ? 'POR' : 'JUG',
-        isStarter: true,
-      }))
-  );
-
-  const [substitutes, setSubstitutes] = useState<LineupPlayerItem[]>(
-    initialConfig?.substitutes || []
-  );
+  const [starters, setStarters] = useState<LineupPlayerItem[]>(safeInitial.starters);
+  const [substitutes, setSubstitutes] = useState<LineupPlayerItem[]>(safeInitial.substitutes);
 
   // Selected player on campograma for quick edit
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
@@ -376,9 +366,12 @@ export const TeamLineupModal: React.FC<TeamLineupModalProps> = ({
 
     teamSubstitutions.forEach((sub) => {
       const outNorm = sub.playerOutName.toLowerCase().trim();
-      const idx = active.findIndex((p) => {
-        const pNorm = (p.name || '').toLowerCase().trim();
-        return pNorm === outNorm || pNorm.includes(outNorm) || outNorm.includes(pNorm);
+      const idx = active.findIndex((p, pIdx) => {
+        const pName = (p.name || '').toLowerCase().trim();
+        if (pName && (pName === outNorm || outNorm.includes(pName) || pName.includes(outNorm))) return true;
+        const pDorsalLabel = `jugador #${p.number || pIdx + 1}`.toLowerCase();
+        const pDorsalShort = `#${p.number || pIdx + 1}`.toLowerCase();
+        return outNorm === pDorsalLabel || outNorm.includes(pDorsalShort);
       });
 
       if (idx !== -1) {

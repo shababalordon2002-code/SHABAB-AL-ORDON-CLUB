@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/client';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { MatchAnalysis, NormalizedEvent } from '@/types';
-import { isLiveLineupLocked } from '@/lib/live-lineups';
+import { isLiveLineupLocked, isValidLineup } from '@/lib/live-lineups';
 import { ANALYSIS_PRESERVE_COLUMNS, MATCH_PRESERVE_COLUMNS, isNoOpUpdate, selectWithFallback } from '@/lib/supabase/egress';
 import { rowToNormalizedEvent, getAnalysisVideosMapFromSupabase, getAnalysisVideoFromSupabase, upsertAnalysisVideoToSupabase } from '@/lib/services/botonera-service';
 
@@ -17,7 +17,11 @@ export async function getAnalysesFromSupabase(matchId?: string): Promise<MatchAn
 
 // Same as getAnalysesFromSupabase, but returns null when Supabase could not be read, so callers
 // can tell "this analysis no longer exists" (deleted) from "we don't know" (offline / error).
-export async function fetchAnalysesFromSupabase(matchId?: string): Promise<MatchAnalysis[] | null> {
+// Also returns the set of match_ids that are currently marked as deleted (tombstoned).
+export async function fetchAnalysesAndTombstonesFromSupabase(matchId?: string): Promise<{
+  analyses: MatchAnalysis[];
+  deletedMatchIds: Set<string>;
+} | null> {
   try {
     const supabase = createClient();
     let query = supabase.from('match_analyses').select('*').order('created_at', { ascending: false });
@@ -61,7 +65,8 @@ export async function fetchAnalysesFromSupabase(matchId?: string): Promise<Match
     // A deleted analysis leaves a tombstone row (status 'deleted', see deleteAnalysisFromSupabase):
     // it is not shown, and stray analysis_events rows of that match must not bring it back either.
     const tombstones = (data || []).filter((row: any) => row.status === ANALYSIS_DELETED_STATUS);
-    tombstones.forEach((row: any) => processedMatchIds.add(row.match_id));
+    const deletedMatchIds = new Set<string>(tombstones.map((row: any) => row.match_id).filter(Boolean));
+    deletedMatchIds.forEach((mId) => processedMatchIds.add(mId));
 
     const analyses: MatchAnalysis[] = (data || []).filter((row: any) => row.status !== ANALYSIS_DELETED_STATUS).map((row: any) => {
       processedMatchIds.add(row.match_id);
@@ -89,6 +94,9 @@ export async function fetchAnalysesFromSupabase(matchId?: string): Promise<Match
         return ta - tb;
       });
 
+      const parsedHome = typeof row.home_lineup === 'string' ? JSON.parse(row.home_lineup) : (row.home_lineup || null);
+      const parsedAway = typeof row.away_lineup === 'string' ? JSON.parse(row.away_lineup) : (row.away_lineup || null);
+
       return {
         id: row.id,
         match_id: row.match_id,
@@ -102,10 +110,10 @@ export async function fetchAnalysesFromSupabase(matchId?: string): Promise<Match
         p2_video_start_time: row.p2_video_start_time ?? null,
         period_adjustments: typeof row.period_adjustments === 'string'
           ? JSON.parse(row.period_adjustments)
-          : (row.period_adjustments || row.home_lineup?._period_adjustments || null),
+          : (row.period_adjustments || parsedHome?._period_adjustments || null),
         botonera_template_id: row.botonera_template_id || null,
-        home_lineup: typeof row.home_lineup === 'string' ? JSON.parse(row.home_lineup) : (row.home_lineup || null),
-        away_lineup: typeof row.away_lineup === 'string' ? JSON.parse(row.away_lineup) : (row.away_lineup || null),
+        home_lineup: isValidLineup(parsedHome) ? parsedHome : null,
+        away_lineup: isValidLineup(parsedAway) ? parsedAway : null,
         events: reconciledEvents,
         created_at: row.created_at,
         updated_at: row.updated_at,
@@ -167,11 +175,16 @@ export async function fetchAnalysesFromSupabase(matchId?: string): Promise<Match
       console.warn('Non-blocking warning overlaying analysis_videos:', videoErr);
     }
 
-    return analyses;
+    return { analyses, deletedMatchIds };
   } catch (err: any) {
     console.warn('Could not load match_analyses from Supabase:', err.message);
     return null;
   }
+}
+
+export async function fetchAnalysesFromSupabase(matchId?: string): Promise<MatchAnalysis[] | null> {
+  const result = await fetchAnalysesAndTombstonesFromSupabase(matchId);
+  return result ? result.analyses : null;
 }
 
 // Guards against out-of-order concurrent saves for the same match: several callers
@@ -182,7 +195,7 @@ const _analysisSaveSeq: Record<string, number> = {};
 // Save/Upsert a Match Analysis to Supabase
 export async function saveAnalysisToSupabase(
   analysis: MatchAnalysis,
-  options?: { skipEventsTableSync?: boolean; explicitClear?: boolean }
+  options?: { skipEventsTableSync?: boolean; explicitClear?: boolean; allowResurrect?: boolean }
 ): Promise<boolean> {
   if (!analysis || !analysis.id || !analysis.match_id) return false;
 
@@ -225,13 +238,10 @@ export async function saveAnalysisToSupabase(
       console.warn('Could not query existing analysis/match for video preservation:', err);
     }
 
-    // The analysis was deleted after this copy of it was created (an analyst with the match still
-    // open, a stale local copy, a pending autosave...): writing it would bring it back to life.
-    // Only an analysis started after the deletion may replace the tombstone.
+    // The analysis was deleted: reject any save unless explicit allowResurrect is requested.
+    // We do NOT check timestamps because autosaves and syncs create fresh timestamps and would resurrect.
     if (existingAn?.status === ANALYSIS_DELETED_STATUS) {
-      const deletedAt = Date.parse(existingAn.created_at || '') || 0;
-      const createdAt = Date.parse(analysis.created_at || '') || 0;
-      if (!createdAt || createdAt <= deletedAt) {
+      if (!options?.allowResurrect) {
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent(ANALYSIS_DELETED_EVENT, { detail: { matchId: analysis.match_id } }));
         }
@@ -250,13 +260,18 @@ export async function saveAnalysisToSupabase(
       ? analysis.period_adjustments
       : (existingVideo?.periodAdjustments ?? existingAn?.period_adjustments ?? existingMatch?.period_adjustments ?? existingAn?.home_lineup?._period_adjustments ?? existingMatch?.home_lineup?._period_adjustments ?? null);
     const resolvedTemplateId = analysis.botonera_template_id || existingAn?.botonera_template_id || existingMatch?.botonera_template_id || null;
-    const resolvedHomeLineup = analysis.home_lineup || existingAn?.home_lineup || existingMatch?.home_lineup || null;
-    const resolvedAwayLineup = analysis.away_lineup || existingAn?.away_lineup || existingMatch?.away_lineup || null;
+    const validHomeLineup = isValidLineup(analysis.home_lineup)
+      ? analysis.home_lineup
+      : (isValidLineup(existingAn?.home_lineup) ? existingAn.home_lineup : (isValidLineup(existingMatch?.home_lineup) ? existingMatch.home_lineup : null));
+    const validAwayLineup = isValidLineup(analysis.away_lineup)
+      ? analysis.away_lineup
+      : (isValidLineup(existingAn?.away_lineup) ? existingAn.away_lineup : (isValidLineup(existingMatch?.away_lineup) ? existingMatch.away_lineup : null));
 
     // Dual protection: ensure _period_adjustments is preserved inside home_lineup JSONB as a 100% resilient fallback
-    const safeHomeLineup = resolvedHomeLineup
-      ? { ...resolvedHomeLineup, ...(resolvedAdjustments ? { _period_adjustments: resolvedAdjustments } : {}) }
+    const safeHomeLineup = validHomeLineup
+      ? { ...validHomeLineup, ...(resolvedAdjustments ? { _period_adjustments: resolvedAdjustments } : {}) }
       : (resolvedAdjustments ? { _period_adjustments: resolvedAdjustments } : null);
+    const safeAwayLineup = validAwayLineup;
 
     // Events safety: ONLY delete from analysis_events table if explicitClear is intentionally requested by user action
     const isExplicitClear = options?.explicitClear === true;
@@ -373,7 +388,7 @@ export async function saveAnalysisToSupabase(
       period_adjustments: resolvedAdjustments,
       botonera_template_id: resolvedTemplateId,
       home_lineup: safeHomeLineup,
-      away_lineup: resolvedAwayLineup,
+      away_lineup: safeAwayLineup,
       events: cleanFinalEvents,
       updated_at: new Date().toISOString(),
     };
@@ -477,7 +492,7 @@ export async function saveAnalysisToSupabase(
           period_adjustments: resolvedAdjustments,
           botonera_template_id: resolvedTemplateId,
           home_lineup: safeHomeLineup,
-          away_lineup: resolvedAwayLineup,
+          away_lineup: safeAwayLineup,
           updated_at: new Date().toISOString(),
         };
         // Skip the write when the match already holds these exact values: a no-op update
@@ -556,7 +571,7 @@ export async function deleteAnalysisFromSupabase(
       return true;
     }
 
-    const matchId = options?.matchId || (analysisId.startsWith('analysis_') ? analysisId.replace('analysis_', '') : null);
+    const matchId = options?.matchId || (analysisId.startsWith('analysis_') ? analysisId.replace('analysis_', '') : analysisId);
 
     if (!matchId) {
       const { error } = await supabase.from('match_analyses').delete().eq('id', analysisId);
@@ -567,13 +582,54 @@ export async function deleteAnalysisFromSupabase(
       return true;
     }
 
-    // Tombstone first, so no save racing with this deletion can slip in between.
-    await supabase.from('match_analyses').delete().eq('match_id', matchId).neq('id', `analysis_${matchId}`);
-    if (analysisId !== `analysis_${matchId}`) {
-      await supabase.from('match_analyses').delete().eq('id', analysisId);
-    }
     const now = new Date().toISOString();
-    const { error } = await supabase.from('match_analyses').upsert([{
+
+    // 1. Delete all existing events for this match in Supabase
+    try {
+      await supabase.from('analysis_events').delete().eq('match_id', matchId);
+    } catch (evErr) {
+      console.warn('Non-blocking error deleting analysis_events in Supabase:', evErr);
+    }
+
+    // 2. Delete all existing sessions for this match in Supabase
+    try {
+      await supabase.from('analysis_sessions').delete().eq('match_id', matchId);
+    } catch (sessErr) {
+      console.warn('Non-blocking error deleting analysis_sessions in Supabase:', sessErr);
+    }
+
+    // 3. Delete all video configs for this match in Supabase
+    try {
+      await supabase.from('analysis_videos').delete().eq('match_id', matchId);
+    } catch (vidErr) {
+      console.warn('Non-blocking error deleting analysis_videos in Supabase:', vidErr);
+    }
+
+    // 4. Reset event_count and video fields on matches table in Supabase
+    try {
+      await supabase.from('matches').update({
+        event_count: 0,
+        p1_video_start_time: null,
+        p2_video_start_time: null,
+        period_adjustments: null,
+        video_url: null,
+        video_type: null,
+        video_source_name: null,
+        updated_at: now,
+      }).eq('id', matchId);
+    } catch (mErr) {
+      console.warn('Non-blocking error updating matches table in Supabase:', mErr);
+    }
+
+    // 5. Delete all old analysis rows for this match or ID
+    try {
+      await supabase.from('match_analyses').delete().or(`match_id.eq.${matchId},id.eq.${analysisId}`);
+    } catch (delErr) {
+      console.warn('Non-blocking error deleting match_analyses rows in Supabase:', delErr);
+    }
+
+    // 6. Write the definitive tombstone row so no background process can resurrect it
+    let { error } = await supabase.from('match_analyses').upsert([{
       id: `analysis_${matchId}`,
       match_id: matchId,
       title: 'Análisis eliminado',
@@ -581,13 +637,23 @@ export async function deleteAnalysisFromSupabase(
       events: [],
       created_at: now,
       updated_at: now,
-    }], { onConflict: 'id' });
-
-    await supabase.from('analysis_events').delete().eq('match_id', matchId);
-    await supabase.from('analysis_sessions').delete().eq('match_id', matchId);
+    }], { onConflict: 'match_id' });
 
     if (error) {
-      console.error('Error deleting match_analysis from Supabase:', error.message);
+      // Fallback on conflict 'id'
+      ({ error } = await supabase.from('match_analyses').upsert([{
+        id: `analysis_${matchId}`,
+        match_id: matchId,
+        title: 'Análisis eliminado',
+        status: ANALYSIS_DELETED_STATUS,
+        events: [],
+        created_at: now,
+        updated_at: now,
+      }], { onConflict: 'id' }));
+    }
+
+    if (error) {
+      console.error('Error writing tombstone to match_analyses in Supabase:', error.message);
       return false;
     }
 

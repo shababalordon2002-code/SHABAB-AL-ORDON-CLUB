@@ -103,7 +103,8 @@ export default function PartidosPage() {
 
   const handleDeleteAnalysis = async (analysisId: string) => {
     if (!(await requestAdminPassword())) return;
-    dbStore.deleteAnalysis(analysisId);
+    const matchId = selectedMatchForAnalysis?.match.id;
+    await dbStore.deleteAnalysis(analysisId, { matchId });
     if (selectedMatchForAnalysis) {
       const updatedList = dbStore.getAnalyses(selectedMatchForAnalysis.match.id);
       setSelectedMatchForAnalysis({ match: selectedMatchForAnalysis.match, analyses: updatedList });

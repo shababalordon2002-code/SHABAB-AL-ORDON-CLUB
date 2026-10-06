@@ -1,8 +1,8 @@
 import { createClient } from '@/lib/supabase/client';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { SESSION_PRESERVE_COLUMNS, MATCH_PRESERVE_COLUMNS, isNoOpUpdate, selectWithFallback } from '@/lib/supabase/egress';
-import { BotoneraTemplate, ActiveBotoneraSession, NormalizedEvent } from '@/types';
-import { isLiveLineupLocked } from '@/lib/live-lineups';
+import { BotoneraTemplate, ActiveBotoneraSession, NormalizedEvent, TeamLineupConfig } from '@/types';
+import { isLiveLineupLocked, isValidLineup } from '@/lib/live-lineups';
 
 // ==================== LIVE SESSION DETECTION ====================
 // Una sesión solo está "en vivo" si algún analista la mantiene abierta en la Botonera:
@@ -272,8 +272,8 @@ export async function getAnalysisSessionFromSupabase(
         ? JSON.parse(row.period_adjustments)
         : (row.period_adjustments || parsedHomeLineup?._period_adjustments || null),
       botoneraTemplateId: row.botonera_template_id || null,
-      home_lineup: parsedHomeLineup,
-      away_lineup: parsedAwayLineup,
+      home_lineup: isValidLineup(parsedHomeLineup) ? parsedHomeLineup : null,
+      away_lineup: isValidLineup(parsedAwayLineup) ? parsedAwayLineup : null,
     };
   } catch (err: any) {
     console.warn('Could not fetch analysis session from Supabase:', err.message);
@@ -389,16 +389,18 @@ export async function saveAnalysisSessionToSupabase(session: ActiveBotoneraSessi
       ? session.periodAdjustments
       : (existingSess?.period_adjustments ?? existingMatch?.period_adjustments ?? existingSess?.home_lineup?._period_adjustments ?? existingMatch?.home_lineup?._period_adjustments ?? null);
     const resolvedTemplateId = session.botoneraTemplateId || existingSess?.botonera_template_id || existingMatch?.botonera_template_id || null;
-    const resolvedHomeLineup = (lineupLocked ? null : session.home_lineup) || existingSess?.home_lineup || existingMatch?.home_lineup || null;
-    const resolvedAwayLineup = (lineupLocked ? null : session.away_lineup) || existingSess?.away_lineup || existingMatch?.away_lineup || null;
+    const candidateHomeLineup = (lineupLocked ? null : session.home_lineup) || existingSess?.home_lineup || existingMatch?.home_lineup || null;
+    const candidateAwayLineup = (lineupLocked ? null : session.away_lineup) || existingSess?.away_lineup || existingMatch?.away_lineup || null;
+    const validHomeLineup = isValidLineup(candidateHomeLineup) ? candidateHomeLineup : null;
+    const validAwayLineup = isValidLineup(candidateAwayLineup) ? candidateAwayLineup : null;
 
     const resolvedAnalystName = session.analystName || existingSess?.analyst_name || existingSess?.home_lineup?._analyst_name || null;
     const resolvedMatchTitle = session.matchTitle || existingSess?.match_title || existingSess?.home_lineup?._match_title || null;
 
     // Dual protection: fallback inside home_lineup JSONB
-    const safeHomeLineup = resolvedHomeLineup
+    const safeHomeLineup = validHomeLineup
       ? {
-          ...resolvedHomeLineup,
+          ...validHomeLineup,
           ...(resolvedAdjustments ? { _period_adjustments: resolvedAdjustments } : {}),
           ...(resolvedAnalystName ? { _analyst_name: resolvedAnalystName } : {}),
           ...(resolvedMatchTitle ? { _match_title: resolvedMatchTitle } : {}),
@@ -408,6 +410,7 @@ export async function saveAnalysisSessionToSupabase(session: ActiveBotoneraSessi
           ...(resolvedAnalystName ? { _analyst_name: resolvedAnalystName } : {}),
           ...(resolvedMatchTitle ? { _match_title: resolvedMatchTitle } : {}),
         };
+    const resolvedAwayLineup = validAwayLineup;
 
     const row: Record<string, any> = {
       match_id: session.selectedMatchId,

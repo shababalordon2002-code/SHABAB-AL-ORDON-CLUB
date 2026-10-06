@@ -14,6 +14,91 @@ export type TeamSide = 'home' | 'away';
 export const LINEUP_CHANGE_EVENT_TYPE = 'Cambio de alineación';
 export const LINEUP_CHANGE_CATEGORY = 'Alineación';
 
+/** Check if an object is a genuine, usable TeamLineupConfig (not just metadata like _period_adjustments). */
+export function isValidLineup(cfg: any): cfg is TeamLineupConfig {
+  if (!cfg || typeof cfg !== 'object') return false;
+  const hasFormation = typeof cfg.formation === 'string' && cfg.formation.trim().length > 0;
+  const hasStarters = Array.isArray(cfg.starters) && cfg.starters.length > 0;
+  return Boolean(hasFormation && hasStarters);
+}
+
+/** Build a clean default 4-3-3 formation with 11 starters. */
+export function buildFreshLineup(side: TeamSide): TeamLineupConfig {
+  return {
+    formation: '4-3-3',
+    circleStyle: {
+      primaryColor: side === 'home' ? '#ef4444' : '#3b82f6',
+      secondaryColor: '#ffffff',
+      pattern: 'solid',
+    },
+    starters: Array.from({ length: 11 }, (_, i) => ({
+      id: `${side === 'home' ? 'h' : 'a'}_st_${i + 1}`,
+      number: i + 1,
+      name: '',
+      position: i === 0 ? 'POR' : 'JUG',
+      isStarter: true,
+    })),
+    substitutes: [],
+    customPositions: {},
+  };
+}
+
+/** Ensure any lineup object is complete and valid with 11 starters, valid formation, and styles. */
+export function ensureValidLineup(cfg: any, side: TeamSide): TeamLineupConfig {
+  const fresh = buildFreshLineup(side);
+  if (!cfg || typeof cfg !== 'object') return fresh;
+
+  const formation = typeof cfg.formation === 'string' && cfg.formation.trim().length > 0 ? cfg.formation.trim() : fresh.formation;
+  const circleStyle = {
+    primaryColor: cfg.circleStyle?.primaryColor || fresh.circleStyle.primaryColor,
+    secondaryColor: cfg.circleStyle?.secondaryColor || fresh.circleStyle.secondaryColor,
+    pattern: cfg.circleStyle?.pattern || fresh.circleStyle.pattern,
+  };
+
+  let starters: any[] = Array.isArray(cfg.starters) && cfg.starters.length > 0 ? [...cfg.starters] : [];
+  if (starters.length < 11) {
+    const existingIds = new Set(starters.map((p) => p.id));
+    const pad = fresh.starters.filter((s) => !existingIds.has(s.id)).slice(0, 11 - starters.length);
+    starters = [...starters, ...pad];
+  }
+  const cleanStarters = starters.slice(0, 11).map((s, idx) => ({
+    id: s.id || `${side === 'home' ? 'h' : 'a'}_st_${idx + 1}`,
+    number: s.number !== undefined && s.number !== null && s.number !== '' ? Number(s.number) || idx + 1 : idx + 1,
+    name: typeof s.name === 'string' ? s.name : '',
+    position: s.position || (idx === 0 ? 'POR' : 'JUG'),
+    isStarter: true,
+    x: s.x,
+    y: s.y,
+  }));
+
+  const substitutes = Array.isArray(cfg.substitutes)
+    ? cfg.substitutes.map((s: any, idx: number) => ({
+        id: s.id || `sub_${side}_${idx + 1}`,
+        number: s.number !== undefined && s.number !== null && s.number !== '' ? Number(s.number) || idx + 12 : idx + 12,
+        name: typeof s.name === 'string' ? s.name : '',
+        position: s.position || 'SUPL',
+        isStarter: false,
+      }))
+    : [];
+
+  const customPositions = cfg.customPositions && typeof cfg.customPositions === 'object' ? { ...cfg.customPositions } : {};
+
+  return {
+    formation,
+    circleStyle,
+    starters: cleanStarters,
+    substitutes,
+    customPositions,
+  };
+}
+
+/** Strip metadata keys (like _period_adjustments, _analyst_name) from a lineup object. */
+export function stripLineupMetadata(lineup: any): TeamLineupConfig | null {
+  if (!isValidLineup(lineup)) return null;
+  const { formation, circleStyle, starters, substitutes, customPositions } = lineup;
+  return { formation, circleStyle, starters, substitutes, customPositions };
+}
+
 export function isLineupChangeEvent(e: NormalizedEvent | null | undefined): boolean {
   if (!e) return false;
   return e.metadata?.lineup_change === true || e.event_type === LINEUP_CHANGE_EVENT_TYPE;

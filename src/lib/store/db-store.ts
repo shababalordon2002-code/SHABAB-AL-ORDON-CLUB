@@ -14,9 +14,10 @@ import {
 } from '@/lib/services/botonera-service';
 import { saveMatchesToSupabase, getMatchesFromSupabase } from '@/lib/services/matches-service';
 import { getPlayersFromSupabase, savePlayersToSupabase } from '@/lib/services/players-service';
-import { fetchAnalysesFromSupabase, saveAnalysisToSupabase, deleteAnalysisFromSupabase } from '@/lib/services/analysis-service';
+import { fetchAnalysesFromSupabase, fetchAnalysesAndTombstonesFromSupabase, saveAnalysisToSupabase, deleteAnalysisFromSupabase } from '@/lib/services/analysis-service';
 import { getDashboardsFromSupabase, saveDashboardToSupabase, deleteDashboardFromSupabase } from '@/lib/services/dashboard-service';
 import { isMatchOnOrAfterSept2026 } from '@/lib/utils/date-utils';
+import { isValidLineup } from '@/lib/live-lineups';
 
 const STORAGE_KEYS = {
   MATCHES: 'sao_analytics_matches_v1',
@@ -32,6 +33,7 @@ const STORAGE_KEYS = {
   MATCH_DASHBOARDS: 'sao_analytics_match_dashboards_v1',
   TRASH_EVENTS: 'sao_analytics_trash_events_v1',
   DELETED_EVENT_IDS: 'sao_analytics_deleted_event_ids_v1',
+  DELETED_MATCH_IDS: 'sao_analytics_deleted_match_ids_v1',
   DASHBOARD_CONFIG: 'sao_analytics_dashboard_config_v1',
 };
 
@@ -422,12 +424,14 @@ export const dbStore = {
       const mergedRemote = remote.map((rm) => {
         const local = localMap.get(rm.id);
         if (!local) return rm;
-        const rmHomeOk = rm.home_lineup && typeof rm.home_lineup === 'object' && Object.keys(rm.home_lineup).length > 0;
-        const rmAwayOk = rm.away_lineup && typeof rm.away_lineup === 'object' && Object.keys(rm.away_lineup).length > 0;
+        const rmHomeOk = isValidLineup(rm.home_lineup);
+        const rmAwayOk = isValidLineup(rm.away_lineup);
+        const localHomeOk = isValidLineup(local.home_lineup);
+        const localAwayOk = isValidLineup(local.away_lineup);
         return {
           ...rm,
-          home_lineup: rmHomeOk ? rm.home_lineup : (local.home_lineup || null),
-          away_lineup: rmAwayOk ? rm.away_lineup : (local.away_lineup || null),
+          home_lineup: rmHomeOk ? rm.home_lineup : (localHomeOk ? local.home_lineup : null),
+          away_lineup: rmAwayOk ? rm.away_lineup : (localAwayOk ? local.away_lineup : null),
           video_type: rm.video_type || local.video_type,
           video_url: rm.video_url || local.video_url,
           video_source_name: rm.video_source_name || local.video_source_name,
@@ -496,8 +500,14 @@ export const dbStore = {
       ? match.period_adjustments
       : (existing?.period_adjustments ?? associatedAnalysis?.period_adjustments ?? null);
     const resolvedTemplateId = match.botonera_template_id || existing?.botonera_template_id || associatedAnalysis?.botonera_template_id || undefined;
-    const resolvedHomeLineup = match.home_lineup || existing?.home_lineup || associatedAnalysis?.home_lineup || undefined;
-    const resolvedAwayLineup = match.away_lineup || existing?.away_lineup || associatedAnalysis?.away_lineup || undefined;
+    const resolvedHomeLineup = (isValidLineup(match.home_lineup) ? match.home_lineup : null) ||
+      (isValidLineup(existing?.home_lineup) ? existing?.home_lineup : null) ||
+      (isValidLineup(associatedAnalysis?.home_lineup) ? associatedAnalysis?.home_lineup : null) ||
+      undefined;
+    const resolvedAwayLineup = (isValidLineup(match.away_lineup) ? match.away_lineup : null) ||
+      (isValidLineup(existing?.away_lineup) ? existing?.away_lineup : null) ||
+      (isValidLineup(associatedAnalysis?.away_lineup) ? associatedAnalysis?.away_lineup : null) ||
+      undefined;
 
     if (existingIdx >= 0 && existing) {
       savedTarget = sanitizeMatchLogos({
@@ -542,10 +552,10 @@ export const dbStore = {
       console.warn('Could not sync match analysis to Supabase:', err);
     });
 
-    // Also update and permanently preserve video, period offsets and lineups in associated match_analyses
     let analysesChanged = false;
     const updatedAnalyses = analyses.map((a) => {
       if (a.match_id === savedTarget.id || a.id === savedTarget.id || a.id === `analysis_${savedTarget.id}`) {
+        if (this.isMatchAnalysisDeleted(savedTarget.id)) return a;
         analysesChanged = true;
         const updatedA: MatchAnalysis = {
           ...a,
@@ -619,6 +629,32 @@ export const dbStore = {
   isEventDeleted(eventId: string): boolean {
     if (!eventId) return false;
     return this.getDeletedEventIds().has(eventId);
+  },
+
+  getDeletedMatchIds(): Set<string> {
+    const list = getFromStorage<string[]>(STORAGE_KEYS.DELETED_MATCH_IDS, []);
+    return new Set(list);
+  },
+
+  markMatchAnalysisDeleted(matchId: string): void {
+    if (!matchId) return;
+    const current = getFromStorage<string[]>(STORAGE_KEYS.DELETED_MATCH_IDS, []);
+    if (!current.includes(matchId)) {
+      current.push(matchId);
+      setToStorage(STORAGE_KEYS.DELETED_MATCH_IDS, current.slice(-500));
+    }
+  },
+
+  unmarkMatchAnalysisDeleted(matchId: string): void {
+    if (!matchId) return;
+    const current = getFromStorage<string[]>(STORAGE_KEYS.DELETED_MATCH_IDS, []);
+    const updated = current.filter((id) => id !== matchId);
+    setToStorage(STORAGE_KEYS.DELETED_MATCH_IDS, updated);
+  },
+
+  isMatchAnalysisDeleted(matchId: string): boolean {
+    if (!matchId) return false;
+    return this.getDeletedMatchIds().has(matchId);
   },
 
   getNormalizedEvents(matchId?: string): NormalizedEvent[] {
@@ -996,6 +1032,9 @@ export const dbStore = {
   _lastTimerRunningState: undefined as boolean | undefined,
 
   saveActiveBotoneraSession(session: ActiveBotoneraSession, forceImmediate = false): void {
+    if (session.selectedMatchId && this.isMatchAnalysisDeleted(session.selectedMatchId)) {
+      return;
+    }
     setToStorage(STORAGE_KEYS.BOTONERA_ACTIVE_SESSION, session);
 
     // Sync active session asynchronously to Supabase:
@@ -1111,8 +1150,8 @@ export const dbStore = {
           video_type: matchObj.video_type,
           video_source_name: matchObj.video_source_name,
         } : null) || group[0];
-        const withHomeLineup = group.find((a) => a.home_lineup && Object.keys(a.home_lineup).length > 0) || (matchObj?.home_lineup ? { home_lineup: matchObj.home_lineup } : null);
-        const withAwayLineup = group.find((a) => a.away_lineup && Object.keys(a.away_lineup).length > 0) || (matchObj?.away_lineup ? { away_lineup: matchObj.away_lineup } : null);
+        const withHomeLineup = group.find((a) => isValidLineup(a.home_lineup)) || (isValidLineup(matchObj?.home_lineup) ? { home_lineup: matchObj.home_lineup } : null);
+        const withAwayLineup = group.find((a) => isValidLineup(a.away_lineup)) || (isValidLineup(matchObj?.away_lineup) ? { away_lineup: matchObj.away_lineup } : null);
 
         const title = ('title' in withVideo && withVideo.title) || (matchObj ? `Análisis ${matchObj.home_team} vs ${matchObj.away_team}` : group[0].title);
 
@@ -1211,8 +1250,8 @@ export const dbStore = {
     const analystNames = this.sanitizeAnalystNames(allAnalyses.map((a) => a.analyst_name));
 
     const withVideo = targetAnalyses.find((a) => a.video_url) || sourceAnalyses.find((a) => a.video_url) || allAnalyses[0];
-    const withHomeLineup = allAnalyses.find((a) => a.home_lineup && Object.keys(a.home_lineup).length > 0);
-    const withAwayLineup = allAnalyses.find((a) => a.away_lineup && Object.keys(a.away_lineup).length > 0);
+    const withHomeLineup = allAnalyses.find((a) => isValidLineup(a.home_lineup)) || (isValidLineup(targetMatch.home_lineup) ? { home_lineup: targetMatch.home_lineup } : null);
+    const withAwayLineup = allAnalyses.find((a) => isValidLineup(a.away_lineup)) || (isValidLineup(targetMatch.away_lineup) ? { away_lineup: targetMatch.away_lineup } : null);
 
     const masterAnalysis: MatchAnalysis = {
       id: `analysis_${targetMatchId}`,
@@ -1269,40 +1308,38 @@ export const dbStore = {
   },
 
   async syncAnalysesFromSupabase(matchId?: string): Promise<MatchAnalysis[]> {
-    const fetched = await fetchAnalysesFromSupabase(matchId);
+    const result = await fetchAnalysesAndTombstonesFromSupabase(matchId);
 
-    // Supabase was read fine: an analysis that is only in this browser was deleted there (by this
-    // or another analyst), so it goes away here too, except the live session open in this browser
-    // (its analysis may still be on its way up).
-    if (fetched) {
-      const remoteIds = new Set(fetched.map((r) => r.match_id));
-      const activeMatchId = this.getActiveBotoneraSession()?.selectedMatchId;
-      const allLocal = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
-      const kept = allLocal.filter((l) => {
-        if (!l || !l.match_id || remoteIds.has(l.match_id)) return true;
-        if (matchId && l.match_id !== matchId) return true;
-        return l.match_id === activeMatchId;
+    if (result) {
+      const { analyses: remote, deletedMatchIds } = result;
+
+      // 1. Sync any tombstones from Supabase into our local deleted tracker and purge their events
+      deletedMatchIds.forEach((delId) => {
+        this.markMatchAnalysisDeleted(delId);
+        this.deleteMatchEvents(delId);
+        this.clearActiveBotoneraSession(delId);
       });
-      if (kept.length !== allLocal.length) setToStorage(STORAGE_KEYS.MATCH_ANALYSES, kept);
-    }
-    const remote = fetched ?? [];
 
-    let consolidated: MatchAnalysis[] = [];
-    if (remote && remote.length > 0) {
-      // Remote from Supabase is the single source of truth:
-      // Any remote match completely supersedes local storage for that match.
+      // 2. Remove all local analyses that are tombstoned or marked deleted
       const allLocal = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
       const remoteMatchIds = new Set(remote.map((r) => r.match_id));
-      const localOnly = allLocal.filter((l) => l && l.match_id && !remoteMatchIds.has(l.match_id));
 
-      const mergedRaw = [...remote, ...localOnly];
-      consolidated = this.consolidateAnalyses(mergedRaw);
+      const keptLocal = allLocal.filter((l) => {
+        if (!l || !l.match_id) return false;
+        if (this.isMatchAnalysisDeleted(l.match_id) || deletedMatchIds.has(l.match_id)) return false;
+        if (remoteMatchIds.has(l.match_id)) return true;
+        if (matchId && l.match_id !== matchId) return true;
+        return false;
+      });
+
+      const mergedRaw = [...remote, ...keptLocal.filter((l) => !remoteMatchIds.has(l.match_id))];
+      const consolidated = this.consolidateAnalyses(mergedRaw);
 
       setToStorage(STORAGE_KEYS.MATCH_ANALYSES, consolidated);
 
-      // Save all normalized events from remote analyses into local event store
+      // Save normalized events for active analyses
       consolidated.forEach((an) => {
-        if (an.events && an.events.length > 0) {
+        if (an.events && an.events.length > 0 && !this.isMatchAnalysisDeleted(an.match_id)) {
           this.saveNormalizedEvents(an.events, false, an.match_id);
         }
       });
@@ -1318,37 +1355,49 @@ export const dbStore = {
             m.event_count = count;
             matchesUpdated = true;
           }
+        } else if (deletedMatchIds.has(m.id) || this.isMatchAnalysisDeleted(m.id)) {
+          if (m.event_count !== 0) {
+            m.event_count = 0;
+            matchesUpdated = true;
+          }
         }
       });
       if (matchesUpdated) {
         setToStorage(STORAGE_KEYS.MATCHES, matches);
       }
-    } else {
-      const allLocal = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
-      consolidated = this.consolidateAnalyses(allLocal);
-    }
 
-    if (remote && remote.length > 1 && matchId) {
-      const matchRemote = remote.filter((r) => r.match_id === matchId);
-      if (matchRemote.length > 1) {
-        const master = consolidated.find((c) => c.match_id === matchId);
-        if (master) {
-          saveAnalysisToSupabase(master, { skipEventsTableSync: true }).catch(() => {});
-          matchRemote.forEach((oldRemote) => {
-            if (oldRemote.id !== master.id) {
-              deleteAnalysisFromSupabase(oldRemote.id, { rowOnly: true }).catch(() => {});
-            }
-          });
+      if (remote && remote.length > 1 && matchId) {
+        const matchRemote = remote.filter((r) => r.match_id === matchId);
+        if (matchRemote.length > 1) {
+          const master = consolidated.find((c) => c.match_id === matchId);
+          if (master) {
+            saveAnalysisToSupabase(master, { skipEventsTableSync: true }).catch(() => {});
+            matchRemote.forEach((oldRemote) => {
+              if (oldRemote.id !== master.id) {
+                deleteAnalysisFromSupabase(oldRemote.id, { rowOnly: true }).catch(() => {});
+              }
+            });
+          }
         }
       }
-    }
 
-    if (!matchId) return consolidated;
-    return consolidated.filter((a) => a.match_id === matchId);
+      if (!matchId) return consolidated;
+      return consolidated.filter((a) => a.match_id === matchId);
+    } else {
+      const allLocal = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
+      const filtered = allLocal.filter((l) => l && l.match_id && !this.isMatchAnalysisDeleted(l.match_id));
+      const consolidated = this.consolidateAnalyses(filtered);
+      if (!matchId) return consolidated;
+      return consolidated.filter((a) => a.match_id === matchId);
+    }
   },
 
-  saveAnalysis(analysis: MatchAnalysis): void {
+  saveAnalysis(analysis: MatchAnalysis, options?: { allowResurrect?: boolean }): void {
     if (!analysis || !analysis.match_id) return;
+    if (this.isMatchAnalysisDeleted(analysis.match_id) && !options?.allowResurrect) {
+      console.warn(`[dbStore] Blocked saving deleted analysis for match ${analysis.match_id}`);
+      return;
+    }
     const targetId = analysis.id && analysis.id.startsWith('analysis_') ? analysis.id : `analysis_${analysis.match_id}`;
     const normalizedAnalysis = { ...analysis, id: targetId };
 
@@ -1474,22 +1523,49 @@ export const dbStore = {
     return await saveAnalysisToSupabase(updated);
   },
 
-  deleteAnalysis(id: string): void {
+  async deleteAnalysis(id: string, options?: { matchId?: string }): Promise<boolean> {
     const all = this.getAnalyses();
-    const target = all.find(a => a.id === id);
-    const matchId = target?.match_id || (id.startsWith('analysis_') ? id.replace('analysis_', '') : undefined);
+    const target = all.find(a => a.id === id || a.match_id === id);
+    const matchId = options?.matchId || target?.match_id || (id.startsWith('analysis_') ? id.replace('analysis_', '') : id);
 
-    const filtered = all.filter(a => a.id !== id);
+    if (matchId) {
+      this.markMatchAnalysisDeleted(matchId);
+      this.deleteMatchEvents(matchId);
+      this.clearActiveBotoneraSession(matchId);
+    }
+
+    const filtered = all.filter(a => a.id !== id && (matchId ? a.match_id !== matchId : true));
     setToStorage(STORAGE_KEYS.MATCH_ANALYSES, filtered);
 
     if (matchId) {
-      this.clearActiveBotoneraSession(matchId);
-      clearAnalysisEventsFromSupabase(matchId).catch(() => {});
+      const matches = this.getMatches();
+      let matchChanged = false;
+      matches.forEach((m) => {
+        if (m.id === matchId) {
+          m.event_count = 0;
+          m.video_url = undefined;
+          m.video_type = undefined;
+          m.video_source_name = undefined;
+          m.p1_video_start_time = null;
+          m.p2_video_start_time = null;
+          m.period_adjustments = null;
+          m.botonera_template_id = undefined;
+          matchChanged = true;
+        }
+      });
+      if (matchChanged) {
+        setToStorage(STORAGE_KEYS.MATCHES, matches);
+      }
     }
 
-    deleteAnalysisFromSupabase(id, { matchId }).catch(err => {
+    let ok = true;
+    try {
+      ok = await deleteAnalysisFromSupabase(id, { matchId });
+    } catch (err) {
       console.warn("Could not delete analysis from Supabase:", err);
-    });
+      ok = false;
+    }
+    return ok;
   },
 
   // Match Dashboards (pizarras configurables por partido)

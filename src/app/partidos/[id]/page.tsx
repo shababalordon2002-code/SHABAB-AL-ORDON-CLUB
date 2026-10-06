@@ -97,8 +97,8 @@ export default function PartidoDetailPage({ params }: { params: Promise<{ id: st
   const handleDeleteAnalysisCard = async (analysisId: string) => {
     if (!confirm('¿Estás seguro de eliminar esta tarjeta de análisis?')) return;
     if (!(await requestAdminPassword())) return;
-    dbStore.deleteAnalysis(analysisId);
-    setAnalyses((prev) => prev.filter((a) => a.id !== analysisId));
+    await dbStore.deleteAnalysis(analysisId, { matchId });
+    setAnalyses((prev) => prev.filter((a) => a.id !== analysisId && a.match_id !== matchId));
   };
 
   const handleUpdateAnalysisCard = (updated: MatchAnalysis) => {

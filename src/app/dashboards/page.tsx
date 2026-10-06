@@ -226,7 +226,8 @@ export default function DashboardsPage() {
 
   const handleDeleteAnalysis = async (analysisId: string) => {
     if (!(await requestAdminPassword())) return;
-    dbStore.deleteAnalysis(analysisId);
+    const targetMatchId = selectedMatchForAnalysis?.match.id;
+    await dbStore.deleteAnalysis(analysisId, { matchId: targetMatchId });
     if (selectedMatchForAnalysis) {
       const updatedList = dbStore.getAnalyses(selectedMatchForAnalysis.match.id);
       setSelectedMatchForAnalysis({ match: selectedMatchForAnalysis.match, analyses: updatedList });

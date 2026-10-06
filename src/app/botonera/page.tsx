@@ -32,6 +32,8 @@ import {
   lineupToPlayers,
   sameLineup,
   setLiveLineupLock,
+  isValidLineup,
+  ensureValidLineup,
 } from '@/lib/live-lineups';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { Match, Player, NormalizedEvent, BotoneraTemplate, BotoneraButton, BotoneraProjectVideoType, MatchAnalysis, ActiveBotoneraSession, TeamLineupConfig } from '@/types';
@@ -207,14 +209,15 @@ export default function BotoneraPage() {
     const m = dbStore.getMatchById(matchId);
     if (!m) return;
     const key = side === 'home' ? 'home_lineup' : 'away_lineup';
-    if (sameLineup(m[key], lineup)) return;
-    dbStore.saveMatch({ ...m, [key]: lineup });
+    const cleanLineup = lineup && isValidLineup(lineup) ? ensureValidLineup(lineup, side) : null;
+    if (sameLineup(m[key], cleanLineup)) return;
+    dbStore.saveMatch({ ...m, [key]: cleanLineup });
     const an = dbStore.getAnalyses(matchId)[0];
-    if (an) dbStore.saveAnalysis({ ...an, [key]: lineup });
+    if (an) dbStore.saveAnalysis({ ...an, [key]: cleanLineup });
     setMatches(dbStore.getMatches());
-    if (lineup) {
+    if (cleanLineup) {
       const teamName = (side === 'home' ? m.home_team : m.away_team) || '';
-      const teamPlayers = lineupToPlayers(lineup, teamName, side);
+      const teamPlayers = lineupToPlayers(cleanLineup, teamName, side);
       setPlayers((prev) => [
         ...prev.filter((p) => (p.team_name || '').toLowerCase().trim() !== teamName.toLowerCase().trim()),
         ...teamPlayers,
@@ -230,8 +233,12 @@ export default function BotoneraPage() {
   const latestAwayLineupEvt = isRealMatch ? latestLineupEvent(events, 'away', lineupHome, lineupAway) : null;
   useEffect(() => {
     if (!isRealMatch) return;
-    if (latestHomeLineupEvt) applyLineupLocally(selectedMatchId, 'home', latestHomeLineupEvt.metadata.lineup);
-    if (latestAwayLineupEvt) applyLineupLocally(selectedMatchId, 'away', latestAwayLineupEvt.metadata.lineup);
+    if (latestHomeLineupEvt && isValidLineup(latestHomeLineupEvt.metadata?.lineup)) {
+      applyLineupLocally(selectedMatchId, 'home', latestHomeLineupEvt.metadata.lineup);
+    }
+    if (latestAwayLineupEvt && isValidLineup(latestAwayLineupEvt.metadata?.lineup)) {
+      applyLineupLocally(selectedMatchId, 'away', latestAwayLineupEvt.metadata.lineup);
+    }
     // applyLineupLocally only reads the store for the open match
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [latestHomeLineupEvt?.event_id, latestAwayLineupEvt?.event_id, selectedMatchId, isRealMatch]);
@@ -247,7 +254,8 @@ export default function BotoneraPage() {
     const [home, away] = teamNamesOf(selectedMatchId);
     const side = (deleted.metadata?.team_side as TeamSide | undefined) || (deleted.team_id === 'away_team' ? 'away' : 'home');
     const prevEvt = latestLineupEvent(remaining, side, home, away);
-    const lineup: TeamLineupConfig | null = prevEvt ? prevEvt.metadata.lineup : (deleted.metadata?.previous_lineup ?? null);
+    const rawLineup = prevEvt ? prevEvt.metadata?.lineup : (deleted.metadata?.previous_lineup ?? null);
+    const lineup: TeamLineupConfig | null = rawLineup && isValidLineup(rawLineup) ? ensureValidLineup(rawLineup, side) : null;
     applyLineupLocally(selectedMatchId, side, lineup);
     return { side, lineup };
   };
@@ -1255,6 +1263,7 @@ export default function BotoneraPage() {
       if (!isSessionConfigured) return;
 
       const targetId = (!selectedMatchId || selectedMatchId === 'free_session') ? 'match_demo_1' : selectedMatchId;
+      if (dbStore.isMatchAnalysisDeleted(targetId)) return;
       const targetMatch = dbStore.getMatchById(targetId) || matches.find((m) => m.id === targetId);
 
       // Save or update the single shared Match Analysis card per match
@@ -1382,6 +1391,9 @@ export default function BotoneraPage() {
       return;
     }
     if (!isSessionConfigured) return;
+    const targetMatchId = (!selectedMatchId || selectedMatchId === 'free_session') ? 'match_demo_1' : selectedMatchId;
+    if (dbStore.isMatchAnalysisDeleted(targetMatchId)) return;
+
     const isExplicitEmpty = events.length === 0 && (
       deletedEventIdsRef.current.size > 0 ||
       dbStore.getTrashEvents().some((t) => t.match_id === selectedMatchId)
@@ -1481,6 +1493,7 @@ export default function BotoneraPage() {
     periodAdjustmentsRef.current = initialAdjustments;
     setSelectedPlayerId(null);
 
+    dbStore.unmarkMatchAnalysisDeleted(config.matchId);
     setSelectedMatchId(config.matchId);
     setVideoType(resolvedVideoType);
     setVideoSourceName(resolvedVideoSourceName);
@@ -3451,11 +3464,18 @@ export default function BotoneraPage() {
   };
 
   const selectedMatch = matches.find((m) => m.id === selectedMatchId);
+  const homeLineupCandidate = (latestHomeLineupEvt && isValidLineup(latestHomeLineupEvt.metadata?.lineup))
+    ? latestHomeLineupEvt.metadata.lineup
+    : (isValidLineup(selectedMatch?.home_lineup) ? selectedMatch?.home_lineup : null);
+  const awayLineupCandidate = (latestAwayLineupEvt && isValidLineup(latestAwayLineupEvt.metadata?.lineup))
+    ? latestAwayLineupEvt.metadata.lineup
+    : (isValidLineup(selectedMatch?.away_lineup) ? selectedMatch?.away_lineup : null);
+
   // El partido con la alineación vigente de cada equipo (la de su último cambio de alineación)
   const analystMatch: Match | undefined = selectedMatch && {
     ...selectedMatch,
-    ...(latestHomeLineupEvt ? { home_lineup: latestHomeLineupEvt.metadata.lineup } : {}),
-    ...(latestAwayLineupEvt ? { away_lineup: latestAwayLineupEvt.metadata.lineup } : {}),
+    home_lineup: homeLineupCandidate,
+    away_lineup: awayLineupCandidate,
   };
   const activeMatchObj = selectedMatch || (selectedMatchId && selectedMatchId !== 'free_session' ? dbStore.getMatchById(selectedMatchId) : null) || matches[0] || null;
   const currentHomeTeamName = activeMatchObj?.home_team || 'Shabab Al Ordon Club';
@@ -4762,12 +4782,14 @@ export default function BotoneraPage() {
                     // Si es el partido de la sesión que sigue abierta en segundo plano ("Volver al
                     // Menú"), se cierra: si no, su autoguardado volvía a crear el análisis borrado.
                     const sessionMatchId = !selectedMatchId || selectedMatchId === 'free_session' ? 'match_demo_1' : selectedMatchId;
-                    if (isSessionConfigured && toDelete.match_id === sessionMatchId) {
+                    if ((isSessionConfigured && toDelete.match_id === sessionMatchId) || selectedMatchId === toDelete.match_id) {
                       closeLiveSession();
                     }
+                    // Optimistic UI update
                     setSavedAnalyses((prev) => prev.filter((a) => a.id !== toDelete.id && a.match_id !== toDelete.match_id));
-                    // Borra la copia local y, en Supabase, sus eventos, sesión y el análisis
-                    dbStore.deleteAnalysis(toDelete.id);
+                    // Borra permanentemente en local storage y Supabase (análisis, eventos, sesión, videos)
+                    await dbStore.deleteAnalysis(toDelete.id, { matchId: toDelete.match_id });
+                    setSavedAnalyses(dbStore.getAnalyses());
                   }
                 }}
                 className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-black shadow-md shadow-rose-950/40 transition-all cursor-pointer flex items-center gap-1.5"
