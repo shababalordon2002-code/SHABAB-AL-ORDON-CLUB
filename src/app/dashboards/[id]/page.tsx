@@ -24,8 +24,24 @@ function DashboardDetailContent({ params }: { params: Promise<{ id: string }> })
   useEffect(() => {
     let unsubEvents: (() => void) | null = null;
     let targetMatchId = '';
+    let syncing = false;
 
     async function loadDashboardData() {
+      // A reload already in flight covers this one: with a slow Supabase, overlapping reloads
+      // (one per Realtime change while analysts tag) only pile more load on the database.
+      if (syncing) return;
+      syncing = true;
+      try {
+        await runLoad();
+      } catch (err) {
+        console.warn('Dashboard load failed:', err);
+      } finally {
+        syncing = false;
+        setLoading(false);
+      }
+    }
+
+    async function runLoad() {
       const d = dbStore.getDashboards().find((item) => item.id === dashboardId);
       let tmplId: string | null | undefined;
 
@@ -56,6 +72,8 @@ function DashboardDetailContent({ params }: { params: Promise<{ id: string }> })
         // Set initial combined events from local store immediately
         const initialEvents = dbStore.getNormalizedEvents(targetMatchId);
         setEvents(initialEvents);
+        // Show what this browser already has right away; the Supabase sync below refreshes it.
+        setLoading(false);
 
         // Subscribe to live analysis_events for instant (0ms) additions/deletions across analysts
         if (!unsubEvents) {
@@ -114,8 +132,6 @@ function DashboardDetailContent({ params }: { params: Promise<{ id: string }> })
           setEvents(freshEvents);
         }
       }
-
-      setLoading(false);
     }
 
     loadDashboardData();
@@ -132,7 +148,9 @@ function DashboardDetailContent({ params }: { params: Promise<{ id: string }> })
       const changedMatchId = realtimeMatchId(table, payload);
       if (changedMatchId && targetMatchId && changedMatchId !== targetMatchId) return;
       if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(loadDashboardData, 500);
+      // Events arrive one by one through subscribeToAnalysisEvents; this full reload only picks
+      // up metadata, so it can wait for the analysts' autosaves to settle.
+      debounceTimer = setTimeout(loadDashboardData, 3000);
     };
 
     const channel = supabase

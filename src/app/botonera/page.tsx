@@ -774,35 +774,54 @@ export default function BotoneraPage() {
 
     let cancelled = false;
 
-    getAnalysisEventsFromSupabase(selectedMatchId).then((remoteEvents) => {
-      if (cancelled || !remoteEvents) return;
-      const deletedIds = dbStore.getDeletedEventIds();
-      setEvents((prev) => {
-        const cleanRemote = remoteEvents.filter(
-          (e) => e && e.event_id && !deletedEventIdsRef.current.has(e.event_id) && !deletedIds.has(e.event_id)
-        );
-        const remoteIds = new Set(cleanRemote.map((e) => e.event_id));
-        // Conserva eventos locales propios aún no confirmados en Supabase
-        const pendingLocal = prev.filter(
-          (e) =>
-            e && e.event_id &&
-            ownWritesRef.current.has(e.event_id) &&
-            !remoteIds.has(e.event_id) &&
-            !deletedEventIdsRef.current.has(e.event_id) &&
-            !deletedIds.has(e.event_id)
-        );
-        const merged = [...cleanRemote, ...pendingLocal].sort((a, b) => {
-          const pa = a.period ?? 1;
-          const pb = b.period ?? 1;
-          if (pa !== pb) return pb - pa;
-          const ta = a.timestamp ?? 0;
-          const tb = b.timestamp ?? 0;
-          return tb - ta;
+    // Supabase (analysis_events) is the shared list of every analyst's events: replace the local
+    // list with it, keeping only this analyst's own events that haven't been confirmed there yet.
+    // Runs on entering the match, when the session gets configured (which reloads a local
+    // snapshot), on Realtime reconnection and every 20 s, so an event missed by Realtime (or
+    // wiped by a stale snapshot) always comes back and every analyst ends up with the same list.
+    const reconcileWithRemote = () => {
+      getAnalysisEventsFromSupabase(selectedMatchId).then((remoteEvents) => {
+        if (cancelled || !remoteEvents) return;
+        const deletedIds = dbStore.getDeletedEventIds();
+        setEvents((prev) => {
+          const cleanRemote = remoteEvents.filter(
+            (e) => e && e.event_id && !deletedEventIdsRef.current.has(e.event_id) && !deletedIds.has(e.event_id)
+          );
+          const remoteIds = new Set(cleanRemote.map((e) => e.event_id));
+          // Conserva eventos locales propios aún no confirmados en Supabase
+          const pendingLocal = prev.filter(
+            (e) =>
+              e && e.event_id &&
+              ownWritesRef.current.has(e.event_id) &&
+              !remoteIds.has(e.event_id) &&
+              !deletedEventIdsRef.current.has(e.event_id) &&
+              !deletedIds.has(e.event_id)
+          );
+          const merged = [...cleanRemote, ...pendingLocal].sort((a, b) => {
+            const pa = a.period ?? 1;
+            const pb = b.period ?? 1;
+            if (pa !== pb) return pb - pa;
+            const ta = a.timestamp ?? 0;
+            const tb = b.timestamp ?? 0;
+            return tb - ta;
+          });
+          // Sin cambios (mismos ids y versiones): se mantiene el estado para no re-renderizar ni autoguardar
+          if (
+            merged.length === prev.length &&
+            merged.every((e, i) => e.event_id === prev[i]?.event_id && e.updated_at === prev[i]?.updated_at)
+          ) {
+            return prev;
+          }
+          // Replace: the merged list is authoritative, so events deleted by another analyst
+          // (even if Realtime missed the DELETE) also leave this browser's copy.
+          dbStore.saveNormalizedEvents(merged, true, selectedMatchId);
+          return merged;
         });
-        dbStore.saveNormalizedEvents(merged, false, selectedMatchId);
-        return merged;
       });
-    });
+    };
+
+    reconcileWithRemote();
+    const reconcileInterval = isSessionConfigured ? setInterval(reconcileWithRemote, 20 * 1000) : null;
 
     const unsubscribeEvents = subscribeToAnalysisEvents(selectedMatchId, {
       onInsert: (evt) => {
@@ -843,39 +862,7 @@ export default function BotoneraPage() {
         setEvents((prev) => prev.filter((e) => e.event_id !== eventId));
         dbStore.deleteNormalizedEvent(eventId);
       },
-      onReconnected: () => {
-        getAnalysisEventsFromSupabase(selectedMatchId).then((remoteEvents) => {
-          if (cancelled || !remoteEvents) return;
-          const deletedIds = dbStore.getDeletedEventIds();
-          setEvents((prev) => {
-            const map = new Map<string, NormalizedEvent>();
-            remoteEvents.forEach((e) => {
-              if (e && e.event_id && !deletedEventIdsRef.current.has(e.event_id) && !deletedIds.has(e.event_id)) {
-                map.set(e.event_id, e);
-              }
-            });
-            prev.forEach((e) => {
-              if (
-                e && e.event_id &&
-                !map.has(e.event_id) &&
-                ownWritesRef.current.has(e.event_id) &&
-                !deletedEventIdsRef.current.has(e.event_id) &&
-                !deletedIds.has(e.event_id)
-              ) {
-                map.set(e.event_id, e);
-              }
-            });
-            return Array.from(map.values()).sort((a, b) => {
-              const pa = a.period ?? 1;
-              const pb = b.period ?? 1;
-              if (pa !== pb) return pb - pa;
-              const ta = a.timestamp ?? 0;
-              const tb = b.timestamp ?? 0;
-              return tb - ta;
-            });
-          });
-        });
-      },
+      onReconnected: reconcileWithRemote,
     });
 
     const unsubscribePresence = user
@@ -900,11 +887,12 @@ export default function BotoneraPage() {
 
     return () => {
       cancelled = true;
+      if (reconcileInterval) clearInterval(reconcileInterval);
       unsubscribeEvents();
       unsubscribePresence();
       unsubscribeVideo();
     };
-  }, [selectedMatchId, user, profile]);
+  }, [selectedMatchId, user, profile, isSessionConfigured]);
 
   // Global Realtime listener: whenever any analyst tags, edits, or saves an analysis in Supabase,
   // sync live across all connected clients and update cards instantly
@@ -922,7 +910,10 @@ export default function BotoneraPage() {
     const channel = supabase
       .channel(`botonera-global-analyses-realtime:${Math.random().toString(36).substring(2, 9)}_${Date.now()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'match_analyses' }, (p: any) => batcher.push('match_analyses', p))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'analysis_events' }, (p: any) => batcher.push('analysis_events', p))
+      // analysis_events is not listened to here: the open match gets them one by one from
+      // subscribeToAnalysisEvents, and other matches' cards refresh through their match_analyses
+      // autosave. Re-downloading a whole analysis per tagged event (and every analysis for a
+      // DELETE, which carries no match_id) overloaded Supabase with two analysts tagging.
       .on('postgres_changes', { event: '*', schema: 'public', table: 'analysis_videos' }, (p: any) => batcher.push('analysis_videos', p))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, (p: any) => batcher.push('matches', p))
       .subscribe();
@@ -1282,12 +1273,15 @@ export default function BotoneraPage() {
         return;
       }
 
-      const normalizedEvts = events.map((e) => ({ ...e, match_id: targetId }));
-      if (normalizedEvts.length > 0) {
-        dbStore.saveNormalizedEvents(normalizedEvts, true, targetId);
+      // Merge (never replace): this analyst's list may not yet hold every event of the other
+      // analysts, and replacing made their events vanish here and in the shared analysis until
+      // the next sync brought them back. Deleted events stay out through the deleted-ids filter.
+      if (events.length > 0) {
+        dbStore.saveNormalizedEvents(events.map((e) => ({ ...e, match_id: targetId })), false, targetId);
       } else if (isExplicitEmpty) {
         dbStore.saveNormalizedEvents([], true, targetId);
       }
+      const normalizedEvts = events.length > 0 ? dbStore.getNormalizedEvents(targetId) : [];
 
       const currentAnalyst = profile?.full_name || user?.email || 'Analista Principal (SAO)';
       const combinedAnalystNames = dbStore.sanitizeAnalystNames([
@@ -1374,7 +1368,13 @@ export default function BotoneraPage() {
     ]
   );
 
-  // Auto-save debounced effect whenever analysis state mutates
+  // Auto-save debounced effect whenever analysis state mutates.
+  // The effect calls the latest autoSaveToMatch through a ref instead of depending on it: the
+  // save itself calls setMatches(), which gives autoSaveToMatch a new identity, so depending on
+  // it re-triggered the save every 500 ms forever (each one a match_analyses + matches upsert
+  // that made every connected client re-download the analysis, saturating Supabase).
+  const autoSaveToMatchRef = useRef(autoSaveToMatch);
+  autoSaveToMatchRef.current = autoSaveToMatch;
   const isAutoSaveInitMount = useRef(true);
   useEffect(() => {
     if (isAutoSaveInitMount.current) {
@@ -1389,7 +1389,7 @@ export default function BotoneraPage() {
     if (events.length === 0 && !isExplicitEmpty && !hasVideoSync && Object.keys(periodAdjustments).length === 0) return;
 
     const timer = setTimeout(() => {
-      autoSaveToMatch(true);
+      autoSaveToMatchRef.current(true);
     }, 500);
 
     return () => clearTimeout(timer);
@@ -1402,7 +1402,6 @@ export default function BotoneraPage() {
     videoSourceName,
     template,
     isSessionConfigured,
-    autoSaveToMatch,
   ]);
 
   const handleStartNewRegistration = () => {

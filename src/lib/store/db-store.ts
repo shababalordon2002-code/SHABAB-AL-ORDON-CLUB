@@ -1032,7 +1032,9 @@ export const dbStore = {
     rawNames.forEach((raw) => {
       if (raw) {
         raw.split(',').forEach((name) => {
-          const trimmed = name.trim();
+          // Drop the "+N analistas" summary a previous call appended, or it is read back as a new
+          // name and the list grows on every save ("X +2 analistas +3 analistas ...").
+          const trimmed = name.replace(/(\s*\+\d+\s+analistas)+\s*$/i, '').trim();
           if (trimmed && trimmed.length > 0) {
             allNames.push(trimmed);
           }
