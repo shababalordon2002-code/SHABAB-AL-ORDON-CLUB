@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useMemo } from 'react';
-import { Trophy } from 'lucide-react';
+import { Trophy, Clock, CheckCircle2 } from 'lucide-react';
 import { Match, NormalizedEvent, DashboardWidget } from '@/types';
 import { TeamLogo } from '@/components/player/PlayerBadge';
 import { aggregate, EngineContext, calculateMatchScoresFromEvents } from '@/lib/analytics/dashboard-engine';
@@ -56,10 +56,13 @@ export const MatchResultHeader: React.FC<MatchResultHeaderProps> = ({ match, eve
 
   const matchRegistrationStatus = useMemo(() => {
     if (!events || events.length === 0) {
-      return { maxMinute: 0, formattedMinute: "0'", isFinished: false };
+      return { maxMinute: 0, formattedMinute: "0'", periodName: '1ª PARTE', isFinished: false };
     }
     let maxMin = 0;
+    let latestEventPeriod = 1;
     let maxTs = 0;
+    let latestEventTimestamp = -1;
+
     events.forEach((ev) => {
       let minVal = 0;
       if (typeof ev.minute === 'number' && !isNaN(ev.minute)) {
@@ -68,10 +71,19 @@ export const MatchResultHeader: React.FC<MatchResultHeaderProps> = ({ match, eve
         minVal = Math.floor(ev.timestamp / 60);
       }
       if (minVal > maxMin) maxMin = minVal;
+
+      const evPeriod = ev.period || (minVal > 45 ? 2 : 1);
+      const evTs = typeof ev.timestamp === 'number' ? ev.timestamp : minVal * 60;
+
       const createdStr = ev.created_at || ev.updated_at;
       if (createdStr) {
         const ts = new Date(createdStr).getTime();
         if (!isNaN(ts) && ts > maxTs) maxTs = ts;
+      }
+
+      if (evTs >= latestEventTimestamp) {
+        latestEventTimestamp = evTs;
+        latestEventPeriod = evPeriod;
       }
     });
 
@@ -84,7 +96,20 @@ export const MatchResultHeader: React.FC<MatchResultHeaderProps> = ({ match, eve
     const isFinished = maxMin >= 90 && minsIdle > 15;
     const formattedMinute = maxMin > 90 ? `90+${maxMin - 90}'` : `${maxMin}'`;
 
-    return { maxMinute: maxMin, formattedMinute, isFinished };
+    const periodName =
+      latestEventPeriod === 1
+        ? '1ª PARTE'
+        : latestEventPeriod === 2
+        ? '2ª PARTE'
+        : latestEventPeriod === 3
+        ? '1ª PRÓRROGA'
+        : latestEventPeriod === 4
+        ? '2ª PRÓRROGA'
+        : maxMin <= 45
+        ? '1ª PARTE'
+        : '2ª PARTE';
+
+    return { maxMinute: maxMin, formattedMinute, periodName, isFinished };
   }, [events, match?.updated_at, currentTimestamp]);
 
   return (
@@ -118,12 +143,20 @@ export const MatchResultHeader: React.FC<MatchResultHeaderProps> = ({ match, eve
             </div>
 
             {matchRegistrationStatus.isFinished ? (
-              <span className="px-2.5 py-0.5 rounded-md bg-emerald-950/80 border border-emerald-500/40 text-[10px] font-black tracking-widest text-emerald-400 uppercase flex items-center gap-1 shadow-sm">
+              <span className="px-3 py-1 rounded-full bg-emerald-950/80 border border-emerald-500/40 text-[10px] font-black tracking-widest text-emerald-400 uppercase flex items-center gap-1.5 shadow-sm">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                 FINALIZADO
               </span>
             ) : (
-              <span className="px-2.5 py-0.5 rounded-md bg-slate-900 border border-amber-500/40 text-[10px] font-extrabold tracking-wider text-amber-400 flex items-center gap-1 shadow-sm">
-                MIN. {matchRegistrationStatus.formattedMinute}
+              <span className="px-3 py-1 rounded-full bg-slate-900 border border-amber-500/40 text-[10px] font-extrabold tracking-wide text-amber-300 flex items-center gap-1.5 shadow-sm">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                </span>
+                <Clock className="w-3.5 h-3.5 text-amber-400" />
+                <span className="text-amber-400 font-bold">{matchRegistrationStatus.periodName}</span>
+                <span className="text-slate-500">•</span>
+                <span className="text-white font-mono font-black">MIN. {matchRegistrationStatus.formattedMinute}</span>
               </span>
             )}
           </div>

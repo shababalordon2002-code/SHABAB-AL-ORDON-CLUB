@@ -1,12 +1,18 @@
 import { createClient } from '@/lib/supabase/client';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { MatchAnalysis, NormalizedEvent } from '@/types';
-import { isLiveLineupLocked } from '@/lib/analyst-personal-state';
+import { isLiveLineupLocked } from '@/lib/live-lineups';
 import { ANALYSIS_PRESERVE_COLUMNS, MATCH_PRESERVE_COLUMNS, isNoOpUpdate, selectWithFallback } from '@/lib/supabase/egress';
 import { rowToNormalizedEvent, getAnalysisVideosMapFromSupabase, getAnalysisVideoFromSupabase, upsertAnalysisVideoToSupabase } from '@/lib/services/botonera-service';
 
 // Fetch all Match Analyses (or filtered by matchId) from Supabase with full events reconciliation
 export async function getAnalysesFromSupabase(matchId?: string): Promise<MatchAnalysis[]> {
+  return (await fetchAnalysesFromSupabase(matchId)) ?? [];
+}
+
+// Same as getAnalysesFromSupabase, but returns null when Supabase could not be read, so callers
+// can tell "this analysis no longer exists" (deleted) from "we don't know" (offline / error).
+export async function fetchAnalysesFromSupabase(matchId?: string): Promise<MatchAnalysis[] | null> {
   try {
     const supabase = createClient();
     let query = supabase.from('match_analyses').select('*').order('created_at', { ascending: false });
@@ -19,6 +25,7 @@ export async function getAnalysesFromSupabase(matchId?: string): Promise<MatchAn
     if (error) {
       if (!error.message.includes('relation "public.match_analyses" does not exist')) {
         console.warn('Supabase fetch match_analyses error:', error.message);
+        return null;
       }
     }
 
@@ -156,7 +163,7 @@ export async function getAnalysesFromSupabase(matchId?: string): Promise<MatchAn
     return analyses;
   } catch (err: any) {
     console.warn('Could not load match_analyses from Supabase:', err.message);
-    return [];
+    return null;
   }
 }
 
@@ -174,7 +181,7 @@ export async function saveAnalysisToSupabase(
 
   const mySeq = (_analysisSaveSeq[analysis.match_id] || 0) + 1;
   _analysisSaveSeq[analysis.match_id] = mySeq;
-  // Lineups are personal while a live session is open here: don't push them (see analyst-personal-state).
+  // While a live session is open here the lineups come from its lineup-change events: don't push them (see live-lineups).
   const lineupLocked = isLiveLineupLocked(analysis.match_id);
 
   try {

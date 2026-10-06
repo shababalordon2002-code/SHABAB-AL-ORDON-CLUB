@@ -317,6 +317,53 @@ export function getButtonStyles(colorStr: string) {
     }
   };
 }
+/**
+ * Realistic 3D White Keyboard Keycap Component ("Tecla de teclado realista en blanco")
+ * Skeuomorphic design:
+ * - Pure white to off-white subtle vertical gradient (ABS/PBT mechanical keycap plastic)
+ * - 3D bottom bevel extrusion with shadow
+ * - Top edge light reflection rim (inset highlight)
+ * - Laser engraved dark uppercase legend
+ * - Cast drop shadow on background
+ */
+export function RealisticKeycap({
+  shortcut,
+  size = 'sm',
+  className = '',
+}: {
+  shortcut?: string;
+  size?: 'xs' | 'sm' | 'md' | 'lg';
+  className?: string;
+}) {
+  if (!shortcut) return null;
+  const keyUpper = shortcut.toUpperCase();
+
+  const sizeClasses = {
+    xs: 'min-w-[15px] h-[15px] text-[7.5px] px-0.5 rounded-[3px] border-b-[1.5px] pb-[1px]',
+    sm: 'min-w-[18px] h-[18px] text-[9px] px-1 rounded-[4px] border-b-[2px] pb-[1px]',
+    md: 'min-w-[21px] h-[21px] text-[10.5px] px-1.5 rounded-[4.5px] border-b-[2.5px] pb-[1.5px]',
+    lg: 'min-w-[26px] h-[26px] text-[12.5px] px-2 rounded-[5.5px] border-b-[3px] pb-[2px]',
+  }[size];
+
+  return (
+    <kbd
+      className={`inline-flex items-center justify-center font-sans font-black uppercase select-none pointer-events-none tracking-tight leading-none text-slate-900 ${sizeClasses} ${className}`}
+      style={{
+        background: 'linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 45%, #E2E8F0 100%)',
+        borderTop: '1px solid #FFFFFF',
+        borderLeft: '1px solid #CBD5E1',
+        borderRight: '1px solid #CBD5E1',
+        borderBottomColor: '#94A3B8',
+        boxShadow:
+          '0 1px 0 0 rgba(255, 255, 255, 1) inset, 0 -1px 0.5px 0 rgba(0, 0, 0, 0.08) inset, 0 2px 4px rgba(0, 0, 0, 0.5), 0 1px 1.5px rgba(0, 0, 0, 0.3)',
+        textShadow: '0 1px 0 rgba(255, 255, 255, 0.8)',
+      }}
+      title={`Atajo de teclado: [${keyUpper}]`}
+    >
+      {keyUpper}
+    </kbd>
+  );
+}
 
 const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? React.useLayoutEffect : React.useEffect;
 
@@ -1546,15 +1593,24 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                   isEditMode ? 'cursor-grab active:cursor-grabbing hover:border-amber-400' : 'cursor-pointer'
                 } ${isSelected && isEditMode ? 'ring-2 ring-amber-400 ring-offset-2 ring-offset-slate-950 border-amber-400 z-30' : ''}`}
               >
-                {/* Optional Key Shortcut Pill (Top Right) */}
+                {/* Realistic White Keyboard Keycap (Top Right Corner) */}
                 {btn.keyShortcut && (
-                  <span className={`absolute ${
-                    widthPct < 14 || heightPct < 10
-                      ? 'top-0.5 right-0.5 px-1 py-0 text-[7.5px]'
-                      : 'top-1.5 right-1.5 px-1.5 py-0.5 text-[9px]'
-                  } rounded font-mono font-bold bg-slate-950/80 text-slate-200 border border-slate-700/60 pointer-events-none z-10`}>
-                    [{btn.keyShortcut}]
-                  </span>
+                  <div className={`absolute ${
+                    widthPct < 13 || heightPct < 10
+                      ? 'top-0.5 right-0.5'
+                      : 'top-1.5 right-1.5'
+                  } z-20 pointer-events-none transition-transform drop-shadow-sm`}>
+                    <RealisticKeycap
+                      shortcut={btn.keyShortcut}
+                      size={
+                        widthPct < 13 || heightPct < 10
+                          ? 'xs'
+                          : widthPct < 18 || heightPct < 13
+                          ? 'sm'
+                          : 'md'
+                      }
+                    />
+                  </div>
                 )}
 
                 {/* Centered Uppercase Button Title */}
@@ -1632,7 +1688,7 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
             </button>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
             <div>
               <span className="text-[10px] text-slate-500 font-semibold block mb-1">Color del Botón:</span>
               <select
@@ -1660,6 +1716,30 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                 <option value="violet">Violeta</option>
                 <option value="slate">Gris Neutro</option>
               </select>
+            </div>
+
+            <div>
+              <span className="text-[10px] text-slate-500 font-semibold block mb-1">Atajo Teclado:</span>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  maxLength={1}
+                  value={selectedButton.keyShortcut || ''}
+                  onChange={(e) => {
+                    const val = e.target.value.toUpperCase();
+                    const updated = template.buttons.map((b) =>
+                      b.id === selectedButton.id ? { ...b, keyShortcut: val } : b
+                    );
+                    onUpdateTemplate({ ...template, buttons: updated });
+                    dbStore.saveBotoneraTemplate({ ...template, buttons: updated });
+                  }}
+                  placeholder="P, T..."
+                  className="w-full px-2.5 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-200 text-xs font-mono font-bold text-center focus:outline-none focus:border-amber-500 uppercase"
+                />
+                {selectedButton.keyShortcut && (
+                  <RealisticKeycap shortcut={selectedButton.keyShortcut} size="sm" />
+                )}
+              </div>
             </div>
 
             <div>
@@ -1905,14 +1985,19 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-400 mb-1">Atajo Teclado:</label>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1 flex items-center justify-between">
+                    <span>Atajo Teclado:</span>
+                    {editingButton.keyShortcut && (
+                      <RealisticKeycap shortcut={editingButton.keyShortcut} size="xs" />
+                    )}
+                  </label>
                   <input
                     type="text"
                     maxLength={1}
                     value={editingButton.keyShortcut || ''}
                     onChange={(e) => setEditingButton({ ...editingButton, keyShortcut: e.target.value.toUpperCase() })}
                     placeholder="P, T, 1..."
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs font-mono font-bold text-center focus:outline-none focus:border-emerald-500"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs font-mono font-bold text-center focus:outline-none focus:border-emerald-500 uppercase"
                   />
                 </div>
               </div>
@@ -2055,9 +2140,7 @@ export const BotoneraPanelEditor: React.FC<BotoneraPanelEditorProps> = ({
                       />
                       <span className="uppercase tracking-wider">{ (editingButton.name || 'Botón de Ejemplo').toUpperCase() }</span>
                       {editingButton.keyShortcut && (
-                        <span className="px-1.5 py-0.5 rounded bg-slate-950/80 text-[10px] font-mono border border-slate-700">
-                          [{editingButton.keyShortcut}]
-                        </span>
+                        <RealisticKeycap shortcut={editingButton.keyShortcut} size="sm" />
                       )}
                     </div>
                   )}

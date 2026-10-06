@@ -14,7 +14,7 @@ import {
 } from '@/lib/services/botonera-service';
 import { saveMatchesToSupabase, getMatchesFromSupabase } from '@/lib/services/matches-service';
 import { getPlayersFromSupabase, savePlayersToSupabase } from '@/lib/services/players-service';
-import { getAnalysesFromSupabase, saveAnalysisToSupabase, deleteAnalysisFromSupabase } from '@/lib/services/analysis-service';
+import { fetchAnalysesFromSupabase, saveAnalysisToSupabase, deleteAnalysisFromSupabase } from '@/lib/services/analysis-service';
 import { getDashboardsFromSupabase, saveDashboardToSupabase, deleteDashboardFromSupabase } from '@/lib/services/dashboard-service';
 import { isMatchOnOrAfterSept2026 } from '@/lib/utils/date-utils';
 
@@ -1264,8 +1264,24 @@ export const dbStore = {
   },
 
   async syncAnalysesFromSupabase(matchId?: string): Promise<MatchAnalysis[]> {
-    const remote = await getAnalysesFromSupabase(matchId);
-    
+    const fetched = await fetchAnalysesFromSupabase(matchId);
+
+    // Supabase was read fine: an analysis that is only in this browser was deleted there (by this
+    // or another analyst), so it goes away here too, except the live session open in this browser
+    // (its analysis may still be on its way up).
+    if (fetched) {
+      const remoteIds = new Set(fetched.map((r) => r.match_id));
+      const activeMatchId = this.getActiveBotoneraSession()?.selectedMatchId;
+      const allLocal = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
+      const kept = allLocal.filter((l) => {
+        if (!l || !l.match_id || remoteIds.has(l.match_id)) return true;
+        if (matchId && l.match_id !== matchId) return true;
+        return l.match_id === activeMatchId;
+      });
+      if (kept.length !== allLocal.length) setToStorage(STORAGE_KEYS.MATCH_ANALYSES, kept);
+    }
+    const remote = fetched ?? [];
+
     let consolidated: MatchAnalysis[] = [];
     if (remote && remote.length > 0) {
       // Remote from Supabase is the single source of truth:

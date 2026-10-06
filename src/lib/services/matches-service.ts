@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/client';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { Match, TeamLineupConfig } from '@/types';
-import { isLiveLineupLocked } from '@/lib/analyst-personal-state';
+import { isLiveLineupLocked } from '@/lib/live-lineups';
 import { isMatchOnOrAfterSept2026 } from '@/lib/utils/date-utils';
 import { getAnalysisVideosMapFromSupabase, upsertAnalysisVideoToSupabase } from './botonera-service';
 
@@ -86,8 +86,8 @@ export async function saveMatchesToSupabase(matches: Match[]): Promise<boolean> 
   if (filteredMatches.length === 0) return true;
   matches = filteredMatches;
 
-  // Checked before any await: matches whose lineups are personal to an open live session
-  // (see analyst-personal-state) are saved without their lineup columns.
+  // Checked before any await: matches whose lineups are driven by an open live session
+  // (see live-lineups) are saved without their lineup columns.
   const lineupLockedIds = new Set(matches.filter((m) => isLiveLineupLocked(m.id)).map((m) => m.id));
 
   const mySeqs = new Map<string, number>();

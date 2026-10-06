@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { TeamLineupConfig, TeamCircleStyle, LineupPlayerItem, NormalizedEvent } from '@/types';
 import { dbStore } from '@/lib/store/db-store';
 import { X, Check, Shield, Users, Palette, Sparkles, Plus, Trash2, Layout, User, RefreshCw, ArrowRightLeft } from 'lucide-react';
+import { TeamLogo } from '@/components/player/PlayerBadge';
 
 export const FORMATION_PRESETS = [
   '4-3-3',
@@ -649,12 +650,8 @@ export const TeamLineupModal: React.FC<TeamLineupModalProps> = ({
         {/* Modal Header */}
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-800 bg-slate-950/90 shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-slate-900 border border-slate-700 p-1.5 flex items-center justify-center shrink-0">
-              {teamLogo ? (
-                <img src={teamLogo} alt={teamName} className="w-full h-full object-contain" />
-              ) : (
-                <Shield className="w-5 h-5 text-amber-400" />
-              )}
+            <div className="w-10 h-10 rounded-xl bg-slate-900 border border-slate-700 p-1 flex items-center justify-center shrink-0 overflow-hidden">
+              <TeamLogo teamName={teamName} logoUrl={teamLogo} size={32} />
             </div>
             <div>
               <h3 className="font-black text-base md:text-lg text-white flex items-center gap-2">

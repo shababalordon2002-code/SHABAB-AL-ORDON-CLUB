@@ -7,6 +7,7 @@ import { Shield, Trophy, CheckCircle, Flame, Users, Settings, Edit3, RefreshCw, 
 import { dbStore } from '@/lib/store/db-store';
 import { isGoalEvent } from '@/lib/analytics/dashboard-engine';
 import { TeamLineupModal, TeamCircleIcon, getFormationPositions } from './TeamLineupModal';
+import { TeamLogo } from '@/components/player/PlayerBadge';
 
 export function MiniCampogramaWidget({
   config,
@@ -319,12 +320,8 @@ export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
         {/* ── HOME TEAM (LOCAL) ── */}
         <div className="flex items-center gap-3 flex-1 justify-start w-full md:w-auto">
           {/* Home Shield */}
-          <div className="w-12 h-12 md:w-14 md:h-14 rounded-2xl bg-slate-900 border border-slate-700/80 p-2 flex items-center justify-center shadow-lg shrink-0 group hover:border-amber-400 transition">
-            {homeLogo ? (
-              <img src={homeLogo} alt={homeTeamName} className="w-full h-full object-contain filter drop-shadow" />
-            ) : (
-              <Shield className="w-7 h-7 text-amber-400" />
-            )}
+          <div className="w-12 h-12 md:w-14 md:h-14 rounded-2xl bg-slate-900 border border-slate-700/80 p-1.5 flex items-center justify-center shadow-lg shrink-0 group hover:border-amber-400 transition overflow-hidden">
+            <TeamLogo teamName={homeTeamName} logoUrl={homeLogo} size={42} />
           </div>
 
           {/* Mini Campograma Widget (Local) */}
@@ -530,12 +527,8 @@ export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
           />
 
           {/* Away Shield */}
-          <div className="w-12 h-12 md:w-14 md:h-14 rounded-2xl bg-slate-900 border border-slate-700/80 p-2 flex items-center justify-center shadow-lg shrink-0 group hover:border-cyan-400 transition">
-            {awayLogo ? (
-              <img src={awayLogo} alt={awayTeamName} className="w-full h-full object-contain filter drop-shadow" />
-            ) : (
-              <Shield className="w-7 h-7 text-cyan-400" />
-            )}
+          <div className="w-12 h-12 md:w-14 md:h-14 rounded-2xl bg-slate-900 border border-slate-700/80 p-1.5 flex items-center justify-center shadow-lg shrink-0 group hover:border-cyan-400 transition overflow-hidden">
+            <TeamLogo teamName={awayTeamName} logoUrl={awayLogo} size={42} />
           </div>
         </div>
       </div>
@@ -563,7 +556,7 @@ export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
             setHomeLineup(cfg);
             setEditingLineupTeam(null);
             const updatedPlayers = convertLineupToPlayers(cfg, homeTeamName, 'team_home');
-            // Persisting the lineup (personal per analyst during a live session) is the
+            // Persisting the lineup (a shared "Cambio de alineación" event during a live session) is the
             // parent's job via onUpdateLineup.
             onUpdateLineup?.('home', cfg, updatedPlayers);
           }}
@@ -593,7 +586,7 @@ export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
             setAwayLineup(cfg);
             setEditingLineupTeam(null);
             const updatedPlayers = convertLineupToPlayers(cfg, awayTeamName, 'team_away');
-            // Persisting the lineup (personal per analyst during a live session) is the
+            // Persisting the lineup (a shared "Cambio de alineación" event during a live session) is the
             // parent's job via onUpdateLineup.
             onUpdateLineup?.('away', cfg, updatedPlayers);
           }}

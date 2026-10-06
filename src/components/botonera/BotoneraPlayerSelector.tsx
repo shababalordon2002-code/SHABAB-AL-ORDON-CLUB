@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { Users, UserPlus, Shield, Check, X, Edit3 } from 'lucide-react';
 import { Player } from '@/types';
-import { PlayerAvatar, NumberBadge } from '@/components/player/PlayerBadge';
+import { PlayerAvatar, NumberBadge, TeamLogo } from '@/components/player/PlayerBadge';
 
 interface BotoneraPlayerSelectorProps {
   players: Player[];
@@ -73,7 +73,7 @@ export const BotoneraPlayerSelector: React.FC<BotoneraPlayerSelectorProps> = ({
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            <Shield className="w-3.5 h-3.5" />
+            <TeamLogo teamName={homeTeamName} size={14} />
             <span>{homeTeamName}</span>
           </button>
           <button
@@ -84,7 +84,7 @@ export const BotoneraPlayerSelector: React.FC<BotoneraPlayerSelectorProps> = ({
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            <Shield className="w-3.5 h-3.5 text-amber-300" />
+            <TeamLogo teamName={awayTeamName} size={14} />
             <span>{awayTeamName}</span>
           </button>
         </div>

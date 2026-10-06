@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/client';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { SESSION_PRESERVE_COLUMNS, MATCH_PRESERVE_COLUMNS, isNoOpUpdate, selectWithFallback } from '@/lib/supabase/egress';
 import { BotoneraTemplate, ActiveBotoneraSession, NormalizedEvent } from '@/types';
-import { isLiveLineupLocked } from '@/lib/analyst-personal-state';
+import { isLiveLineupLocked } from '@/lib/live-lineups';
 
 // ==================== LIVE SESSION DETECTION ====================
 // Una sesión solo está "en vivo" si algún analista la mantiene abierta en la Botonera:
@@ -346,8 +346,8 @@ export async function saveAnalysisSessionToSupabase(session: ActiveBotoneraSessi
   const matchId = session.selectedMatchId;
   const mySeq = (_sessionSaveSeq[matchId] || 0) + 1;
   _sessionSaveSeq[matchId] = mySeq;
-  // Lineups are personal while the live session is open in this tab: keep the stored ones
-  // here and never push them to matches (see analyst-personal-state).
+  // Lineups are driven by lineup-change events while the live session is open in this tab: keep the stored ones
+  // here and never push them to matches (see live-lineups).
   const lineupLocked = isLiveLineupLocked(matchId);
 
   try {
