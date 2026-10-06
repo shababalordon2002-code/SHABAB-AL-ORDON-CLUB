@@ -7,7 +7,7 @@
 export const MATCH_PRESERVE_COLUMNS =
   'id, video_url, video_type, video_source_name, p1_video_start_time, p2_video_start_time, period_adjustments, botonera_template_id, home_lineup, away_lineup';
 export const ANALYSIS_PRESERVE_COLUMNS =
-  'id, match_id, analyst_name, video_url, video_type, video_source_name, p1_video_start_time, p2_video_start_time, period_adjustments, botonera_template_id, home_lineup, away_lineup';
+  'id, match_id, status, created_at, analyst_name, video_url, video_type, video_source_name, p1_video_start_time, p2_video_start_time, period_adjustments, botonera_template_id, home_lineup, away_lineup';
 export const SESSION_PRESERVE_COLUMNS =
   'id, match_id, analyst_name, match_title, video_url, video_type, video_source_name, p1_video_start_seconds, p2_video_start_seconds, period_adjustments, botonera_template_id, home_lineup, away_lineup';
 

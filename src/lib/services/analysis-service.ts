@@ -5,6 +5,11 @@ import { isLiveLineupLocked } from '@/lib/live-lineups';
 import { ANALYSIS_PRESERVE_COLUMNS, MATCH_PRESERVE_COLUMNS, isNoOpUpdate, selectWithFallback } from '@/lib/supabase/egress';
 import { rowToNormalizedEvent, getAnalysisVideosMapFromSupabase, getAnalysisVideoFromSupabase, upsertAnalysisVideoToSupabase } from '@/lib/services/botonera-service';
 
+// Status of the tombstone row a deleted analysis leaves behind in match_analyses.
+export const ANALYSIS_DELETED_STATUS = 'deleted';
+// Fired on window when a save is refused because the analysis was deleted meanwhile.
+export const ANALYSIS_DELETED_EVENT = 'sao:analysis-deleted';
+
 // Fetch all Match Analyses (or filtered by matchId) from Supabase with full events reconciliation
 export async function getAnalysesFromSupabase(matchId?: string): Promise<MatchAnalysis[]> {
   return (await fetchAnalysesFromSupabase(matchId)) ?? [];
@@ -53,7 +58,12 @@ export async function fetchAnalysesFromSupabase(matchId?: string): Promise<Match
 
     const processedMatchIds = new Set<string>();
 
-    const analyses: MatchAnalysis[] = (data || []).map((row: any) => {
+    // A deleted analysis leaves a tombstone row (status 'deleted', see deleteAnalysisFromSupabase):
+    // it is not shown, and stray analysis_events rows of that match must not bring it back either.
+    const tombstones = (data || []).filter((row: any) => row.status === ANALYSIS_DELETED_STATUS);
+    tombstones.forEach((row: any) => processedMatchIds.add(row.match_id));
+
+    const analyses: MatchAnalysis[] = (data || []).filter((row: any) => row.status !== ANALYSIS_DELETED_STATUS).map((row: any) => {
       processedMatchIds.add(row.match_id);
       const parsedRowEvents: NormalizedEvent[] = typeof row.events === 'string'
         ? JSON.parse(row.events)
@@ -213,6 +223,20 @@ export async function saveAnalysisToSupabase(
       existingVideo = await getAnalysisVideoFromSupabase(analysis.match_id);
     } catch (err) {
       console.warn('Could not query existing analysis/match for video preservation:', err);
+    }
+
+    // The analysis was deleted after this copy of it was created (an analyst with the match still
+    // open, a stale local copy, a pending autosave...): writing it would bring it back to life.
+    // Only an analysis started after the deletion may replace the tombstone.
+    if (existingAn?.status === ANALYSIS_DELETED_STATUS) {
+      const deletedAt = Date.parse(existingAn.created_at || '') || 0;
+      const createdAt = Date.parse(analysis.created_at || '') || 0;
+      if (!createdAt || createdAt <= deletedAt) {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent(ANALYSIS_DELETED_EVENT, { detail: { matchId: analysis.match_id } }));
+        }
+        return false;
+      }
     }
 
     const resolvedVideoUrl = (analysis.video_url && analysis.video_url.trim()) || existingVideo?.videoUrl || existingAn?.video_url || existingMatch?.video_url || null;
@@ -505,8 +529,14 @@ export async function saveAnalysisToSupabase(
   }
 }
 
-// Delete a Match Analysis from Supabase
-export async function deleteAnalysisFromSupabase(analysisId: string): Promise<boolean> {
+// Delete a Match Analysis from Supabase. The row is replaced by a tombstone (status 'deleted')
+// instead of disappearing: otherwise any analyst with the match still open (or any stale copy)
+// re-created it on its next autosave and the analysis came back a few seconds later.
+// `rowOnly` just removes that one row (duplicate cleanup), leaving the match's analysis alone.
+export async function deleteAnalysisFromSupabase(
+  analysisId: string,
+  options?: { matchId?: string; rowOnly?: boolean }
+): Promise<boolean> {
   if (!analysisId) return false;
 
   try {
@@ -517,17 +547,44 @@ export async function deleteAnalysisFromSupabase(analysisId: string): Promise<bo
       supabase = createClient();
     }
 
-    const matchId = analysisId.startsWith('analysis_') ? analysisId.replace('analysis_', '') : null;
-
-    if (matchId) {
-      await supabase.from('analysis_events').delete().eq('match_id', matchId);
-      await supabase.from('analysis_sessions').delete().eq('match_id', matchId);
+    if (options?.rowOnly) {
+      const { error } = await supabase.from('match_analyses').delete().eq('id', analysisId);
+      if (error) {
+        console.error('Error deleting match_analysis from Supabase:', error.message);
+        return false;
+      }
+      return true;
     }
 
-    const { error } = await supabase
-      .from('match_analyses')
-      .delete()
-      .or(`id.eq.${analysisId}${matchId ? `,match_id.eq.${matchId}` : ''}`);
+    const matchId = options?.matchId || (analysisId.startsWith('analysis_') ? analysisId.replace('analysis_', '') : null);
+
+    if (!matchId) {
+      const { error } = await supabase.from('match_analyses').delete().eq('id', analysisId);
+      if (error) {
+        console.error('Error deleting match_analysis from Supabase:', error.message);
+        return false;
+      }
+      return true;
+    }
+
+    // Tombstone first, so no save racing with this deletion can slip in between.
+    await supabase.from('match_analyses').delete().eq('match_id', matchId).neq('id', `analysis_${matchId}`);
+    if (analysisId !== `analysis_${matchId}`) {
+      await supabase.from('match_analyses').delete().eq('id', analysisId);
+    }
+    const now = new Date().toISOString();
+    const { error } = await supabase.from('match_analyses').upsert([{
+      id: `analysis_${matchId}`,
+      match_id: matchId,
+      title: 'Análisis eliminado',
+      status: ANALYSIS_DELETED_STATUS,
+      events: [],
+      created_at: now,
+      updated_at: now,
+    }], { onConflict: 'id' });
+
+    await supabase.from('analysis_events').delete().eq('match_id', matchId);
+    await supabase.from('analysis_sessions').delete().eq('match_id', matchId);
 
     if (error) {
       console.error('Error deleting match_analysis from Supabase:', error.message);

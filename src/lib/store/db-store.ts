@@ -1017,7 +1017,8 @@ export const dbStore = {
     const currentSession = this.getActiveBotoneraSession();
     const targetMatchId = matchId || currentSession?.selectedMatchId;
 
-    if (typeof window !== 'undefined') {
+    // Deleting another match's analysis must not drop the live session open here.
+    if (typeof window !== 'undefined' && (!matchId || currentSession?.selectedMatchId === matchId)) {
       localStorage.removeItem(STORAGE_KEYS.BOTONERA_ACTIVE_SESSION);
     }
 
@@ -1242,7 +1243,7 @@ export const dbStore = {
 
     saveAnalysisToSupabase(masterAnalysis).catch(() => {});
     sourceAnalyses.forEach((sa) => {
-      deleteAnalysisFromSupabase(sa.id).catch(() => {});
+      deleteAnalysisFromSupabase(sa.id, { matchId: sourceMatchId }).catch(() => {});
     });
 
     return masterAnalysis;
@@ -1335,7 +1336,7 @@ export const dbStore = {
           saveAnalysisToSupabase(master, { skipEventsTableSync: true }).catch(() => {});
           matchRemote.forEach((oldRemote) => {
             if (oldRemote.id !== master.id) {
-              deleteAnalysisFromSupabase(oldRemote.id).catch(() => {});
+              deleteAnalysisFromSupabase(oldRemote.id, { rowOnly: true }).catch(() => {});
             }
           });
         }
@@ -1486,7 +1487,7 @@ export const dbStore = {
       clearAnalysisEventsFromSupabase(matchId).catch(() => {});
     }
 
-    deleteAnalysisFromSupabase(id).catch(err => {
+    deleteAnalysisFromSupabase(id, { matchId }).catch(err => {
       console.warn("Could not delete analysis from Supabase:", err);
     });
   },
