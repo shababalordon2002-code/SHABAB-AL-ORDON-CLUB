@@ -1760,7 +1760,7 @@ export default function BotoneraPage() {
     }
 
     // Persistir en Supabase
-    saveAnalysisToSupabase(updatedAn).catch((err) => {
+    saveAnalysisToSupabase(updatedAn, { skipEventsTableSync: true }).catch((err) => {
       console.warn('Could not update analysis status in Supabase:', err);
     });
   };

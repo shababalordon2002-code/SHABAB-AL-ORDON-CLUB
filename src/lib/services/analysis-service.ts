@@ -61,16 +61,13 @@ export async function fetchAnalysesFromSupabase(matchId?: string): Promise<Match
 
       const tblEvents = eventsByMatch.get(row.match_id) || [];
 
-      // Single source of truth: tblEvents (analysis_events table) is authoritative.
-      // parsedRowEvents from match_analyses are only kept if not yet in analysis_events table.
+      // Single source of truth: tblEvents (analysis_events table) is authoritative. The
+      // match_analyses.events copy is only a fallback for legacy analyses with no rows there:
+      // merging it in brought back events already deleted from analysis_events whenever a
+      // stale copy had been written to match_analyses.
       const eventMap = new Map<string, NormalizedEvent>();
-      tblEvents.forEach((e) => {
+      (tblEvents.length > 0 ? tblEvents : parsedRowEvents).forEach((e) => {
         if (e && e.event_id) eventMap.set(e.event_id, e);
-      });
-      parsedRowEvents.forEach((e) => {
-        if (e && e.event_id && !eventMap.has(e.event_id)) {
-          eventMap.set(e.event_id, e);
-        }
       });
 
       const reconciledEvents = Array.from(eventMap.values()).sort((a, b) => {

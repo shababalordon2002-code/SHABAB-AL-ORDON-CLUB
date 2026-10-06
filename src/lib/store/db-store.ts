@@ -559,7 +559,9 @@ export const dbStore = {
           home_lineup: resolvedHomeLineup || a.home_lineup,
           away_lineup: resolvedAwayLineup,
         };
-        saveAnalysisToSupabase(updatedA).catch(() => {});
+        // skipEventsTableSync: this local copy may still hold events another analyst deleted;
+        // re-upserting them into analysis_events would bring them back for everyone.
+        saveAnalysisToSupabase(updatedA, { skipEventsTableSync: true }).catch(() => {});
         return updatedA;
       }
       return a;
@@ -1330,7 +1332,7 @@ export const dbStore = {
       if (matchRemote.length > 1) {
         const master = consolidated.find((c) => c.match_id === matchId);
         if (master) {
-          saveAnalysisToSupabase(master).catch(() => {});
+          saveAnalysisToSupabase(master, { skipEventsTableSync: true }).catch(() => {});
           matchRemote.forEach((oldRemote) => {
             if (oldRemote.id !== master.id) {
               deleteAnalysisFromSupabase(oldRemote.id).catch(() => {});
