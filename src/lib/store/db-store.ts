@@ -555,7 +555,6 @@ export const dbStore = {
     let analysesChanged = false;
     const updatedAnalyses = analyses.map((a) => {
       if (a.match_id === savedTarget.id || a.id === savedTarget.id || a.id === `analysis_${savedTarget.id}`) {
-        if (this.isMatchAnalysisDeleted(savedTarget.id)) return a;
         analysesChanged = true;
         const updatedA: MatchAnalysis = {
           ...a,
@@ -652,9 +651,8 @@ export const dbStore = {
     setToStorage(STORAGE_KEYS.DELETED_MATCH_IDS, updated);
   },
 
-  isMatchAnalysisDeleted(matchId: string): boolean {
-    if (!matchId) return false;
-    return this.getDeletedMatchIds().has(matchId);
+  isMatchAnalysisDeleted(_matchId: string): boolean {
+    return false;
   },
 
   getNormalizedEvents(matchId?: string): NormalizedEvent[] {
@@ -1032,9 +1030,6 @@ export const dbStore = {
   _lastTimerRunningState: undefined as boolean | undefined,
 
   saveActiveBotoneraSession(session: ActiveBotoneraSession, forceImmediate = false): void {
-    if (session.selectedMatchId && this.isMatchAnalysisDeleted(session.selectedMatchId)) {
-      return;
-    }
     setToStorage(STORAGE_KEYS.BOTONERA_ACTIVE_SESSION, session);
 
     // Sync active session asynchronously to Supabase:
@@ -1313,26 +1308,12 @@ export const dbStore = {
     if (result) {
       const { analyses: remote, deletedMatchIds } = result;
 
-      // 1. Sync any tombstones from Supabase into our local deleted tracker and purge their events
-      const currentActiveSession = this.getActiveBotoneraSession();
-      deletedMatchIds.forEach((delId) => {
-        // Guard: if current tab is actively running a newly configured session for delId,
-        // do not let a stale background sync kill it before the new save has landed in Supabase!
-        if (currentActiveSession?.isConfigured && currentActiveSession.selectedMatchId === delId) {
-          return;
-        }
-        this.markMatchAnalysisDeleted(delId);
-        this.deleteMatchEvents(delId);
-        this.clearActiveBotoneraSession(delId);
-      });
-
-      // 2. Remove all local analyses that are tombstoned or marked deleted
+      // 1. Remove all local analyses that are not in remote when remote is fetched
       const allLocal = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
       const remoteMatchIds = new Set(remote.map((r) => r.match_id));
 
       const keptLocal = allLocal.filter((l) => {
         if (!l || !l.match_id) return false;
-        if (this.isMatchAnalysisDeleted(l.match_id) || deletedMatchIds.has(l.match_id)) return false;
         if (remoteMatchIds.has(l.match_id)) return true;
         if (matchId && l.match_id !== matchId) return true;
         return false;
@@ -1345,7 +1326,7 @@ export const dbStore = {
 
       // Save normalized events for active analyses
       consolidated.forEach((an) => {
-        if (an.events && an.events.length > 0 && !this.isMatchAnalysisDeleted(an.match_id)) {
+        if (an.events && an.events.length > 0) {
           this.saveNormalizedEvents(an.events, false, an.match_id);
         }
       });
@@ -1361,7 +1342,7 @@ export const dbStore = {
             m.event_count = count;
             matchesUpdated = true;
           }
-        } else if (deletedMatchIds.has(m.id) || this.isMatchAnalysisDeleted(m.id)) {
+        } else {
           if (m.event_count !== 0) {
             m.event_count = 0;
             matchesUpdated = true;
@@ -1377,7 +1358,7 @@ export const dbStore = {
         if (matchRemote.length > 1) {
           const master = consolidated.find((c) => c.match_id === matchId);
           if (master) {
-            saveAnalysisToSupabase(master, { skipEventsTableSync: true, allowResurrect: true }).catch(() => {});
+            saveAnalysisToSupabase(master, { skipEventsTableSync: true }).catch(() => {});
             matchRemote.forEach((oldRemote) => {
               if (oldRemote.id !== master.id) {
                 deleteAnalysisFromSupabase(oldRemote.id, { rowOnly: true }).catch(() => {});
@@ -1391,8 +1372,7 @@ export const dbStore = {
       return consolidated.filter((a) => a.match_id === matchId);
     } else {
       const allLocal = getFromStorage<MatchAnalysis[]>(STORAGE_KEYS.MATCH_ANALYSES, SEED_MATCH_ANALYSES);
-      const filtered = allLocal.filter((l) => l && l.match_id && !this.isMatchAnalysisDeleted(l.match_id));
-      const consolidated = this.consolidateAnalyses(filtered);
+      const consolidated = this.consolidateAnalyses(allLocal.filter((l) => l && l.match_id));
       if (!matchId) return consolidated;
       return consolidated.filter((a) => a.match_id === matchId);
     }
@@ -1400,13 +1380,6 @@ export const dbStore = {
 
   saveAnalysis(analysis: MatchAnalysis, options?: { allowResurrect?: boolean }): void {
     if (!analysis || !analysis.match_id) return;
-    if (this.isMatchAnalysisDeleted(analysis.match_id) && !options?.allowResurrect) {
-      console.warn(`[dbStore] Blocked saving deleted analysis for match ${analysis.match_id}`);
-      return;
-    }
-    if (options?.allowResurrect) {
-      this.unmarkMatchAnalysisDeleted(analysis.match_id);
-    }
     const targetId = analysis.id && analysis.id.startsWith('analysis_') ? analysis.id : `analysis_${analysis.match_id}`;
     const normalizedAnalysis = { ...analysis, id: targetId };
 
@@ -1496,7 +1469,7 @@ export const dbStore = {
     setToStorage(STORAGE_KEYS.MATCH_ANALYSES, deduplicated);
 
     // Sync analysis asynchronously to Supabase without reviving deleted events from analysis_events table
-    saveAnalysisToSupabase(updated, { skipEventsTableSync: true, allowResurrect: options?.allowResurrect }).catch(err => {
+    saveAnalysisToSupabase(updated, { skipEventsTableSync: true }).catch(err => {
       console.warn("Could not sync analysis to Supabase:", err);
     });
 
@@ -1525,11 +1498,11 @@ export const dbStore = {
   },
 
   async saveAnalysisAsync(analysis: MatchAnalysis): Promise<boolean> {
-    this.saveAnalysis(analysis, { allowResurrect: true });
+    this.saveAnalysis(analysis);
     const targetId = analysis.id && analysis.id.startsWith('analysis_') ? analysis.id : `analysis_${analysis.match_id}`;
     const all = this.getAnalyses();
     const updated = all.find(a => a.id === targetId || a.match_id === analysis.match_id) || analysis;
-    return await saveAnalysisToSupabase(updated, { allowResurrect: true });
+    return await saveAnalysisToSupabase(updated);
   },
 
   async deleteAnalysis(id: string, options?: { matchId?: string }): Promise<boolean> {
@@ -1538,7 +1511,7 @@ export const dbStore = {
     const matchId = options?.matchId || target?.match_id || (id.startsWith('analysis_') ? id.replace('analysis_', '') : id);
 
     if (matchId) {
-      this.markMatchAnalysisDeleted(matchId);
+      this.unmarkMatchAnalysisDeleted(matchId);
       this.deleteMatchEvents(matchId);
       this.clearActiveBotoneraSession(matchId);
     }

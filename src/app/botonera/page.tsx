@@ -19,7 +19,7 @@ import {
   LIVE_SESSION_HEARTBEAT_MS,
   LIVE_SESSION_STALE_MS,
 } from '@/lib/services/botonera-service';
-import { saveAnalysisToSupabase, ANALYSIS_DELETED_EVENT } from '@/lib/services/analysis-service';
+import { saveAnalysisToSupabase } from '@/lib/services/analysis-service';
 import { createMatchChangeBatcher } from '@/lib/supabase/egress';
 import { saveMatchesToSupabase, saveTeamLineupsToSupabase } from '@/lib/services/matches-service';
 import {
@@ -1745,22 +1745,7 @@ export default function BotoneraPage() {
     }
   };
 
-  // Otro analista (u otra pestaña) ha eliminado el análisis de este partido: se cierra la sesión
-  // abierta aquí para que su autoguardado deje de intentar recrearlo, y se refresca la lista.
-  const closeLiveSessionRef = useRef(closeLiveSession);
-  closeLiveSessionRef.current = closeLiveSession;
-  useEffect(() => {
-    const onAnalysisDeleted = (e: Event) => {
-      const deletedMatchId = (e as CustomEvent<{ matchId: string }>).detail?.matchId;
-      const sessionMatchId = !selectedMatchId || selectedMatchId === 'free_session' ? 'match_demo_1' : selectedMatchId;
-      if (isSessionConfigured && deletedMatchId === sessionMatchId) {
-        closeLiveSessionRef.current();
-        dbStore.syncAnalysesFromSupabase().then(setSavedAnalyses).catch(() => {});
-      }
-    };
-    window.addEventListener(ANALYSIS_DELETED_EVENT, onAnalysisDeleted);
-    return () => window.removeEventListener(ANALYSIS_DELETED_EVENT, onAnalysisDeleted);
-  }, [isSessionConfigured, selectedMatchId]);
+
 
   /** Abre el modal para preguntar explícitamente al usuario si el partido ha finalizado o continúa en progreso al salir */
   const handleEndSession = () => {

@@ -238,16 +238,7 @@ export async function saveAnalysisToSupabase(
       console.warn('Could not query existing analysis/match for video preservation:', err);
     }
 
-    // The analysis was deleted: reject any save unless explicit allowResurrect is requested.
-    // We do NOT check timestamps because autosaves and syncs create fresh timestamps and would resurrect.
-    if (existingAn?.status === ANALYSIS_DELETED_STATUS) {
-      if (!options?.allowResurrect) {
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent(ANALYSIS_DELETED_EVENT, { detail: { matchId: analysis.match_id } }));
-        }
-        return false;
-      }
-    }
+
 
     const resolvedVideoUrl = (analysis.video_url && analysis.video_url.trim()) || existingVideo?.videoUrl || existingAn?.video_url || existingMatch?.video_url || null;
     const resolvedVideoType = analysis.video_type || existingVideo?.videoType || existingAn?.video_type || existingMatch?.video_type || (resolvedVideoUrl ? (resolvedVideoUrl.includes('http') ? 'link' : 'local') : null);
@@ -626,35 +617,6 @@ export async function deleteAnalysisFromSupabase(
       await supabase.from('match_analyses').delete().or(`match_id.eq.${matchId},id.eq.${analysisId}`);
     } catch (delErr) {
       console.warn('Non-blocking error deleting match_analyses rows in Supabase:', delErr);
-    }
-
-    // 6. Write the definitive tombstone row so no background process can resurrect it
-    let { error } = await supabase.from('match_analyses').upsert([{
-      id: `analysis_${matchId}`,
-      match_id: matchId,
-      title: 'Análisis eliminado',
-      status: ANALYSIS_DELETED_STATUS,
-      events: [],
-      created_at: now,
-      updated_at: now,
-    }], { onConflict: 'match_id' });
-
-    if (error) {
-      // Fallback on conflict 'id'
-      ({ error } = await supabase.from('match_analyses').upsert([{
-        id: `analysis_${matchId}`,
-        match_id: matchId,
-        title: 'Análisis eliminado',
-        status: ANALYSIS_DELETED_STATUS,
-        events: [],
-        created_at: now,
-        updated_at: now,
-      }], { onConflict: 'id' }));
-    }
-
-    if (error) {
-      console.error('Error writing tombstone to match_analyses in Supabase:', error.message);
-      return false;
     }
 
     return true;
