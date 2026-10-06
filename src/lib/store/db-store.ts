@@ -1314,7 +1314,13 @@ export const dbStore = {
       const { analyses: remote, deletedMatchIds } = result;
 
       // 1. Sync any tombstones from Supabase into our local deleted tracker and purge their events
+      const currentActiveSession = this.getActiveBotoneraSession();
       deletedMatchIds.forEach((delId) => {
+        // Guard: if current tab is actively running a newly configured session for delId,
+        // do not let a stale background sync kill it before the new save has landed in Supabase!
+        if (currentActiveSession?.isConfigured && currentActiveSession.selectedMatchId === delId) {
+          return;
+        }
         this.markMatchAnalysisDeleted(delId);
         this.deleteMatchEvents(delId);
         this.clearActiveBotoneraSession(delId);
@@ -1371,7 +1377,7 @@ export const dbStore = {
         if (matchRemote.length > 1) {
           const master = consolidated.find((c) => c.match_id === matchId);
           if (master) {
-            saveAnalysisToSupabase(master, { skipEventsTableSync: true }).catch(() => {});
+            saveAnalysisToSupabase(master, { skipEventsTableSync: true, allowResurrect: true }).catch(() => {});
             matchRemote.forEach((oldRemote) => {
               if (oldRemote.id !== master.id) {
                 deleteAnalysisFromSupabase(oldRemote.id, { rowOnly: true }).catch(() => {});
@@ -1397,6 +1403,9 @@ export const dbStore = {
     if (this.isMatchAnalysisDeleted(analysis.match_id) && !options?.allowResurrect) {
       console.warn(`[dbStore] Blocked saving deleted analysis for match ${analysis.match_id}`);
       return;
+    }
+    if (options?.allowResurrect) {
+      this.unmarkMatchAnalysisDeleted(analysis.match_id);
     }
     const targetId = analysis.id && analysis.id.startsWith('analysis_') ? analysis.id : `analysis_${analysis.match_id}`;
     const normalizedAnalysis = { ...analysis, id: targetId };
@@ -1487,7 +1496,7 @@ export const dbStore = {
     setToStorage(STORAGE_KEYS.MATCH_ANALYSES, deduplicated);
 
     // Sync analysis asynchronously to Supabase without reviving deleted events from analysis_events table
-    saveAnalysisToSupabase(updated, { skipEventsTableSync: true }).catch(err => {
+    saveAnalysisToSupabase(updated, { skipEventsTableSync: true, allowResurrect: options?.allowResurrect }).catch(err => {
       console.warn("Could not sync analysis to Supabase:", err);
     });
 
@@ -1516,11 +1525,11 @@ export const dbStore = {
   },
 
   async saveAnalysisAsync(analysis: MatchAnalysis): Promise<boolean> {
-    this.saveAnalysis(analysis);
+    this.saveAnalysis(analysis, { allowResurrect: true });
     const targetId = analysis.id && analysis.id.startsWith('analysis_') ? analysis.id : `analysis_${analysis.match_id}`;
     const all = this.getAnalyses();
     const updated = all.find(a => a.id === targetId || a.match_id === analysis.match_id) || analysis;
-    return await saveAnalysisToSupabase(updated);
+    return await saveAnalysisToSupabase(updated, { allowResurrect: true });
   },
 
   async deleteAnalysis(id: string, options?: { matchId?: string }): Promise<boolean> {

@@ -1263,7 +1263,9 @@ export default function BotoneraPage() {
       if (!isSessionConfigured) return;
 
       const targetId = (!selectedMatchId || selectedMatchId === 'free_session') ? 'match_demo_1' : selectedMatchId;
-      if (dbStore.isMatchAnalysisDeleted(targetId)) return;
+      if (dbStore.isMatchAnalysisDeleted(targetId)) {
+        dbStore.unmarkMatchAnalysisDeleted(targetId);
+      }
       const targetMatch = dbStore.getMatchById(targetId) || matches.find((m) => m.id === targetId);
 
       // Save or update the single shared Match Analysis card per match
@@ -1326,8 +1328,8 @@ export default function BotoneraPage() {
         updated_at: new Date().toISOString(),
       };
 
-      dbStore.saveAnalysis(newAnalysis);
-      saveAnalysisToSupabase(newAnalysis, { skipEventsTableSync: true }).catch((err) => {
+      dbStore.saveAnalysis(newAnalysis, { allowResurrect: true });
+      saveAnalysisToSupabase(newAnalysis, { skipEventsTableSync: true, allowResurrect: true }).catch((err) => {
         console.warn('Could not auto-save analysis to Supabase:', err);
       });
       if (targetMatch) {
@@ -1392,7 +1394,9 @@ export default function BotoneraPage() {
     }
     if (!isSessionConfigured) return;
     const targetMatchId = (!selectedMatchId || selectedMatchId === 'free_session') ? 'match_demo_1' : selectedMatchId;
-    if (dbStore.isMatchAnalysisDeleted(targetMatchId)) return;
+    if (dbStore.isMatchAnalysisDeleted(targetMatchId)) {
+      dbStore.unmarkMatchAnalysisDeleted(targetMatchId);
+    }
 
     const isExplicitEmpty = events.length === 0 && (
       deletedEventIdsRef.current.size > 0 ||
@@ -1506,6 +1510,32 @@ export default function BotoneraPage() {
     const currentAnalystName = profile?.full_name || user?.email?.split('@')[0] || targetAnalysis?.analyst_name || 'Analista Principal';
     const matchTitle = targetMatch ? `${targetMatch.home_team} vs ${targetMatch.away_team}` : 'Etiquetado en Vivo';
 
+    const masterAnalysisId = `analysis_${config.matchId}`;
+    const newAnalysis: MatchAnalysis = {
+      id: masterAnalysisId,
+      match_id: config.matchId,
+      title: `Análisis ${matchTitle}`,
+      analyst_name: currentAnalystName,
+      status: 'in_progress',
+      video_type: resolvedVideoType,
+      video_url: resolvedVideoUrl,
+      video_source_name: resolvedVideoSourceName,
+      p1_video_start_time: initialOffsets[1] ?? null,
+      p2_video_start_time: initialOffsets[2] ?? null,
+      period_adjustments: initialAdjustments,
+      botonera_template_id: config.templateId,
+      home_lineup: targetMatch?.home_lineup || null,
+      away_lineup: targetMatch?.away_lineup || null,
+      events: existingEvents,
+      created_at: targetAnalysis?.created_at || new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    dbStore.saveAnalysis(newAnalysis, { allowResurrect: true });
+    saveAnalysisToSupabase(newAnalysis, { allowResurrect: true, skipEventsTableSync: true }).catch((err) => {
+      console.warn('Could not resurrect analysis in Supabase:', err);
+    });
+
     dbStore.saveActiveBotoneraSession({
       selectedMatchId: config.matchId,
       period: 1,
@@ -1526,7 +1556,7 @@ export default function BotoneraPage() {
       botoneraTemplateId: config.templateId,
       home_lineup: targetMatch?.home_lineup || null,
       away_lineup: targetMatch?.away_lineup || null,
-    });
+    }, true);
 
     // Immediately persist new video and sync settings to match and Supabase
     if (config.matchId !== 'free_session') {
@@ -1540,6 +1570,8 @@ export default function BotoneraPage() {
       });
     }
 
+    setSavedAnalyses(dbStore.getAnalyses());
+    setEditingAnalysisId(masterAnalysisId);
     setIsSessionConfigured(true);
   };
 
@@ -1655,9 +1687,9 @@ export default function BotoneraPage() {
       // Guaranteed fast save bounded by a 3.5s timeout so network stalls never freeze the screen.
       // skipEventsTableSync: analysis_events ya está al día (escritura evento a evento + cola);
       // sin él, saveAnalysisToSupabase volvería a subir todos los eventos de esta copia.
-      dbStore.saveAnalysis(newAnalysis);
+      dbStore.saveAnalysis(newAnalysis, { allowResurrect: true });
       const savePromise = Promise.allSettled([
-        saveAnalysisToSupabase(newAnalysis, { skipEventsTableSync: true }),
+        saveAnalysisToSupabase(newAnalysis, { skipEventsTableSync: true, allowResurrect: true }),
         // Los inicios de 1ª/2ª parte de cada analista son propios durante la sesión; al salir
         // quedan guardados los del último analista que guarda.
         isRealMatch
@@ -1774,7 +1806,7 @@ export default function BotoneraPage() {
     };
 
     // Actualizar almacén local y react state
-    dbStore.saveAnalysis(updatedAn);
+    dbStore.saveAnalysis(updatedAn, { allowResurrect: true });
     setSavedAnalyses((prev) => prev.map((item) => (item.id === an.id ? updatedAn : item)));
 
     // Actualizar partido asociado si existe
@@ -1790,7 +1822,7 @@ export default function BotoneraPage() {
     }
 
     // Persistir en Supabase
-    saveAnalysisToSupabase(updatedAn, { skipEventsTableSync: true }).catch((err) => {
+    saveAnalysisToSupabase(updatedAn, { skipEventsTableSync: true, allowResurrect: true }).catch((err) => {
       console.warn('Could not update analysis status in Supabase:', err);
     });
   };
@@ -1896,6 +1928,9 @@ export default function BotoneraPage() {
   const [editVideoFile, setEditVideoFile] = useState<File | null>(null);
 
   const handleSelectMatch = (matchId: string) => {
+    if (matchId && matchId !== 'free_session') {
+      dbStore.unmarkMatchAnalysisDeleted(matchId);
+    }
     setSelectedMatchId(matchId);
     const existingAnalyses = dbStore.getAnalyses(matchId);
     const targetAnalysis = existingAnalyses.length > 0 ? existingAnalyses[0] : null;
@@ -1954,6 +1989,9 @@ export default function BotoneraPage() {
   };
 
   const handleEditAnalysisInBotonera = (an: MatchAnalysis) => {
+    if (an.match_id && an.match_id !== 'free_session') {
+      dbStore.unmarkMatchAnalysisDeleted(an.match_id);
+    }
     setEditingAnalysisId(an.id);
     setSelectedMatchId(an.match_id);
     const deletedIds = dbStore.getDeletedEventIds();
