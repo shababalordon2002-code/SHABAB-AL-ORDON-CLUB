@@ -1,6 +1,6 @@
 import { Match, NormalizedEvent } from '@/types';
 import { PdfReportLanguage } from '@/components/dashboards/PdfLanguageModal';
-import { calculateMatchScoresFromEvents } from '@/lib/analytics/dashboard-engine';
+import { calculateAnalysisScore } from '@/lib/analytics/dashboard-engine';
 
 export interface ReportTranslations {
   title: string;
@@ -248,12 +248,12 @@ export async function downloadPdfTechnicalReport(
 
   const homeTeam = match.home_team || 'Equipo Local';
   const awayTeam = match.away_team || 'Equipo Visitante';
-  const { homeScore, awayScore } = calculateMatchScoresFromEvents(
+  const { homeScore, awayScore } = calculateAnalysisScore(
     events,
     match.home_team,
     match.away_team,
-    match.home_score ?? 0,
-    match.away_score ?? 0
+    match.home_score,
+    match.away_score
   );
 
   // Hidden Offscreen DOM Container used only to render & capture the cover page.

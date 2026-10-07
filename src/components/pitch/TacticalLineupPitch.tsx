@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import { Player, TeamCircleStyle } from '@/types';
 import { Shield, RefreshCw, Plus, X, ArrowRightLeft, ArrowUp } from 'lucide-react';
 import { dbStore } from '@/lib/store/db-store';
-import { TeamCircleIcon } from '@/components/botonera/TeamLineupModal';
+import { TeamCircleIcon, getFormationPositions } from '@/components/botonera/TeamLineupModal';
 import { TeamLogo } from '@/components/player/PlayerBadge';
 
 export interface SubstitutionRecord {
@@ -22,8 +22,10 @@ interface TacticalLineupPitchProps {
   teamLogo?: string;
   teamColor?: string; // Hex or color key (e.g. #10b981, #ef4444, #3b82f6)
   circleStyle?: TeamCircleStyle;
-  formation?: '4-3-3' | '4-2-3-1' | '4-4-2' | '3-5-2';
+  formation?: string;
   players?: Player[];
+  /** Positions dragged in the lineup editor, keyed by starter id (same as TeamLineupConfig.customPositions) */
+  customPositions?: Record<string, { x: number; y: number }>;
   substitutions?: SubstitutionRecord[];
   isHome?: boolean;
   orientation?: 'vertical' | 'horizontal';
@@ -94,13 +96,23 @@ export const TacticalLineupPitch: React.FC<TacticalLineupPitchProps> = ({
   circleStyle,
   formation = '4-3-3',
   players = [],
+  customPositions,
   substitutions = [],
   isHome = true,
   onAddSubstitution,
   onPlayerClick,
 }) => {
-  const coords = VERTICAL_FORMATIONS[formation] || VERTICAL_FORMATIONS['4-3-3'];
   const starters = players.slice(0, 11);
+  // Same placement as the lineup editor (TeamLineupModal): formation preset, overridden by the
+  // positions the analyst dragged there, so the dashboard shows exactly the saved lineup.
+  const presetCoords = getFormationPositions(formation);
+  const coords = (presetCoords.length >= 11 ? presetCoords : VERTICAL_FORMATIONS[formation] || VERTICAL_FORMATIONS['4-3-3']).map(
+    (pos, idx) => {
+      const id = starters[idx]?.id;
+      const custom = id ? customPositions?.[id] : undefined;
+      return custom ? { ...pos, x: custom.x, y: custom.y } : pos;
+    }
+  );
   const primaryColor = circleStyle?.primaryColor || teamColor || (isHome ? '#ef4444' : '#3b82f6');
 
   const [mounted, setMounted] = useState(false);
@@ -202,6 +214,7 @@ export const TacticalLineupPitch: React.FC<TacticalLineupPitchProps> = ({
           const sub = substitutions.find((s) => {
             const outName = s.playerOutName.toLowerCase().trim();
             const starterName = starterPly.name.toLowerCase().trim();
+            if (!outName || !starterName) return false;
             return outName.includes(starterName) || starterName.includes(outName);
           });
 

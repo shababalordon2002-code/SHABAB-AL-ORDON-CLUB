@@ -14,8 +14,8 @@ import { BotoneraPitchCanvas, type EventPitchMarker } from '@/components/botoner
 import { BotoneraGoalCanvas, type GoalPointMarker, GOAL_ZONES } from '@/components/botonera/BotoneraGoalCanvas';
 import { TeamLogo } from '@/components/player/PlayerBadge';
 import { dbStore } from '@/lib/store/db-store';
-import { calculateEventVideoTime, resolveEventPeriod, extractYouTubeVideoId } from '@/lib/analytics/video-utils';
-import { isValidLineup } from '@/lib/live-lineups';
+import { getEventClipWindow, resolveEventPeriod, extractYouTubeVideoId } from '@/lib/analytics/video-utils';
+import { isValidLineup, isLineupChangeEvent, latestLineupEvent, stripLineupMetadata } from '@/lib/live-lineups';
 import {
   BarChart3,
   Calendar,
@@ -41,7 +41,7 @@ import {
 import { PdfLanguageModal, type PdfReportLanguage } from './PdfLanguageModal';
 import { downloadPdfTechnicalReport } from '@/lib/services/pdf-report-generator';
 import { snapshotSvgsForCapture } from '@/lib/utils/pdf-capture';
-import { calculateMatchScoresFromEvents, isEventOfHomeTeam, isEventOfAwayTeam, isGoalEvent } from '@/lib/analytics/dashboard-engine';
+import { calculateAnalysisScore, isEventOfHomeTeam, isEventOfAwayTeam, isGoalEvent } from '@/lib/analytics/dashboard-engine';
 
 const COLOR_MAP: Record<string, string> = {
   emerald: '#10b981',
@@ -302,19 +302,34 @@ export const StandardMatchDashboard: React.FC<StandardMatchDashboardProps> = ({
   const awayTeamName = match.away_team || 'Al Ramtha';
 
   // Resolved lineup configs from match or dbStore fallback
+  // The lineup saved in the analysis is the one of the latest "Cambio de alineación" event
+  // (same rule as the Botonera); the copy stored in the match is only the fallback.
   const homeLineupConfig = useMemo(() => {
+    const fromEvent = stripLineupMetadata(latestLineupEvent(allEvents, 'home', homeTeamName, awayTeamName)?.metadata?.lineup);
+    if (fromEvent) return fromEvent;
     if (isValidLineup(match?.home_lineup)) return match.home_lineup;
     const analyses = dbStore.getAnalyses(match.id);
     if (analyses.length > 0 && isValidLineup(analyses[0].home_lineup)) return analyses[0].home_lineup;
     return null;
-  }, [match]);
+  }, [match, allEvents, homeTeamName, awayTeamName]);
 
   const awayLineupConfig = useMemo(() => {
+    const fromEvent = stripLineupMetadata(latestLineupEvent(allEvents, 'away', homeTeamName, awayTeamName)?.metadata?.lineup);
+    if (fromEvent) return fromEvent;
     if (isValidLineup(match?.away_lineup)) return match.away_lineup;
     const analyses = dbStore.getAnalyses(match.id);
     if (analyses.length > 0 && isValidLineup(analyses[0].away_lineup)) return analyses[0].away_lineup;
     return null;
-  }, [match]);
+  }, [match, allEvents, homeTeamName, awayTeamName]);
+
+  /** Editor positions of a lineup: dragged positions plus the x/y saved on each starter. */
+  const lineupPositions = (cfg: typeof homeLineupConfig) => {
+    const out: Record<string, { x: number; y: number }> = {};
+    cfg?.starters?.forEach((st) => {
+      if (typeof st.x === 'number' && typeof st.y === 'number') out[st.id] = { x: st.x, y: st.y };
+    });
+    return { ...out, ...(cfg?.customPositions || {}) };
+  };
 
   // Resolved team colors & formations from lineup config or defaults
   const homeTeamColor = homeLineupConfig?.circleStyle?.primaryColor || (match as any).home_team_color || '#ef4444';
@@ -327,8 +342,8 @@ export const StandardMatchDashboard: React.FC<StandardMatchDashboardProps> = ({
 
   // Extract unique players registered in events and database for Home Team
   const homePlayers: Player[] = useMemo(() => {
-    if (match?.home_lineup?.starters && match.home_lineup.starters.length > 0 && match.home_lineup.starters.some((s) => s.name)) {
-      return match.home_lineup.starters.map((s, idx) => ({
+    if (homeLineupConfig?.starters && homeLineupConfig.starters.length > 0) {
+      return homeLineupConfig.starters.map((s, idx) => ({
         id: s.id || `st_home_${idx}`,
         name: s.name || `Jugador #${Number(s.number) || idx + 1}`,
         number: Number(s.number) || idx + 1,
@@ -381,12 +396,12 @@ export const StandardMatchDashboard: React.FC<StandardMatchDashboardProps> = ({
     }
 
     return Array.from(map.values()).slice(0, 11);
-  }, [allEvents, homeTeamName, allDbPlayers, match?.home_lineup]);
+  }, [allEvents, homeTeamName, allDbPlayers, homeLineupConfig]);
 
   // Extract unique players registered in events and database for Away Team
   const awayPlayers: Player[] = useMemo(() => {
-    if (match?.away_lineup?.starters && match.away_lineup.starters.length > 0 && match.away_lineup.starters.some((s) => s.name)) {
-      return match.away_lineup.starters.map((s, idx) => ({
+    if (awayLineupConfig?.starters && awayLineupConfig.starters.length > 0) {
+      return awayLineupConfig.starters.map((s, idx) => ({
         id: s.id || `st_away_${idx}`,
         name: s.name || `Jugador #${Number(s.number) || idx + 1}`,
         number: Number(s.number) || idx + 1,
@@ -439,7 +454,7 @@ export const StandardMatchDashboard: React.FC<StandardMatchDashboardProps> = ({
     }
 
     return Array.from(map.values()).slice(0, 11);
-  }, [allEvents, awayTeamName, allDbPlayers, match?.away_lineup]);
+  }, [allEvents, awayTeamName, allDbPlayers, awayLineupConfig]);
 
   // Extract recorded substitutions for Home Team
   const homeSubstitutions: SubstitutionRecord[] = useMemo(() => {
@@ -448,12 +463,14 @@ export const StandardMatchDashboard: React.FC<StandardMatchDashboardProps> = ({
       const isHome = ev.team_name ? ev.team_name === homeTeamName : ev.team_id !== 'away_team';
       if (!isHome) return;
 
+      // "Cambio de alineación" events are lineup snapshots, not substitutions
       const isSubEvent =
-        ev.event_type?.toLowerCase().includes('cambio') ||
+        !isLineupChangeEvent(ev) &&
+        (ev.event_type?.toLowerCase().includes('cambio') ||
         ev.event_type?.toLowerCase().includes('sustitu') ||
         ev.category?.toLowerCase().includes('cambio') ||
         ev.category?.toLowerCase().includes('sustitu') ||
-        Boolean(ev.metadata?.player_in);
+        Boolean(ev.metadata?.player_in));
 
       if (isSubEvent) {
         const playerOutName = ev.metadata?.player_out || ev.player_name || 'Titular';
@@ -480,12 +497,14 @@ export const StandardMatchDashboard: React.FC<StandardMatchDashboardProps> = ({
       const isAway = ev.team_name === awayTeamName || ev.team_id === 'away_team';
       if (!isAway) return;
 
+      // "Cambio de alineación" events are lineup snapshots, not substitutions
       const isSubEvent =
-        ev.event_type?.toLowerCase().includes('cambio') ||
+        !isLineupChangeEvent(ev) &&
+        (ev.event_type?.toLowerCase().includes('cambio') ||
         ev.event_type?.toLowerCase().includes('sustitu') ||
         ev.category?.toLowerCase().includes('cambio') ||
         ev.category?.toLowerCase().includes('sustitu') ||
-        Boolean(ev.metadata?.player_in);
+        Boolean(ev.metadata?.player_in));
 
       if (isSubEvent) {
         const playerOutName = ev.metadata?.player_out || ev.player_name || 'Titular';
@@ -748,13 +767,8 @@ function generateDominanceDifferentialPaths(
 }
 
   const { homeScore: displayHomeScore, awayScore: displayAwayScore, hasTaggedGoals } = useMemo(() => {
-    return calculateMatchScoresFromEvents(
-      allEvents,
-      homeTeamName,
-      awayTeamName,
-      match.home_score ?? 0,
-      match.away_score ?? 0
-    );
+    // Mismo marcador que la botonera del análisis
+    return calculateAnalysisScore(allEvents, homeTeamName, awayTeamName, match.home_score, match.away_score);
   }, [allEvents, homeTeamName, awayTeamName, match.home_score, match.away_score]);
 
   // Extract all category buttons from template (or default categories if template unavailable)
@@ -1302,6 +1316,7 @@ function generateDominanceDifferentialPaths(
               circleStyle={homeLineupConfig?.circleStyle || undefined}
               formation={homeFormation}
               players={homePlayers}
+              customPositions={lineupPositions(homeLineupConfig)}
               substitutions={homeSubstitutions}
               isHome={true}
               orientation="vertical"
@@ -1474,6 +1489,7 @@ function generateDominanceDifferentialPaths(
               circleStyle={awayLineupConfig?.circleStyle || undefined}
               formation={awayFormation}
               players={awayPlayers}
+              customPositions={lineupPositions(awayLineupConfig)}
               substitutions={awaySubstitutions}
               isHome={false}
               orientation="vertical"
@@ -1990,12 +2006,12 @@ function generateDominanceDifferentialPaths(
             </div>
             <div className="aspect-video w-full rounded-xl overflow-hidden bg-black border border-slate-800">
               {(() => {
-                const videoTimeSec = calculateEventVideoTime(playingVideoEvt, effectiveMatch);
+                const { start: videoTimeSec, end: clipEndSec } = getEventClipWindow(playingVideoEvt, effectiveMatch);
                 const ytId = extractYouTubeId(effectiveMatch.video_url);
 
                 return ytId ? (
                   <iframe
-                    src={`https://www.youtube.com/embed/${ytId}?autoplay=1&start=${Math.floor(videoTimeSec)}`}
+                    src={`https://www.youtube.com/embed/${ytId}?autoplay=1&start=${Math.floor(videoTimeSec)}&end=${Math.ceil(clipEndSec)}`}
                     className="w-full h-full border-0"
                     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                     allowFullScreen
@@ -2014,6 +2030,9 @@ function generateDominanceDifferentialPaths(
                         applySeek();
                         el.addEventListener('loadedmetadata', applySeek, { once: true });
                         el.addEventListener('canplay', applySeek, { once: true });
+                        el.ontimeupdate = () => {
+                          if (!el.paused && el.currentTime >= clipEndSec && el.currentTime < clipEndSec + 2) el.pause();
+                        };
                       }
                     }}
                   />
@@ -3994,13 +4013,13 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({
         {(() => {
           const videoUrl = evt.metadata?.video_url || (evt as any).video_url || effectiveMatch.video_url;
           const ytId = extractYouTubeId(videoUrl);
-          const startSec = calculateEventVideoTime(evt, effectiveMatch);
+          const { start: startSec, end: clipEndSec } = getEventClipWindow(evt, effectiveMatch);
 
           return (
             <div className="relative w-full aspect-video bg-black rounded-2xl overflow-hidden border border-slate-800 shadow-inner flex items-center justify-center group">
               {ytId ? (
                 <iframe
-                  src={`https://www.youtube.com/embed/${ytId}?autoplay=1&start=${Math.floor(startSec)}`}
+                  src={`https://www.youtube.com/embed/${ytId}?autoplay=1&start=${Math.floor(startSec)}&end=${Math.ceil(clipEndSec)}`}
                   className="w-full h-full border-0"
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen
@@ -4019,6 +4038,9 @@ const EventDetailModal: React.FC<EventDetailModalProps> = ({
                       applySeek();
                       el.addEventListener('loadedmetadata', applySeek, { once: true });
                       el.addEventListener('canplay', applySeek, { once: true });
+                      el.ontimeupdate = () => {
+                        if (!el.paused && el.currentTime >= clipEndSec && el.currentTime < clipEndSec + 2) el.pause();
+                      };
                     }
                   }}
                 />

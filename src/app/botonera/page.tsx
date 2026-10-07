@@ -38,7 +38,7 @@ import {
 import { useAuth } from '@/components/providers/AuthProvider';
 import { Match, Player, NormalizedEvent, BotoneraTemplate, BotoneraButton, BotoneraProjectVideoType, MatchAnalysis, ActiveBotoneraSession, TeamLineupConfig } from '@/types';
 import { setRecordingLocked } from '@/lib/recording-lock';
-import { calculateEventVideoTime, formatVideoTime, openClipPopupWindow } from '@/lib/analytics/video-utils';
+import { calculateEventVideoTime, formatVideoTime, getEventClipWindow, openClipPopupWindow } from '@/lib/analytics/video-utils';
 import { calculateMatchScoresFromEvents } from '@/lib/analytics/dashboard-engine';
 import { createClient } from '@/lib/supabase/client';
 import { requestAdminPassword } from '@/components/auth/AdminPasswordPrompt';
@@ -48,6 +48,7 @@ import { BotoneraPitchCanvas } from '@/components/botonera/BotoneraPitchCanvas';
 import { BotoneraPlayerSelector } from '@/components/botonera/BotoneraPlayerSelector';
 import { BotoneraPanelEditor } from '@/components/botonera/BotoneraPanelEditor';
 import { BotoneraEventLog } from '@/components/botonera/BotoneraEventLog';
+import { ClipTrimModal } from '@/components/botonera/ClipTrimModal';
 import { BotoneraSetupWizard } from '@/components/botonera/BotoneraSetupWizard';
 import { BotoneraVideoPlayer, toEmbedUrl } from '@/components/botonera/BotoneraVideoPlayer';
 import { BotoneraLiveStats } from '@/components/botonera/BotoneraLiveStats';
@@ -2691,7 +2692,15 @@ export default function BotoneraPage() {
       videoUrl: videoElementRef.current?.src || videoUrl,
       videoType,
       localObjectUrl,
+      periodAdjustments,
     });
+  };
+
+  /** ▶ del feed: abre el corte en una ventana emergente donde se ajustan inicio y final. */
+  const [trimmingEvent, setTrimmingEvent] = useState<NormalizedEvent | null>(null);
+  const handleOpenClipTrim = (evt: NormalizedEvent) => {
+    setActiveClipEvent(evt);
+    setTrimmingEvent(evt);
   };
 
   /** Length of the attached video in seconds, or null while the player hasn't reported it. */
@@ -2712,11 +2721,8 @@ export default function BotoneraPage() {
 
   const playClipAt = (list: NormalizedEvent[], index: number) => {
     const evt = list[index];
-    const videoTime = calculateEventVideoTime(evt, selectedMatch, periodVideoOffsets, 0, periodAdjustments);
-    const lead = Number(evt.metadata?.leadTime ?? 5) || 0;
-    const lag = Number(evt.metadata?.lagTime ?? 5) || 0;
-    const start = Math.max(0, videoTime - lead);
-    clipWindowRef.current = { start, end: videoTime + Math.max(lag, 1), seekedAt: Date.now() };
+    const { start, end } = getEventClipWindow(evt, selectedMatch, periodVideoOffsets, periodAdjustments);
+    clipWindowRef.current = { start, end, seekedAt: Date.now() };
     seekVideoTo(start, true);
     setClipPlaylist({ events: list, index });
   };
@@ -4139,7 +4145,7 @@ export default function BotoneraPage() {
                   onExportXml={handleExportXml}
                   onExportJson={handleExportJson}
                   onImportEvents={handleImportEvents}
-                  onSeekToEvent={handleSeekToEvent}
+                  onSeekToEvent={handleOpenClipTrim}
                   buttons={template?.buttons || []}
                   players={players}
                   match={selectedMatch}
@@ -4323,7 +4329,7 @@ export default function BotoneraPage() {
                   onExportXml={handleExportXml}
                   onExportJson={handleExportJson}
                   onImportEvents={handleImportEvents}
-                  onSeekToEvent={handleSeekToEvent}
+                  onSeekToEvent={handleOpenClipTrim}
                   buttons={template?.buttons || []}
                   players={players}
                   match={selectedMatch}
@@ -4555,6 +4561,20 @@ export default function BotoneraPage() {
       )}
 
       {/* ----------------- EDIT VIDEO SETTINGS MODAL ----------------- */}
+      {trimmingEvent && (
+        <ClipTrimModal
+          event={trimmingEvent}
+          match={selectedMatch}
+          periodVideoOffsets={periodVideoOffsets}
+          periodAdjustments={periodAdjustments}
+          videoUrl={videoElementRef.current?.src || videoUrl}
+          videoType={videoType}
+          localObjectUrl={localObjectUrl}
+          onSave={handleUpdateEvent}
+          onClose={() => setTrimmingEvent(null)}
+        />
+      )}
+
       {isEditVideoModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-md w-full shadow-2xl space-y-4 animate-fade-in">

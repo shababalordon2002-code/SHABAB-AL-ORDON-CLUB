@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import { Match, NormalizedEvent, TeamLineupConfig, Player } from '@/types';
 import { Shield, Trophy, CheckCircle, Flame, Users, Settings, Edit3, RefreshCw, ArrowRightLeft, RotateCcw, X, AlertTriangle, Trash2 } from 'lucide-react';
 import { dbStore } from '@/lib/store/db-store';
-import { isGoalEvent } from '@/lib/analytics/dashboard-engine';
+import { isGoalEvent, isEventOfAwayTeam } from '@/lib/analytics/dashboard-engine';
 import { TeamLineupModal, TeamCircleIcon, getFormationPositions } from './TeamLineupModal';
 import { TeamLogo } from '@/components/player/PlayerBadge';
 import { ensureValidLineup, isValidLineup } from '@/lib/live-lineups';
@@ -252,15 +252,9 @@ export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
   const goalEvents = events.filter(isGoalEvent);
 
   // Group goals by team
-  const homeGoalEvents = goalEvents.filter((e) => {
-    if (!e.team_name) return true;
-    return e.team_name.toLowerCase().trim() === homeTeamName.toLowerCase().trim();
-  });
-
-  const awayGoalEvents = goalEvents.filter((e) => {
-    if (!e.team_name) return false;
-    return e.team_name.toLowerCase().trim() === awayTeamName.toLowerCase().trim();
-  });
+  // Same team attribution as the dashboards (countTaggedGoals), so both show the same score
+  const awayGoalEvents = goalEvents.filter((e) => isEventOfAwayTeam(e, awayTeamName, homeTeamName));
+  const homeGoalEvents = goalEvents.filter((e) => !isEventOfAwayTeam(e, awayTeamName, homeTeamName));
 
   // Live session score starts at 0-0 and counts live tagged goals
   const homeScore = homeGoalEvents.length;

@@ -100,6 +100,31 @@ export function calculateEventVideoTime(
   return targetTime;
 }
 
+/** Default cut window (seconds before / after the click) when an event has none stored. */
+export const DEFAULT_CLIP_LEAD_SEC = 5;
+export const DEFAULT_CLIP_LAG_SEC = 5;
+
+/**
+ * Video window of an event's cut: from (event time − leadTime) to (event time + lagTime),
+ * as stored in metadata by the botonera or edited in the clip trimmer. Used everywhere a cut
+ * is reproduced (botonera, visor, dashboards) so an edited start/end shows up in all of them.
+ */
+export function getEventClipWindow(
+  evt: NormalizedEvent,
+  match?: Match | null,
+  periodVideoOffsets?: Record<number, number>,
+  periodAdjustments?: Record<number, { matchTimeSec: number; videoTimeSec: number }>
+): { eventTime: number; start: number; end: number } {
+  const eventTime = calculateEventVideoTime(evt, match, periodVideoOffsets, 0, periodAdjustments);
+  const leadRaw = Number(evt.metadata?.leadTime ?? DEFAULT_CLIP_LEAD_SEC);
+  const lagRaw = Number(evt.metadata?.lagTime ?? DEFAULT_CLIP_LAG_SEC);
+  const lead = Number.isFinite(leadRaw) ? leadRaw : DEFAULT_CLIP_LEAD_SEC;
+  const lag = Number.isFinite(lagRaw) ? lagRaw : DEFAULT_CLIP_LAG_SEC;
+  const start = Math.max(0, eventTime - lead);
+  const end = Math.max(start + 1, eventTime + lag);
+  return { eventTime, start, end };
+}
+
 /**
  * Formats seconds into mm:ss or h:mm:ss for video timestamps.
  */
@@ -149,6 +174,7 @@ export interface OpenClipPopupOptions {
   videoUrl?: string | null;
   videoType?: BotoneraProjectVideoType | null;
   localObjectUrl?: string | null;
+  periodAdjustments?: Record<number, { matchTimeSec: number; videoTimeSec: number }>;
 }
 
 /**
@@ -158,14 +184,15 @@ export interface OpenClipPopupOptions {
 export function openClipPopupWindow(options: OpenClipPopupOptions): Window | null {
   if (typeof window === 'undefined') return null;
 
-  const { event, match, periodVideoOffsets, videoUrl, videoType, localObjectUrl } = options;
-  const targetVideoTime = calculateEventVideoTime(event, match, periodVideoOffsets, 0);
+  const { event, match, periodVideoOffsets, videoUrl, videoType, localObjectUrl, periodAdjustments } = options;
+  // The cut plays from its (possibly edited) start to its end, not from the click itself.
+  const { start: targetVideoTime, end: clipEndTime } = getEventClipWindow(event, match, periodVideoOffsets, periodAdjustments);
 
   const matchTimestamp = event.timestamp ?? (event.minute !== null ? event.minute * 60 + (event.second || 0) : 0);
   const mMin = Math.floor(matchTimestamp / 60);
   const mSec = Math.floor(matchTimestamp % 60);
   const matchTimeStr = `${mMin.toString().padStart(2, '0')}:${mSec.toString().padStart(2, '0')}`;
-  const videoTimeStr = formatVideoTime(targetVideoTime);
+  const videoTimeStr = `${formatVideoTime(targetVideoTime)} → ${formatVideoTime(clipEndTime)}`;
   const periodStr = event.period === 1 ? '1ª Parte' : event.period === 2 ? '2ª Parte' : `T. Extra ${event.period || ''}`;
   const actionName = event.event_type || event.category || 'Acción';
   const playerName = event.player_name || 'Sin asignar';
@@ -205,6 +232,10 @@ export function openClipPopupWindow(options: OpenClipPopupOptions): Window | nul
             v.play().catch(() => {});
           } catch (e) {}
         };
+        const endAt = ${clipEndTime};
+        v.addEventListener('timeupdate', () => {
+          if (!v.paused && v.currentTime >= endAt && v.currentTime < endAt + 2) v.pause();
+        });
         v.addEventListener('loadedmetadata', jumpToStart);
         v.addEventListener('canplay', () => {
           if (Math.abs(v.currentTime - startAt) > 1) jumpToStart();
@@ -271,6 +302,7 @@ export function openClipPopupWindow(options: OpenClipPopupOptions): Window | nul
       }
       const u = new URL(embedSrc);
       u.searchParams.set('start', String(Math.floor(targetVideoTime)));
+      u.searchParams.set('end', String(Math.ceil(clipEndTime)));
       u.searchParams.set('autoplay', '1');
       u.searchParams.set('enablejsapi', '1');
       embedSrc = u.toString();
@@ -300,6 +332,10 @@ export function openClipPopupWindow(options: OpenClipPopupOptions): Window | nul
         const startAt = ${targetVideoTime};
         v.currentTime = startAt;
         v.addEventListener('loadedmetadata', () => { v.currentTime = startAt; v.play().catch(() => {}); });
+        const endAt = ${clipEndTime};
+        v.addEventListener('timeupdate', () => {
+          if (!v.paused && v.currentTime >= endAt && v.currentTime < endAt + 2) v.pause();
+        });
         window.repeatClip = () => { v.currentTime = startAt; v.play().catch(() => {}); };
         window.skipTime = (sec) => { v.currentTime = Math.max(0, v.currentTime + sec); };
       </script>

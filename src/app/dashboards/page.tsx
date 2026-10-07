@@ -40,7 +40,7 @@ import { MatchAnalysisSelectorModal } from '@/components/analysis/MatchAnalysisS
 import { useAuth } from '@/components/providers/AuthProvider';
 import { AdminDashboardConfigModal } from '@/components/dashboards/AdminDashboardConfigModal';
 import { TacticalLineupPitch } from '@/components/pitch/TacticalLineupPitch';
-import { calculateMatchScoresFromEvents } from '@/lib/analytics/dashboard-engine';
+import { calculateAnalysisScore } from '@/lib/analytics/dashboard-engine';
 import { isSessionLive } from '@/lib/services/botonera-service';
 import { TeamLogo } from '@/components/player/PlayerBadge';
 
@@ -460,12 +460,12 @@ export default function DashboardsPage() {
                     </div>
 
                     {(() => {
-                      const blockScores = calculateMatchScoresFromEvents(
+                      const blockScores = calculateAnalysisScore(
                         block.events,
                         block.match.home_team,
                         block.match.away_team,
-                        block.match.home_score ?? 0,
-                        block.match.away_score ?? 0
+                        block.match.home_score,
+                        block.match.away_score
                       );
                       return (
                         <h2 className="text-sm sm:text-base font-extrabold text-white truncate flex items-center gap-2">

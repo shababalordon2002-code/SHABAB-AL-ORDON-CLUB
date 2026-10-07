@@ -4,7 +4,7 @@ import React, { useMemo } from 'react';
 import { Trophy, Clock, CheckCircle2 } from 'lucide-react';
 import { Match, NormalizedEvent, DashboardWidget } from '@/types';
 import { TeamLogo } from '@/components/player/PlayerBadge';
-import { aggregate, EngineContext, calculateMatchScoresFromEvents } from '@/lib/analytics/dashboard-engine';
+import { aggregate, EngineContext, calculateAnalysisScore } from '@/lib/analytics/dashboard-engine';
 import { CategoryChart } from '@/components/dashboards/viz/CategoryChart';
 
 interface MatchResultHeaderProps {
@@ -36,12 +36,12 @@ export const MatchResultHeader: React.FC<MatchResultHeaderProps> = ({ match, eve
 
   // Dynamically calculate score from events (Remates/Tiros con Gol, etc.)
   const { homeScore, awayScore } = useMemo(() => {
-    return calculateMatchScoresFromEvents(
+    return calculateAnalysisScore(
       events,
       match.home_team,
       match.away_team,
-      match.home_score ?? 0,
-      match.away_score ?? 0
+      match.home_score,
+      match.away_score
     );
   }, [events, match.home_team, match.away_team, match.home_score, match.away_score]);
 

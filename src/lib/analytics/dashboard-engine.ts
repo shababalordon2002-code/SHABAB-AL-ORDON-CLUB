@@ -559,6 +559,38 @@ export function isEventOfHomeTeam(
   return true;
 }
 
+/** Goals tagged in an analysis, per team (same attribution as every other team stat). */
+export function countTaggedGoals(
+  events: NormalizedEvent[],
+  homeTeamName?: string,
+  awayTeamName?: string
+): { homeScore: number; awayScore: number } {
+  let homeScore = 0;
+  let awayScore = 0;
+  (events || []).filter(isGoalEvent).forEach((g) => {
+    if (isEventOfAwayTeam(g, awayTeamName, homeTeamName)) awayScore += 1;
+    else homeScore += 1;
+  });
+  return { homeScore, awayScore };
+}
+
+/**
+ * Marcador de un análisis: el que muestra la botonera (goles etiquetados). Solo cuando el
+ * análisis no tiene ningún evento se usa el resultado guardado en el partido.
+ */
+export function calculateAnalysisScore(
+  events: NormalizedEvent[],
+  homeTeamName?: string,
+  awayTeamName?: string,
+  fallbackHomeScore?: number | null,
+  fallbackAwayScore?: number | null
+): { homeScore: number; awayScore: number; hasTaggedGoals: boolean } {
+  const tagged = countTaggedGoals(events, homeTeamName, awayTeamName);
+  const hasTaggedGoals = tagged.homeScore + tagged.awayScore > 0;
+  if ((events || []).length > 0) return { ...tagged, hasTaggedGoals };
+  return { homeScore: Number(fallbackHomeScore ?? 0), awayScore: Number(fallbackAwayScore ?? 0), hasTaggedGoals };
+}
+
 /**
  * Prioridad de Marcador:
  * 1. El resultado se saca prioritariamente del scraping (Flashscore / marcador oficial).

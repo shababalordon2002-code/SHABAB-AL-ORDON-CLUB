@@ -20,7 +20,7 @@ import { BotoneraVideoPlayer, getCenteredPopUpFeatures, toEmbedUrl } from '@/com
 import { BotoneraEventLog } from '@/components/botonera/BotoneraEventLog';
 import { BotoneraLiveStats } from '@/components/botonera/BotoneraLiveStats';
 import { dbStore } from '@/lib/store/db-store';
-import { calculateEventVideoTime, openClipPopupWindow } from '@/lib/analytics/video-utils';
+import { ClipTrimModal } from '@/components/botonera/ClipTrimModal';
 import { getAnalysisEventsFromSupabase, subscribeToAnalysisEvents } from '@/lib/services/botonera-service';
 
 interface AnalysisVisorProps {
@@ -97,6 +97,8 @@ export const AnalysisVisor: React.FC<AnalysisVisorProps> = ({
   const [activeTab, setActiveTab] = useState<'editor_view' | 'pitch'>('editor_view');
   const [selectedEvent, setSelectedEvent] = useState<NormalizedEvent | null>(null);
   const [activeClipEvent, setActiveClipEvent] = useState<NormalizedEvent | null>(null);
+  // Corte abierto en la ventana emergente (inicio/final guardados en la botonera)
+  const [clipModalEvent, setClipModalEvent] = useState<NormalizedEvent | null>(null);
 
   // Video State & Binding
   const videoFile = null;
@@ -169,17 +171,11 @@ export const AnalysisVisor: React.FC<AnalysisVisorProps> = ({
     return matchTeam && matchPlayer && matchCategory && matchPeriod && matchMinute;
   });
 
-  // Reproduce event in pop-up window
+  // Reproduce the event cut (with its edited start/end) in the pop-up clip player
   const handleSeekToEvent = (evt: NormalizedEvent) => {
     setSelectedEvent(evt);
     setActiveClipEvent(evt);
-    openClipPopupWindow({
-      event: evt,
-      match,
-      periodVideoOffsets,
-      videoUrl: resolvedVideoUrl,
-      videoType: resolvedVideoType,
-    });
+    setClipModalEvent(evt);
   };
 
   const handleExportXml = () => {
@@ -243,6 +239,16 @@ export const AnalysisVisor: React.FC<AnalysisVisorProps> = ({
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/90 backdrop-blur-md p-1 sm:p-3 overflow-y-auto">
+      {clipModalEvent && (
+        <ClipTrimModal
+          event={clipModalEvent}
+          match={match}
+          periodVideoOffsets={periodVideoOffsets}
+          videoUrl={resolvedVideoUrl}
+          videoType={resolvedVideoType}
+          onClose={() => setClipModalEvent(null)}
+        />
+      )}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-[98vw] w-full max-h-[96vh] flex flex-col shadow-2xl overflow-hidden animate-fade-in my-auto">
         {/* Visor Header */}
         <div className="p-4 bg-slate-950 border-b border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3 shrink-0">

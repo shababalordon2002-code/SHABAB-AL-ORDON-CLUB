@@ -712,7 +712,7 @@ export const BotoneraEventLog: React.FC<BotoneraEventLogProps> = ({
                             <button
                               onClick={() => onSeekToEvent(evt)}
                               className="p-1 rounded bg-slate-950/50 hover:bg-emerald-600/50 text-emerald-400 hover:text-emerald-200 border border-emerald-700/40 hover:border-emerald-500/60 transition cursor-pointer"
-                              title={`▶ Reproducir corte en ventana emergente (Vídeo: ${vidTimeStr} | Partido: ${formatMinSec(evt.timestamp)})`}
+                              title={`▶ Reproducir y ajustar el corte (Vídeo: ${vidTimeStr} | Partido: ${formatMinSec(evt.timestamp)})`}
                             >
                               <PlayCircle className="w-3.5 h-3.5" />
                             </button>
