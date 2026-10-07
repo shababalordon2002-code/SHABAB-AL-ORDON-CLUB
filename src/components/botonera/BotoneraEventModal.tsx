@@ -10,7 +10,6 @@ import {
   Check,
   X,
   Tag,
-  User,
   Users,
   AlertCircle,
   Shield,
@@ -102,7 +101,7 @@ const MiniTacticalPlayerPitch: React.FC<MiniTacticalPlayerPitchProps> = ({
   const presetPositions = getFormationPositions(formation);
 
   return (
-    <div className="relative w-[215px] sm:w-[230px] mx-auto h-[180px] rounded-xl bg-gradient-to-b from-[#091b12] via-[#0d281a] to-[#07160e] border border-emerald-600/40 shadow-inner overflow-hidden select-none shrink-0">
+    <div className="relative w-full max-w-[240px] sm:max-w-[260px] mx-auto h-[290px] sm:h-[320px] rounded-xl bg-gradient-to-b from-[#091b12] via-[#0d281a] to-[#07160e] border border-emerald-600/40 shadow-inner overflow-hidden select-none shrink-0">
       {/* Soccer Pitch Markings (SVG) - Spans exact coordinate boundary with preserveAspectRatio="none" */}
       <svg viewBox="0 0 100 120" preserveAspectRatio="none" className="absolute inset-0 w-full h-full pointer-events-none opacity-50">
         {/* Outer pitch boundary */}
@@ -1054,25 +1053,6 @@ export const BotoneraEventModal: React.FC<BotoneraEventModalProps> = ({
               {/* 2. CAMPOGRAMA PEQUEÑO CON SISTEMA Y CÍRCULOS CON DORSAL */}
               {showPlayerSelection && (
                 <div className="p-2 rounded-xl bg-slate-950/90 border border-slate-800 space-y-1.5 shrink-0 shadow-lg">
-                  {/* Section Header */}
-                  <div className="flex items-center justify-between gap-1 text-xs">
-                    <div className="flex items-center gap-1.5 font-bold text-slate-200">
-                      <User className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>Jugador en Campo ({activeViewTeam}):</span>
-                      {isPlayerMandatory ? (
-                        <span className="text-[9px] font-black text-red-400 bg-red-500/10 px-1 rounded border border-red-500/20">
-                          * OBLIGATORIO
-                        </span>
-                      ) : (
-                        <span className="text-[9px] text-slate-500">Opcional</span>
-                      )}
-                    </div>
-
-                    <div className="text-[10px] font-mono text-emerald-400 font-bold bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-500/30">
-                      11 Titulares / Activos
-                    </div>
-                  </div>
-
                   {/* Mini Campograma Tactical Pitch with 11 Formation Circles */}
                   <MiniTacticalPlayerPitch
                     teamName={activeViewTeam}
