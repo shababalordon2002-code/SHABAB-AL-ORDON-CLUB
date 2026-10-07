@@ -13,7 +13,16 @@ import {
   getAnalysisEventsForMatchesFromSupabase
 } from '@/lib/services/botonera-service';
 import { saveMatchesToSupabase, getMatchesFromSupabase } from '@/lib/services/matches-service';
-import { getPlayersFromSupabase, savePlayersToSupabase } from '@/lib/services/players-service';
+import { getPlayersFromSupabase, savePlayersToSupabase, deletePlayerFromSupabase } from '@/lib/services/players-service';
+import {
+  SHABAB_TEAM_ID,
+  SHABAB_TEAM_NAME,
+  isPlaceholderPlayerName,
+  isSamePlayerName,
+  isShababTeamName,
+  isSquadPlayer,
+  newCustomPlayerId,
+} from '@/lib/squad';
 import { fetchAnalysesFromSupabase, fetchAnalysesAndTombstonesFromSupabase, saveAnalysisToSupabase, deleteAnalysisFromSupabase } from '@/lib/services/analysis-service';
 import { getDashboardsFromSupabase, saveDashboardToSupabase, deleteDashboardFromSupabase } from '@/lib/services/dashboard-service';
 import { isMatchOnOrAfterSept2026 } from '@/lib/utils/date-utils';
@@ -22,7 +31,8 @@ import { isValidLineup } from '@/lib/live-lineups';
 const STORAGE_KEYS = {
   MATCHES: 'sao_analytics_matches_v1',
   EVENTS: 'sao_analytics_events_v1',
-  PLAYERS: 'sao_analytics_players_v1',
+  // v2: drops caches from before the 365scores squad (old Transfermarkt + rival lineup players)
+  PLAYERS: 'sao_analytics_players_v2',
   MAPPINGS: 'sao_analytics_mappings_v1',
   IMPORT_LOGS: 'sao_analytics_logs_v1',
   TEAMS: 'sao_analytics_teams_v1',
@@ -170,39 +180,6 @@ const SEED_COMPETITIONS: Competition[] = [
   { id: 'comp_jpl_2026', name: 'Jordan Pro League', season: '2026/2027', type: 'Liga Nacional', country: 'Jordania' },
   { id: 'comp_jordan_cup', name: 'Jordan FA Cup', season: '2026/2027', type: 'Copa Nacional', country: 'Jordania' },
   { id: 'comp_afc_cup', name: 'AFC Champions League Two', season: '2026/2027', type: 'Continental', country: 'Asia' },
-];
-
-// Initial Seed DEMO Players for Shabab Al Ordon (Full squad of 29 players)
-const SEED_PLAYERS: Player[] = [
-  { id: 'ply_tm_1_waleed_issam', name: 'Waleed Issam', number: 1, position: 'Portero', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', photo_url: 'https://img.a.transfermarkt.technology/portrait/medium/569541-1770765964.jpeg?lm=4711', age: 27, nationality: 'Jordania', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/78.png?lm=4711' },
-  { id: 'ply_tm_2_noureddine_al_torman', name: 'Noureddine Al-Torman', number: 22, position: 'Portero', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', photo_url: 'https://img.a.transfermarkt.technology/portrait/medium/1119510-1770677822.jpeg?lm=4711', age: 22, nationality: 'Jordania', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/78.png?lm=4711' },
-  { id: 'ply_tm_3_salameh_salman', name: 'Salameh Salman', number: 99, position: 'Portero', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', age: 21, nationality: 'Jordania', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/78.png?lm=4711' },
-  { id: 'ply_tm_4_sa_l_castro', name: 'Saúl Castro', number: 4, position: 'Defensa Central', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', age: 24, nationality: 'Ecuador', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/44.png?lm=4711' },
-  { id: 'ply_tm_5_amer_al_majdoubah', name: 'Amer Al-Majdoubah', number: 14, position: 'Defensa Central', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', age: 22, nationality: 'Jordania', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/78.png?lm=4711' },
-  { id: 'ply_tm_6_ali_rabaei', name: 'Ali Rabaei', number: 6, position: 'Defensa Central', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', age: 23, nationality: 'Palestina', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/240.png?lm=4711' },
-  { id: 'ply_tm_7_qusai_tannous', name: 'Qusai Tannous', number: 16, position: 'Defensa Central', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', age: 27, nationality: 'Jordania', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/78.png?lm=4711' },
-  { id: 'ply_tm_8_hassan_holwah', name: 'Hassan Holwah', number: 3, position: 'Defensa Central', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', age: 23, nationality: 'Jordania', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/78.png?lm=4711' },
-  { id: 'ply_tm_9_mohammad_abu_ghoush', name: 'Mohammad Abu Ghoush', number: 9, position: 'Lateral Izquierdo', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', age: 21, nationality: 'Jordania', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/78.png?lm=4711' },
-  { id: 'ply_tm_10_jordy_dur_n', name: 'Jordy Durán', number: 10, position: 'Lateral Izquierdo', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', age: 22, nationality: 'República Dominicana', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/43.png?lm=4711' },
-  { id: 'ply_tm_11_yazeed_mahfouz', name: 'Yazeed Mahfouz', number: 2, position: 'Lateral Izquierdo', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', age: 25, nationality: 'Jordania', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/78.png?lm=4711' },
-  { id: 'ply_tm_12_anas_zabout', name: 'Anas Zabout', number: 4, position: 'Lateral Derecho', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', age: 22, nationality: 'Jordania', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/78.png?lm=4711' },
-  { id: 'ply_tm_13_ghassan_abu_hassan', name: 'Ghassan Abu Hassan', number: 55, position: 'Lateral Derecho', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', age: 27, nationality: 'Jordania', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/78.png?lm=4711' },
-  { id: 'ply_tm_14_saif_suleiman', name: 'Saif Suleiman', number: 6, position: 'Pivote Defensivo', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', age: 21, nationality: 'Jordania', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/78.png?lm=4711' },
-  { id: 'ply_tm_15_ismail_freihat', name: 'Ismail Freihat', number: 15, position: 'Mediocentro', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', age: 19, nationality: 'Jordania', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/78.png?lm=4711' },
-  { id: 'ply_tm_16_rashid_al_shroqi', name: 'Rashid Al-Shroqi', number: 21, position: 'Mediocentro', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', age: 21, nationality: 'Jordania', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/78.png?lm=4711' },
-  { id: 'ply_tm_17_ahmad_khaled', name: 'Ahmad Khaled', number: 26, position: 'Mediocentro', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', nationality: 'Jordania', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/78.png?lm=4711' },
-  { id: 'ply_tm_18_mustafa_al_saifi', name: 'Mustafa Al-Saifi', number: 23, position: 'Mediocentro', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', age: 22, nationality: 'Jordania', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/78.png?lm=4711' },
-  { id: 'ply_tm_19_fayez_draghmeh', name: 'Fayez Draghmeh', number: 88, position: 'Mediocentro', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', age: 21, nationality: 'Jordania', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/78.png?lm=4711' },
-  { id: 'ply_tm_20_ayham_hisham', name: 'Ayham Hisham', number: 10, position: 'Mediocentro Ofensivo', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', age: 22, nationality: 'Jordania', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/78.png?lm=4711' },
-  { id: 'ply_tm_21_hamza_al_shamali', name: 'Hamza Al-Shamali', number: 21, position: 'Mediocentro Ofensivo', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', age: 30, nationality: 'Jordania', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/78.png?lm=4711' },
-  { id: 'ply_tm_22_anas_zara', name: 'Anas Zara', number: 22, position: 'Mediocentro Ofensivo', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', age: 17, nationality: 'Jordania', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/78.png?lm=4711' },
-  { id: 'ply_tm_23_mohamad_al_absi', name: 'Mohamad Al-Absi', number: 77, position: 'Mediocentro Ofensivo', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', age: 21, nationality: 'Jordania', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/78.png?lm=4711' },
-  { id: 'ply_tm_24_iyed_belgacem', name: 'Iyed Belgacem', number: 27, position: 'Mediocentro Ofensivo', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', age: 22, nationality: 'Túnez', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/173.png?lm=4711' },
-  { id: 'ply_tm_25_mohammad_abu_arqob', name: 'Mohammad Abu Arqob', number: 25, position: 'Extremo Izquierdo', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', age: 30, nationality: 'Jordania', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/78.png?lm=4711' },
-  { id: 'ply_tm_26_adham_al_refaei', name: 'Adham Al-Refaei', number: 70, position: 'Extremo Izquierdo', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', age: 22, nationality: 'Jordania', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/78.png?lm=4711' },
-  { id: 'ply_tm_27_khaldoon_sabra', name: 'Khaldoon Sabra', number: 27, position: 'Delantero Centro', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', age: 22, nationality: 'Jordania', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/78.png?lm=4711' },
-  { id: 'ply_tm_28_shaher_shelbaieh', name: 'Shaher Shelbaieh', number: 17, position: 'Delantero Centro', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', age: 27, nationality: 'Jordania', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/78.png?lm=4711' },
-  { id: 'ply_tm_29_maikel_caicedo', name: 'Maikel Caicedo', number: 29, position: 'Delantero Centro', team_id: 'team_shabab_al_ordon', team_name: 'Shabab Al Ordon Club', age: 24, nationality: 'Ecuador', flag_url: 'https://img.a.transfermarkt.technology/flagge/verysmall/44.png?lm=4711' }
 ];
 
 // Initial Seed DEMO Player Mappings (e.g. "Ahmed Ali" -> "Ahmad Ali")
@@ -841,56 +818,75 @@ export const dbStore = {
     setToStorage(STORAGE_KEYS.TRASH_EVENTS, []);
   },
 
-  // Players
+  // Players: only the Shabab Al Ordon squad (Supabase 'players' is the source of truth)
   getPlayers(): Player[] {
-    const list = getFromStorage<Player[]>(STORAGE_KEYS.PLAYERS, SEED_PLAYERS);
-    if (!list || list.length < SEED_PLAYERS.length) {
-      setToStorage(STORAGE_KEYS.PLAYERS, SEED_PLAYERS);
-      return SEED_PLAYERS;
-    }
-    return list;
+    return getFromStorage<Player[]>(STORAGE_KEYS.PLAYERS, []).filter(isSquadPlayer);
   },
 
   async syncPlayersFromSupabase(): Promise<Player[]> {
     const remote = await getPlayersFromSupabase();
     if (remote && remote.length > 0) {
-      const allLocal = this.getPlayers();
-      const remoteIds = new Set(remote.map(p => p.id));
-      const localOnly = allLocal.filter(p => !remoteIds.has(p.id));
-      const merged = [...remote, ...localOnly];
-      setToStorage(STORAGE_KEYS.PLAYERS, merged);
-      return merged;
+      const squad = remote.filter(isSquadPlayer);
+      setToStorage(STORAGE_KEYS.PLAYERS, squad);
+      return squad;
     }
     return this.getPlayers();
   },
 
-  savePlayer(player: Player): void {
+  // Updates the local squad immediately; resolves once Supabase has the change
+  async savePlayer(player: Player): Promise<boolean> {
+    const saved: Player = { ...player, team_id: SHABAB_TEAM_ID, team_name: SHABAB_TEAM_NAME };
     const players = this.getPlayers();
-    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
-
-    const idx = players.findIndex(p => p.id === player.id || (p.name && norm(p.name) === norm(player.name)));
-    let saved: Player;
-    if (idx >= 0) {
-      saved = {
-        ...players[idx],
-        ...player,
-        id: players[idx].id, // Preserve existing ID
-      };
-      players[idx] = saved;
-    } else {
-      saved = player;
-      players.push(saved);
-    }
+    const idx = players.findIndex(p => p.id === saved.id);
+    if (idx >= 0) players[idx] = saved;
+    else players.push(saved);
     setToStorage(STORAGE_KEYS.PLAYERS, players);
 
-    savePlayersToSupabase([saved]).catch((err) => {
+    try {
+      return await savePlayersToSupabase([saved]);
+    } catch (err) {
       console.warn('Could not sync player to Supabase:', err);
-    });
+      return false;
+    }
   },
 
-  deletePlayer(playerId: string): void {
-    const players = this.getPlayers().filter(p => p.id !== playerId);
-    setToStorage(STORAGE_KEYS.PLAYERS, players);
+  // Replace the local squad with the one just synced from 365scores (already in Supabase)
+  setSquadPlayers(squad: Player[]): void {
+    setToStorage(STORAGE_KEYS.PLAYERS, squad.filter(isSquadPlayer));
+  },
+
+  // Players typed into a lineup: if the team is Shabab Al Ordon, any new real player is added
+  // to the squad. Rival players are never stored (they live in the match lineup).
+  addLineupPlayersToSquad(lineupPlayers: Player[], teamName: string): Player[] {
+    if (!isShababTeamName(teamName)) return [];
+    const squad = this.getPlayers();
+    const added: Player[] = [];
+    for (const lp of lineupPlayers) {
+      if (isPlaceholderPlayerName(lp.name)) continue;
+      const known = [...squad, ...added].some(p => p.id === lp.id || isSamePlayerName(p.name, lp.name));
+      if (known) continue;
+      added.push({
+        id: newCustomPlayerId(),
+        name: lp.name.trim(),
+        number: Number(lp.number) || 0,
+        position: lp.position === 'POR' ? 'Portero' : 'Jugador',
+        team_id: SHABAB_TEAM_ID,
+        team_name: SHABAB_TEAM_NAME,
+        nationality: 'Jordania',
+      });
+    }
+    if (added.length > 0) {
+      setToStorage(STORAGE_KEYS.PLAYERS, [...squad, ...added]);
+      savePlayersToSupabase(added).catch((err) => {
+        console.warn('Could not sync new squad players to Supabase:', err);
+      });
+    }
+    return added;
+  },
+
+  async deletePlayer(playerId: string): Promise<boolean> {
+    setToStorage(STORAGE_KEYS.PLAYERS, this.getPlayers().filter(p => p.id !== playerId));
+    return deletePlayerFromSupabase(playerId);
   },
 
   // Player Mappings

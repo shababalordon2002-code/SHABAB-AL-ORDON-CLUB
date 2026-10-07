@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/client';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { Player } from '@/types';
+import { isSamePlayerName, isSquadPlayer } from '@/lib/squad';
 
 // Fetch players from Supabase 'players' table
 export async function getPlayersFromSupabase(): Promise<Player[]> {
@@ -177,4 +178,36 @@ export async function deletePlayerFromSupabase(playerId: string): Promise<boolea
       return false;
     }
   }
+}
+
+// --- Squad replacement (365scores sync) ---
+
+// Server-only: empty the 'players' table and fill it with the scraped Shabab Al Ordon squad.
+// Only Shabab players created by hand (ply_custom_*) that are not in the scrape survive.
+// Returns the resulting squad.
+export async function replaceSquadInSupabase(scraped: Player[]): Promise<Player[]> {
+  const supabase = createAdminClient();
+  const { data, error: readError } = await supabase.from('players').select('*');
+  if (readError) throw new Error(`Error leyendo jugadores de Supabase: ${readError.message}`);
+
+  const rows = (data || []) as Player[];
+  const keptCustom = rows.filter(
+    r =>
+      isSquadPlayer(r) &&
+      r.id.startsWith('ply_custom_') &&
+      !scraped.some(p => isSamePlayerName(p.name, r.name))
+  );
+  const keepIds = new Set(keptCustom.map(p => p.id));
+  const deleteIds = rows.map(r => r.id).filter(id => !keepIds.has(id));
+
+  if (deleteIds.length > 0) {
+    const { error: deleteError } = await supabase.from('players').delete().in('id', deleteIds);
+    if (deleteError) throw new Error(`Error vaciando la tabla de jugadores: ${deleteError.message}`);
+  }
+
+  if (!(await savePlayersToSupabase(scraped))) {
+    throw new Error('Error guardando la plantilla en Supabase');
+  }
+
+  return [...scraped, ...keptCustom];
 }

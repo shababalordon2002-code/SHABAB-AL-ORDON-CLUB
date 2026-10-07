@@ -1,8 +1,6 @@
 import { NextResponse } from 'next/server';
 import { scrapeFlashscoreMatches } from '@/lib/scraper/flashscore-scraper';
-import { scrapeTransfermarktPlayers } from '@/lib/scraper/transfermarkt-scraper';
 import { saveMatchesToSupabase } from '@/lib/services/matches-service';
-import { savePlayersToSupabase } from '@/lib/services/players-service';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // Max 60 seconds for Vercel Serverless Function
@@ -17,27 +15,19 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
     }
 
-    console.log('[Cron Job] Ejecutando scraping automatizado (Partidos + Plantilla Transfermarkt) cada 2 días...');
-    
-    const [matches, players] = await Promise.all([
-      scrapeFlashscoreMatches(20),
-      scrapeTransfermarktPlayers()
-    ]);
+    console.log('[Cron Job] Ejecutando scraping automatizado de partidos cada 2 días...');
 
-    // Upsert both matches and players to Supabase tables
-    await Promise.all([
-      saveMatchesToSupabase(matches),
-      savePlayersToSupabase(players)
-    ]);
+    // The squad is not synced here: it is edited by hand in "Jugadores" and only replaced
+    // from 365scores when the user presses "Sincronizar 365scores".
+    const matches = await scrapeFlashscoreMatches(20);
+    await saveMatchesToSupabase(matches);
 
     return NextResponse.json({
       success: true,
       timestamp: new Date().toISOString(),
       matchesCount: matches.length,
-      playersCount: players.length,
       matches: matches,
-      players: players,
-      message: 'Scraping automatizado de partidos y plantilla completado y guardado en Supabase'
+      message: 'Scraping automatizado de partidos completado y guardado en Supabase'
     });
   } catch (error: any) {
     console.error('[Cron Job Error]:', error);

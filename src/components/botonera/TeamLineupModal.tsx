@@ -3,9 +3,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { TeamLineupConfig, TeamCircleStyle, LineupPlayerItem, NormalizedEvent } from '@/types';
+import { isPlaceholderPlayerName, isShababTeamName } from '@/lib/squad';
+import { PlayerPicker, lineupPlayerOption, squadPlayerOption } from '@/components/player/PlayerPicker';
 import { dbStore } from '@/lib/store/db-store';
 import { X, Check, Shield, Users, Palette, Sparkles, Plus, Trash2, Layout, User, RefreshCw, ArrowRightLeft } from 'lucide-react';
 import { TeamLogo } from '@/components/player/PlayerBadge';
+import { SquadPlayerToken, positionShort, useSquadPlayerLookup } from '@/components/player/SquadLineupToken';
 import { ensureValidLineup } from '@/lib/live-lineups';
 
 export const FORMATION_PRESETS = [
@@ -295,6 +298,17 @@ export const TeamLineupModal: React.FC<TeamLineupModalProps> = ({
   // Active tab: 'campograma' | 'list' | 'kit'
   const [activeTab, setActiveTab] = useState<'campograma' | 'list' | 'kit'>('campograma');
 
+  // Shabab Al Ordon lineup entries are shown with their squad photo, number and position
+  const findSquadPlayer = useSquadPlayerLookup(teamName);
+  const renderPlayerToken = (item: { id?: string; name?: string }, number: number | string, size: number) => {
+    const squadPlayer = findSquadPlayer(item);
+    return squadPlayer ? (
+      <SquadPlayerToken player={squadPlayer} number={number} size={size} circleStyle={circleStyle} />
+    ) : (
+      <TeamCircleIcon style={circleStyle} number={number} size={size} />
+    );
+  };
+
   // Pitch view mode: 'active' (with match substitutions applied) vs 'initial' (initial 11 starters)
   const [pitchViewMode, setPitchViewMode] = useState<'active' | 'initial'>('active');
 
@@ -533,18 +547,12 @@ export const TeamLineupModal: React.FC<TeamLineupModalProps> = ({
 
   // Load players from database (Página Jugadores)
   const handleLoadFromDatabase = () => {
-    const allDbPlayers = dbStore.getPlayers();
-    
-    // Filter by team name or match team
-    const teamDbPlayers = allDbPlayers.filter((p) => {
-      if (!p.team_name) return true;
-      return (
-        p.team_name.toLowerCase().includes(teamName.toLowerCase()) ||
-        teamName.toLowerCase().includes(p.team_name.toLowerCase())
-      );
-    });
-
-    const targetList = teamDbPlayers.length > 0 ? teamDbPlayers : allDbPlayers;
+    // The player database only holds the Shabab Al Ordon squad
+    if (!isShababTeamName(teamName)) {
+      alert('La Base de Datos de jugadores solo contiene la plantilla del Shabab Al Ordon. Añade los jugadores del rival manualmente.');
+      return;
+    }
+    const targetList = dbStore.getPlayers();
 
     if (targetList.length === 0) {
       alert('No se encontraron jugadores guardados en la Base de Datos. Puedes añadirlos manualmente.');
@@ -912,7 +920,7 @@ export const TeamLineupModal: React.FC<TeamLineupModalProps> = ({
                         {/* Token Circle with Dorsal */}
                         <div className="relative">
                           <div className={`p-0.5 rounded-full transition ${isSelected ? 'ring-4 ring-amber-400 shadow-xl scale-105' : 'hover:ring-2 hover:ring-white/60'}`}>
-                            <TeamCircleIcon style={circleStyle} number={player.number || idx + 1} size={36} />
+                            {renderPlayerToken(player, player.number || idx + 1, 36)}
                           </div>
 
                           {/* Substitution badge indicator on top right */}
@@ -939,6 +947,11 @@ export const TeamLineupModal: React.FC<TeamLineupModalProps> = ({
                         >
                           {isSubIn ? `🔄 ${player.name || `Jugador #${player.number}`}` : (player.name || `Jugador #${player.number || idx + 1}`)}
                         </div>
+                        {findSquadPlayer(player)?.position && (
+                          <div className="mt-0.5 px-1 rounded bg-slate-950/80 text-[8px] font-black text-amber-300 tracking-wide leading-tight">
+                            {positionShort(findSquadPlayer(player)?.position)}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -958,7 +971,8 @@ export const TeamLineupModal: React.FC<TeamLineupModalProps> = ({
                 {(() => {
                   const activeIdx = starters.findIndex((p) => p.id === selectedPlayerId);
                   const activePlayer = starters[activeIdx] || starters[0];
-                  const allDbPlayers = dbStore.getPlayers();
+                  // The player database is the Shabab Al Ordon squad: not offered for the rival
+                  const allDbPlayers = isShababTeamName(teamName) ? dbStore.getPlayers() : [];
 
                   // Check if this position has an active substitution
                   const currentFieldPlayer = displayedPitchStarters[activeIdx >= 0 ? activeIdx : 0];
@@ -969,7 +983,7 @@ export const TeamLineupModal: React.FC<TeamLineupModalProps> = ({
                   return (
                     <div className="space-y-3 bg-slate-900/90 p-3 rounded-xl border border-slate-800">
                       <div className="flex items-center gap-3 border-b border-slate-800/80 pb-2">
-                        <TeamCircleIcon style={circleStyle} number={currentFieldPlayer?.number || activePlayer.number || 1} size={34} />
+                        {renderPlayerToken(currentFieldPlayer || activePlayer, currentFieldPlayer?.number || activePlayer.number || 1, 40)}
                         <div>
                           <span className="text-[10px] text-amber-400 font-bold uppercase">
                             Posición: {positions[activeIdx]?.role || 'Titular'}
@@ -977,6 +991,11 @@ export const TeamLineupModal: React.FC<TeamLineupModalProps> = ({
                           <h5 className="text-xs font-bold text-white truncate max-w-[170px]">
                             {currentFieldPlayer?.name || activePlayer.name || `Jugador #${activePlayer.number}`}
                           </h5>
+                          {findSquadPlayer(currentFieldPlayer || activePlayer)?.position && (
+                            <span className="block text-[10px] text-slate-400">
+                              {findSquadPlayer(currentFieldPlayer || activePlayer)?.position}
+                            </span>
+                          )}
                           {isSubbed && (
                             <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded mt-0.5">
                               <RefreshCw className="w-2.5 h-2.5" /> Entró al min {(currentFieldPlayer as ActiveLineupPlayerItem).subMinute}'
@@ -1003,12 +1022,17 @@ export const TeamLineupModal: React.FC<TeamLineupModalProps> = ({
                           <label className="block text-[11px] font-bold text-emerald-400 mb-1 flex items-center gap-1">
                             <Sparkles className="w-3 h-3" /> Elegir Titular de BD:
                           </label>
-                          <select
-                            value=""
-                            onChange={(e) => {
-                              const selectedDbId = e.target.value;
-                              if (!selectedDbId) return;
-                              const dbPlayer = allDbPlayers.find((p) => p.id === selectedDbId);
+                          <PlayerPicker
+                            accent="emerald"
+                            placeholder="Seleccionar jugador de la plantilla..."
+                            emptyText="La plantilla del Shabab Al Ordon está vacía"
+                            value={(() => {
+                              const current = findSquadPlayer(activePlayer);
+                              return current ? `db:${current.id}` : undefined;
+                            })()}
+                            options={allDbPlayers.map((p) => squadPlayerOption(p))}
+                            onSelect={(opt) => {
+                              const dbPlayer = allDbPlayers.find((p) => `db:${p.id}` === opt.key);
                               if (dbPlayer) {
                                 const updated = [...starters];
                                 const targetIdx = activeIdx >= 0 ? activeIdx : 0;
@@ -1020,15 +1044,7 @@ export const TeamLineupModal: React.FC<TeamLineupModalProps> = ({
                                 setStarters(updated);
                               }
                             }}
-                            className="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-amber-300 text-xs font-semibold focus:outline-none focus:border-amber-400 cursor-pointer"
-                          >
-                            <option value="">-- Seleccionar Jugador de BD --</option>
-                            {allDbPlayers.map((p) => (
-                              <option key={p.id} value={p.id}>
-                                #{p.number} {p.name} ({p.position || 'Jugador'})
-                              </option>
-                            ))}
-                          </select>
+                          />
                         </div>
 
                         {/* Entrada Manual */}
@@ -1092,12 +1108,17 @@ export const TeamLineupModal: React.FC<TeamLineupModalProps> = ({
                             : 'bg-slate-900/60 hover:bg-slate-900 text-slate-300 border border-transparent'
                         }`}
                       >
-                        <TeamCircleIcon style={circleStyle} number={p.number || idx + 1} size={20} />
+                        {renderPlayerToken(p, p.number || idx + 1, 24)}
                         <span className="w-8 font-mono text-[10px] text-slate-400">#{p.number || idx + 1}</span>
                         <span className="flex-1 truncate">
                           {p.name || `Jugador #${p.number || idx + 1}`}
                           {isSub && <span className="ml-1 text-[10px] text-emerald-400 font-bold">(🔄 {(p as ActiveLineupPlayerItem).subMinute}')</span>}
                         </span>
+                        {findSquadPlayer(p)?.position && (
+                          <span className="text-[9px] font-black text-amber-300/90 shrink-0" title={findSquadPlayer(p)?.position}>
+                            {positionShort(findSquadPlayer(p)?.position)}
+                          </span>
+                        )}
                       </div>
                     );
                   })}
@@ -1165,7 +1186,7 @@ export const TeamLineupModal: React.FC<TeamLineupModalProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {starters.map((player, idx) => (
                     <div key={player.id} className="flex items-center gap-2 p-2 rounded-xl bg-slate-950 border border-slate-800">
-                      <TeamCircleIcon style={circleStyle} number={player.number || idx + 1} size={26} />
+                      {renderPlayerToken(player, player.number || idx + 1, 28)}
                       
                       <input
                         type="text"
@@ -1214,7 +1235,7 @@ export const TeamLineupModal: React.FC<TeamLineupModalProps> = ({
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {substitutes.map((player, idx) => (
                       <div key={player.id} className="flex items-center gap-2 p-2 rounded-xl bg-slate-950 border border-slate-800">
-                        <TeamCircleIcon style={circleStyle} number={player.number || idx + 12} size={26} />
+                        {renderPlayerToken(player, player.number || idx + 12, 28)}
                         
                         <input
                           type="text"
@@ -1521,55 +1542,41 @@ export const TeamLineupModal: React.FC<TeamLineupModalProps> = ({
                   <label className="block font-bold text-slate-300 mb-1">
                     🔻 Jugador que SALE del campo:
                   </label>
-                  <select
-                    required
-                    value={newSubPlayerOut}
-                    onChange={(e) => setNewSubPlayerOut(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 text-slate-200 rounded-lg p-2 text-xs font-semibold focus:outline-none focus:border-amber-400 cursor-pointer"
-                  >
-                    <option value="">-- Selecciona jugador en campo --</option>
-                    {displayedPitchStarters.map((p, idx) => (
-                      <option key={p.id || idx} value={p.name || `Jugador #${p.number || idx + 1}`}>
-                        #{p.number || idx + 1} - {p.name || `Jugador #${p.number || idx + 1}`}
-                      </option>
-                    ))}
-                  </select>
+                  <PlayerPicker
+                    accent="red"
+                    placeholder="Selecciona jugador en campo..."
+                    value={newSubPlayerOut ? `out:${newSubPlayerOut}` : undefined}
+                    options={displayedPitchStarters.map((p, idx) => {
+                      const label = p.name || `Jugador #${p.number || idx + 1}`;
+                      return lineupPlayerOption({ ...p, name: label, number: p.number || idx + 1 }, `out:${label}`, findSquadPlayer(p));
+                    })}
+                    onSelect={(opt) => setNewSubPlayerOut(opt.name)}
+                  />
                 </div>
 
                 <div>
                   <label className="block font-bold text-slate-300 mb-1">
                     🟢 Elegir del banquillo / BD (opcional):
                   </label>
-                  <select
-                    value=""
-                    onChange={(e) => {
-                      const selectedVal = e.target.value;
-                      if (!selectedVal) return;
-                      const [numStr, ...nameParts] = selectedVal.split('::');
-                      setNewSubPlayerInNum(numStr ? Number(numStr) : '');
-                      setNewSubPlayerIn(nameParts.join('::'));
+                  <PlayerPicker
+                    accent="emerald"
+                    placeholder="Seleccionar del banquillo o la plantilla..."
+                    value={newSubPlayerIn ? `in:${newSubPlayerIn}` : undefined}
+                    options={(() => {
+                      const bench = substitutes
+                        .filter((sp) => !isPlaceholderPlayerName(sp.name))
+                        .map((sp) => lineupPlayerOption(sp, `in:${sp.name}`, findSquadPlayer(sp), 'Banquillo'));
+                      const squad = (isShababTeamName(teamName) ? dbStore.getPlayers() : [])
+                        .filter((p) => !bench.some((b) => b.name === p.name))
+                        .map((p) => ({ ...squadPlayerOption(p, 'Plantilla'), key: `in:${p.name}` }));
+                      return [...bench, ...squad];
+                    })()}
+                    onSelect={(opt) => {
+                      const n = Number(opt.number);
+                      setNewSubPlayerInNum(Number.isFinite(n) && n > 0 ? n : '');
+                      setNewSubPlayerIn(opt.name);
                     }}
-                    className="w-full bg-slate-950 border border-slate-700 text-slate-200 rounded-lg p-2 text-xs font-semibold focus:outline-none focus:border-amber-400 cursor-pointer"
-                  >
-                    <option value="">-- Seleccionar suplente registrado --</option>
-                    {substitutes.map((s, idx) => (
-                      <option key={s.id || idx} value={`${s.number}::${s.name}`}>
-                        Banquillo: #{s.number} - {s.name}
-                      </option>
-                    ))}
-                    {dbStore
-                      .getPlayers()
-                      .filter(
-                        (p) =>
-                          p.team_name?.toLowerCase().includes(teamName.toLowerCase()) ||
-                          teamName.toLowerCase().includes(p.team_name?.toLowerCase() || '')
-                      )
-                      .map((p) => (
-                        <option key={p.id} value={`${p.number}::${p.name}`}>
-                          BD: #{p.number} - {p.name} ({p.position || 'Jugador'})
-                        </option>
-                      ))}
-                  </select>
+                  />
                 </div>
 
                 <div className="grid grid-cols-3 gap-2">

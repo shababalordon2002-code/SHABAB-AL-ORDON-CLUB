@@ -1,16 +1,16 @@
 import { NextResponse } from 'next/server';
-import { scrapeTransfermarktPlayers } from '@/lib/scraper/transfermarkt-scraper';
-import { savePlayersToSupabase } from '@/lib/services/players-service';
+import { scrape365ScoresPlayers } from '@/lib/scraper/365scores-scraper';
+import { replaceSquadInSupabase } from '@/lib/services/players-service';
 
 export const maxDuration = 60;
 
 export async function POST() {
   try {
     console.log("API /api/scrape-players called...");
-    const players = await scrapeTransfermarktPlayers();
+    const scraped = await scrape365ScoresPlayers();
 
-    // Save/Upsert scraped players directly to Supabase 'players' table
-    await savePlayersToSupabase(players);
+    // Replace the Shabab Al Ordon squad in Supabase 'players' table
+    const players = await replaceSquadInSupabase(scraped);
 
     return NextResponse.json({
       success: true,
@@ -22,7 +22,7 @@ export async function POST() {
     return NextResponse.json(
       {
         success: false,
-        error: error.message || 'Error al descargar plantilla de Transfermarkt'
+        error: error.message || 'Error al descargar plantilla de 365scores'
       },
       { status: 500 }
     );

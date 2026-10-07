@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { Users, UserPlus, Shield, Check, X, Edit3 } from 'lucide-react';
 import { Player } from '@/types';
+import { SHABAB_TEAM_ID, isShababTeamName } from '@/lib/squad';
 import { PlayerAvatar, NumberBadge, TeamLogo } from '@/components/player/PlayerBadge';
 
 interface BotoneraPlayerSelectorProps {
@@ -34,13 +35,14 @@ export const BotoneraPlayerSelector: React.FC<BotoneraPlayerSelectorProps> = ({
     e.preventDefault();
     if (!newPlayerName.trim()) return;
 
+    const teamName = activeTeamTab === 'home' ? homeTeamName : awayTeamName;
     const newP: Player = {
       id: `ply_${Date.now()}`,
       name: newPlayerName.trim(),
       number: parseInt(newPlayerNumber) || Math.floor(Math.random() * 80) + 1,
       position: newPlayerPosition,
-      team_id: activeTeamTab === 'home' ? 'team_shabab_al_ordon' : 'team_rival',
-      team_name: activeTeamTab === 'home' ? homeTeamName : awayTeamName,
+      team_id: isShababTeamName(teamName) ? SHABAB_TEAM_ID : 'team_rival',
+      team_name: teamName,
     };
 
     onAddPlayer(newP);

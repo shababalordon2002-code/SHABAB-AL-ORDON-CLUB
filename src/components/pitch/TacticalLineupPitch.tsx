@@ -7,6 +7,9 @@ import { Shield, RefreshCw, Plus, X, ArrowRightLeft, ArrowUp } from 'lucide-reac
 import { dbStore } from '@/lib/store/db-store';
 import { TeamCircleIcon, getFormationPositions } from '@/components/botonera/TeamLineupModal';
 import { TeamLogo } from '@/components/player/PlayerBadge';
+import { PlayerPicker, lineupPlayerOption, squadPlayerOption } from '@/components/player/PlayerPicker';
+import { isShababTeamName } from '@/lib/squad';
+import { SquadPlayerToken, positionShort, useSquadPlayerLookup } from '@/components/player/SquadLineupToken';
 
 export interface SubstitutionRecord {
   id?: string;
@@ -116,6 +119,8 @@ export const TacticalLineupPitch: React.FC<TacticalLineupPitchProps> = ({
   const primaryColor = circleStyle?.primaryColor || teamColor || (isHome ? '#ef4444' : '#3b82f6');
 
   const [mounted, setMounted] = useState(false);
+  // Shabab Al Ordon players are shown with their squad photo, number and position
+  const findSquadPlayer = useSquadPlayerLookup(teamName);
   useEffect(() => {
     setMounted(true);
   }, []);
@@ -222,6 +227,7 @@ export const TacticalLineupPitch: React.FC<TacticalLineupPitchProps> = ({
           const displayNum = sub?.playerInNumber || starterPly.number || idx + 1;
           const displayInName = sub ? sub.playerInName : starterPly.name;
           const displayOutName = sub ? starterPly.name : null;
+          const squadPlayer = sub ? findSquadPlayer({ name: sub.playerInName }) : findSquadPlayer(starterPly);
 
           return (
             <div
@@ -244,15 +250,25 @@ export const TacticalLineupPitch: React.FC<TacticalLineupPitchProps> = ({
             >
               {/* Jersey Circle Icon with configured team colors & patterns */}
               <div className="relative">
-                <TeamCircleIcon
-                  style={
-                    sub
-                      ? { primaryColor: '#f59e0b', secondaryColor: '#ffffff', pattern: 'solid' }
-                      : circleStyle || { primaryColor, secondaryColor: '#ffffff', pattern: 'solid' }
-                  }
-                  number={displayNum}
-                  size={30}
-                />
+                {squadPlayer ? (
+                  <SquadPlayerToken
+                    player={squadPlayer}
+                    number={displayNum}
+                    size={32}
+                    circleStyle={circleStyle || { primaryColor, secondaryColor: '#ffffff', pattern: 'solid' }}
+                    highlight={sub ? '#f59e0b' : undefined}
+                  />
+                ) : (
+                  <TeamCircleIcon
+                    style={
+                      sub
+                        ? { primaryColor: '#f59e0b', secondaryColor: '#ffffff', pattern: 'solid' }
+                        : circleStyle || { primaryColor, secondaryColor: '#ffffff', pattern: 'solid' }
+                    }
+                    number={displayNum}
+                    size={30}
+                  />
+                )}
 
                 {/* Substitution Badge Icon (🔄 Minute') */}
                 {sub && (
@@ -279,6 +295,14 @@ export const TacticalLineupPitch: React.FC<TacticalLineupPitchProps> = ({
                   </span>
                 )}
               </div>
+              {squadPlayer?.position && (
+                <div
+                  className="mt-0.5 px-1 rounded bg-slate-950/80 text-[7.5px] font-black text-amber-300 tracking-wide leading-tight"
+                  title={squadPlayer.position}
+                >
+                  {positionShort(squadPlayer.position)}
+                </div>
+              )}
             </div>
           );
         })}
@@ -354,19 +378,15 @@ export const TacticalLineupPitch: React.FC<TacticalLineupPitchProps> = ({
                   <span>🔴 Jugador Sustituido (Sale del campo):</span>
                   <span className="text-[10px] text-amber-400 font-mono">Titulares en campo</span>
                 </label>
-                <select
-                  required
-                  value={playerOut}
-                  onChange={(e) => setPlayerOut(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 text-slate-200 rounded-lg p-2.5 text-xs focus:ring-1 focus:ring-amber-500 font-medium"
-                >
-                  <option value="">Selecciona el titular que sale...</option>
-                  {starters.map((p, idx) => (
-                    <option key={`${p.id || 'empty'}_${idx}`} value={p.name}>
-                      #{p.number || idx + 1} - {p.name} ({p.position || 'JUG'})
-                    </option>
-                  ))}
-                </select>
+                <PlayerPicker
+                  accent="red"
+                  placeholder="Selecciona el titular que sale..."
+                  value={playerOut ? `out:${playerOut}` : undefined}
+                  options={starters.map((p, idx) =>
+                    lineupPlayerOption({ ...p, number: p.number || idx + 1 }, `out:${p.name}`, findSquadPlayer(p))
+                  )}
+                  onSelect={(opt) => setPlayerOut(opt.name)}
+                />
               </div>
 
               {/* Quick Substitute Selection from DB Squad */}
@@ -375,28 +395,23 @@ export const TacticalLineupPitch: React.FC<TacticalLineupPitchProps> = ({
                   <span>🟢 Jugador Sustituto (Entra al campo):</span>
                   <span className="text-[10px] text-emerald-400 font-mono">Selección rápida plantilla</span>
                 </label>
-                <select
-                  value=""
-                  onChange={(e) => {
-                    const selectedName = e.target.value;
-                    if (!selectedName) return;
-                    setPlayerIn(selectedName);
-                    const dbMatch = dbStore.getPlayers().find(
-                      (p) => p.name === selectedName || (p.team_name?.includes(teamName) && p.name === selectedName)
-                    );
-                    if (dbMatch?.number) setPlayerInNum(dbMatch.number);
-                  }}
-                  className="w-full bg-slate-950 border border-emerald-500/40 text-emerald-300 rounded-lg p-2.5 text-xs focus:ring-1 focus:ring-emerald-500 font-medium mb-2"
-                >
-                  <option value="">Elije un suplente registrado en la plantilla...</option>
-                  {dbStore.getPlayers()
-                    .filter((p) => p.team_name?.toLowerCase().includes(teamName.toLowerCase()) || teamName.toLowerCase().includes(p.team_name?.toLowerCase() || ''))
-                    .map((p) => (
-                      <option key={p.id} value={p.name}>
-                        #{p.number} - {p.name} ({p.position})
-                      </option>
-                    ))}
-                </select>
+                <div className="mb-2">
+                  <PlayerPicker
+                    accent="emerald"
+                    placeholder="Elige un jugador de la plantilla..."
+                    emptyText="Solo hay plantilla registrada del Shabab Al Ordon"
+                    value={playerIn ? `in:${playerIn}` : undefined}
+                    options={(isShababTeamName(teamName) ? dbStore.getPlayers() : []).map((p) => ({
+                      ...squadPlayerOption(p),
+                      key: `in:${p.name}`,
+                    }))}
+                    onSelect={(opt) => {
+                      setPlayerIn(opt.name);
+                      const n = Number(opt.number);
+                      if (Number.isFinite(n) && n > 0) setPlayerInNum(n);
+                    }}
+                  />
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">

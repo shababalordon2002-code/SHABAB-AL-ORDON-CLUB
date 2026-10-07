@@ -8,6 +8,9 @@ import { dbStore } from '@/lib/store/db-store';
 import { isGoalEvent, isEventOfAwayTeam } from '@/lib/analytics/dashboard-engine';
 import { TeamLineupModal, TeamCircleIcon, getFormationPositions } from './TeamLineupModal';
 import { TeamLogo } from '@/components/player/PlayerBadge';
+import { PlayerPicker, lineupPlayerOption, squadPlayerOption } from '@/components/player/PlayerPicker';
+import { useSquadPlayerLookup } from '@/components/player/SquadLineupToken';
+import { isPlaceholderPlayerName, isShababTeamName } from '@/lib/squad';
 import { ensureValidLineup, isValidLineup } from '@/lib/live-lineups';
 
 export function MiniCampogramaWidget({
@@ -191,6 +194,8 @@ export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
 
   // Substitution Modal State
   const [addSubTeam, setAddSubTeam] = useState<'home' | 'away' | null>(null);
+  const findHomeSquadPlayer = useSquadPlayerLookup(homeTeamName);
+  const findAwaySquadPlayer = useSquadPlayerLookup(awayTeamName);
   const [subPlayerOut, setSubPlayerOut] = useState('');
   const [subPlayerIn, setSubPlayerIn] = useState('');
   const [subPlayerInNum, setSubPlayerInNum] = useState<number | ''>('');
@@ -646,19 +651,17 @@ export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
                   <span>🔴 Jugador Sustituido (Sale del campo):</span>
                   <span className="text-[10px] text-amber-400 font-mono">Titulares en campo</span>
                 </label>
-                <select
-                  required
-                  value={subPlayerOut}
-                  onChange={(e) => setSubPlayerOut(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 text-slate-200 rounded-lg p-2.5 text-xs focus:ring-1 focus:ring-amber-500 font-medium"
-                >
-                  <option value="">Selecciona el titular que sale...</option>
-                  {(addSubTeam === 'home' ? homeLineup : awayLineup).starters.map((p, idx) => (
-                    <option key={p.id || idx} value={p.name || `Jugador #${p.number || idx + 1}`}>
-                      #{p.number || idx + 1} - {p.name || `Jugador #${p.number || idx + 1}`} ({p.position || 'JUG'})
-                    </option>
-                  ))}
-                </select>
+                <PlayerPicker
+                  accent="red"
+                  placeholder="Selecciona el titular que sale..."
+                  value={subPlayerOut ? `out:${subPlayerOut}` : undefined}
+                  options={(addSubTeam === 'home' ? homeLineup : awayLineup).starters.map((p, idx) => {
+                    const label = p.name || `Jugador #${p.number || idx + 1}`;
+                    const lookup = addSubTeam === 'home' ? findHomeSquadPlayer : findAwaySquadPlayer;
+                    return lineupPlayerOption({ ...p, name: label, number: p.number || idx + 1 }, `out:${label}`, lookup(p));
+                  })}
+                  onSelect={(opt) => setSubPlayerOut(opt.name)}
+                />
               </div>
 
               {/* Roster Quick Selector for Player IN */}
@@ -667,32 +670,30 @@ export const BotoneraLiveScoreboard: React.FC<BotoneraLiveScoreboardProps> = ({
                   <span>🟢 Jugador Sustituto (Entra al campo):</span>
                   <span className="text-[10px] text-emerald-400 font-mono">Selección rápida plantilla</span>
                 </label>
-                <select
-                  value=""
-                  onChange={(e) => {
-                    const selectedName = e.target.value;
-                    if (!selectedName) return;
-                    setSubPlayerIn(selectedName);
-                    const targetTeam = addSubTeam === 'home' ? homeTeamName : awayTeamName;
-                    const dbMatch = dbStore.getPlayers().find(
-                      (p) => p.name === selectedName || (p.team_name?.includes(targetTeam) && p.name === selectedName)
-                    );
-                    if (dbMatch?.number) setSubPlayerInNum(dbMatch.number);
-                  }}
-                  className="w-full bg-slate-950 border border-emerald-500/40 text-emerald-300 rounded-lg p-2.5 text-xs focus:ring-1 focus:ring-emerald-500 font-medium mb-2"
-                >
-                  <option value="">Elije un suplente registrado en la plantilla...</option>
-                  {dbStore.getPlayers()
-                    .filter((p) => {
-                      const tName = addSubTeam === 'home' ? homeTeamName : awayTeamName;
-                      return p.team_name?.toLowerCase().includes(tName.toLowerCase()) || tName.toLowerCase().includes(p.team_name?.toLowerCase() || '');
-                    })
-                    .map((p) => (
-                      <option key={p.id} value={p.name}>
-                        #{p.number} - {p.name} ({p.position})
-                      </option>
-                    ))}
-                </select>
+                <div className="mb-2">
+                  <PlayerPicker
+                    accent="emerald"
+                    placeholder="Elige del banquillo o la plantilla..."
+                    value={subPlayerIn ? `in:${subPlayerIn}` : undefined}
+                    options={(() => {
+                      const teamLineup = addSubTeam === 'home' ? homeLineup : awayLineup;
+                      const targetTeam = addSubTeam === 'home' ? homeTeamName : awayTeamName;
+                      const lookup = addSubTeam === 'home' ? findHomeSquadPlayer : findAwaySquadPlayer;
+                      const bench = teamLineup.substitutes
+                        .filter((sp) => !isPlaceholderPlayerName(sp.name))
+                        .map((sp) => lineupPlayerOption(sp, `in:${sp.name}`, lookup(sp), 'Banquillo'));
+                      const squad = (isShababTeamName(targetTeam) ? dbStore.getPlayers() : [])
+                        .filter((p) => !bench.some((b) => b.name === p.name))
+                        .map((p) => ({ ...squadPlayerOption(p, 'Plantilla'), key: `in:${p.name}` }));
+                      return [...bench, ...squad];
+                    })()}
+                    onSelect={(opt) => {
+                      setSubPlayerIn(opt.name);
+                      const n = Number(opt.number);
+                      if (Number.isFinite(n) && n > 0) setSubPlayerInNum(n);
+                    }}
+                  />
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">

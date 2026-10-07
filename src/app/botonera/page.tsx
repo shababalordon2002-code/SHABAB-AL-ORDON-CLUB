@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { dbStore, SEED_BOTONERA_TEMPLATES } from '@/lib/store/db-store';
+import { isSquadPlayer } from '@/lib/squad';
 import {
   getBotoneraTemplatesFromSupabase,
   getAnalysisEventsFromSupabase,
@@ -223,7 +224,7 @@ export default function BotoneraPage() {
         ...prev.filter((p) => (p.team_name || '').toLowerCase().trim() !== teamName.toLowerCase().trim()),
         ...teamPlayers,
       ]);
-      teamPlayers.forEach((p) => dbStore.savePlayer(p));
+      dbStore.addLineupPlayersToSquad(teamPlayers, teamName);
     }
   };
 
@@ -635,6 +636,12 @@ export default function BotoneraPage() {
         dbStore.syncMatchesFromSupabase().then((loadedMatches) => {
           if (loadedMatches && loadedMatches.length > 0) {
             setMatches(loadedMatches);
+          }
+        }),
+        dbStore.syncPlayersFromSupabase().then((syncedPlayers) => {
+          // Refresh the squad, keeping lineup players (rivals) already loaded in the session
+          if (syncedPlayers && syncedPlayers.length > 0) {
+            setPlayers((prev) => [...syncedPlayers, ...prev.filter((p) => !isSquadPlayer(p))]);
           }
         }),
       ]);
@@ -2769,9 +2776,10 @@ export default function BotoneraPage() {
     seekVideoTo(targetVideoTime, true);
   };
 
+  // Rival players stay only in the session; Shabab players are also added to the squad
   const handleAddPlayer = (newPlayer: Player) => {
-    dbStore.savePlayer(newPlayer);
-    setPlayers(dbStore.getPlayers());
+    setPlayers((prev) => [...prev, newPlayer]);
+    dbStore.addLineupPlayersToSquad([newPlayer], newPlayer.team_name);
   };
 
   // Event Trigger Callback when analyst clicks a category button
@@ -4078,7 +4086,7 @@ export default function BotoneraPage() {
 
                 setMatches(dbStore.getMatches());
               }
-              updatedPlayers.forEach((p) => dbStore.savePlayer(p));
+              dbStore.addLineupPlayersToSquad(updatedPlayers, teamName);
             }}
           />
 

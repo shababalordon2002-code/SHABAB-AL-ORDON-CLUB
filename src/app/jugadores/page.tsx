@@ -20,25 +20,25 @@ import {
   Flag as FlagIcon
 } from 'lucide-react';
 import { dbStore } from '@/lib/store/db-store';
-import { getPlayersFromSupabase } from '@/lib/services/players-service';
+import { newCustomPlayerId } from '@/lib/squad';
 import { Player, PlayerMapping } from '@/types';
 
+// Demarcaciones as published by 365scores (squad source)
 const SPANISH_POSITIONS = [
   'Portero',
   'Defensa Central',
-  'Lateral Izquierdo',
-  'Lateral Derecho',
-  'Pivote Defensivo',
-  'Mediocentro',
-  'Mediocentro Ofensivo',
-  'Interior Izquierdo',
-  'Interior Derecho',
-  'Extremo Izquierdo',
-  'Extremo Derecho',
-  'Segundo Delantero',
-  'Delantero Centro',
-  'Delantero'
-];
+  'Defensa Lateral Izquierdo',
+  'Defensa Lateral Derecho',
+  'Mediocampista Defensivo',
+  'Mediocampista Central',
+  'Mediocampista Ofensivo',
+  'Mediocampista Izquierdo',
+  'Mediocampista Derecho',
+  'Delantero Izquierdo',
+  'Delantero Derecho',
+  'Centro Delantero',
+  'Jugador'
+]
 
 function PlayerAvatar({ photoUrl, name, size = 40 }: { photoUrl?: string; name: string; size?: number }) {
   const [hasError, setHasError] = useState(false);
@@ -99,7 +99,7 @@ function NumberBadge({ number, size = 40 }: { number: number; size?: number }) {
         className="font-black italic text-amber-400 leading-none select-none"
         style={{ fontSize: `${size * 0.5}px`, textShadow: '0 1px 3px rgba(0,0,0,0.6)' }}
       >
-        {number}
+        {number > 0 ? number : '–'}
       </span>
     </div>
   );
@@ -261,7 +261,7 @@ export default function JugadoresPage() {
   const [editingPlayer, setEditingPlayer] = useState<Player | null>(null);
   const [formName, setFormName] = useState('');
   const [formNumber, setFormNumber] = useState<number>(10);
-  const [formPosition, setFormPosition] = useState<string>('Mediocentro');
+  const [formPosition, setFormPosition] = useState<string>('Mediocampista Central');
   const [formAge, setFormAge] = useState<number | undefined>(undefined);
   const [formNationality, setFormNationality] = useState<string>('Jordania');
   const [formPhotoUrl, setFormPhotoUrl] = useState<string>('');
@@ -293,9 +293,12 @@ export default function JugadoresPage() {
     loadData();
   }, []);
 
-  const handleScrapeTransfermarkt = async () => {
+  const handleScrape365Scores = async () => {
+    if (!confirm('Se vaciará la tabla de jugadores y se cargará la plantilla actual de 365scores (se perderán las ediciones hechas a mano; se conservan los jugadores creados a mano que no estén en 365scores). ¿Continuar?')) {
+      return;
+    }
     setIsScraping(true);
-    setMessage('Conectando con Transfermarkt y obteniendo plantilla actualizada de Shabab Al Ordon...');
+    setMessage('Conectando con 365scores y obteniendo plantilla actualizada de Shabab Al Ordon...');
 
     try {
       const res = await fetch('/api/scrape-players', {
@@ -304,17 +307,15 @@ export default function JugadoresPage() {
       const data = await res.json();
 
       if (data.success && Array.isArray(data.players)) {
-        data.players.forEach((scrapedPlayer: Player) => {
-          dbStore.savePlayer(scrapedPlayer);
-        });
+        dbStore.setSquadPlayers(data.players);
 
         loadData();
-        setMessage(`¡Éxito! Se han importado y actualizado ${data.players.length} jugadores desde Transfermarkt.`);
+        setMessage(`¡Éxito! Se han importado y actualizado ${data.players.length} jugadores desde 365scores.`);
       } else {
         setMessage(`Error: ${data.error || 'No se pudieron descargar los jugadores'}`);
       }
     } catch (err: any) {
-      console.error('Error scraping Transfermarkt:', err);
+      console.error('Error scraping 365scores:', err);
       setMessage(`Error en el scraping: ${err.message || err}`);
     } finally {
       setIsScraping(false);
@@ -335,7 +336,7 @@ export default function JugadoresPage() {
       setEditingPlayer(null);
       setFormName('');
       setFormNumber(players.length + 1);
-      setFormPosition('Mediocentro');
+      setFormPosition('Mediocampista Central');
       setFormAge(22);
       setFormNationality('Jordania');
       setFormPhotoUrl('');
@@ -343,35 +344,50 @@ export default function JugadoresPage() {
     setIsPlayerModalOpen(true);
   };
 
-  const handleSavePlayer = (e: React.FormEvent) => {
+  const handleSavePlayer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formName.trim()) return;
 
     const playerToSave: Player = {
-      id: editingPlayer ? editingPlayer.id : `ply_custom_${Date.now()}`,
+      id: editingPlayer ? editingPlayer.id : newCustomPlayerId(),
       name: formName.trim(),
-      number: Number(formNumber) || 10,
+      number: Number.isFinite(formNumber) && formNumber > 0 ? formNumber : 0,
       position: formPosition,
       team_id: 'team_shabab_al_ordon',
       team_name: 'Shabab Al Ordon Club',
       age: formAge ? Number(formAge) : undefined,
       nationality: formNationality.trim() || 'Jordania',
       photo_url: formPhotoUrl.trim() || undefined,
-      flag_url: editingPlayer?.flag_url || 'https://img.a.transfermarkt.technology/flagge/verysmall/78.png?lm=4711',
+      // The scraped flag only stays valid while the nationality is unchanged
+      flag_url:
+        editingPlayer?.flag_url && editingPlayer.nationality === formNationality.trim()
+          ? editingPlayer.flag_url
+          : formNationality.trim().toLowerCase() === 'jordania'
+            ? 'https://imagecache.365scores.com/image/upload/f_png,w_24,h_24,c_limit,q_auto:eco,dpr_2,d_Countries:round:default.png/v1/Countries/round/119'
+            : undefined,
     };
 
-    dbStore.savePlayer(playerToSave);
-    loadData();
+    // Show the change right away from the local store; re-syncing from Supabase here would
+    // bring back the previous version while the upload is still in flight.
+    const savePromise = dbStore.savePlayer(playerToSave);
+    setPlayers(dbStore.getPlayers());
+    if (selectedProfilePlayer?.id === playerToSave.id) setSelectedProfilePlayer(playerToSave);
     setIsPlayerModalOpen(false);
     setMessage(`Jugador ${playerToSave.name} guardado correctamente.`);
     setTimeout(() => setMessage(null), 4000);
+
+    const ok = await savePromise;
+    if (!ok) {
+      setMessage(`Jugador ${playerToSave.name} guardado en este equipo, pero no se pudo subir a Supabase.`);
+      setTimeout(() => setMessage(null), 6000);
+    }
   };
 
-  const handleDeletePlayer = (playerId: string, playerName: string) => {
+  const handleDeletePlayer = async (playerId: string, playerName: string) => {
     if (confirm(`¿Estás seguro de que deseas eliminar a ${playerName}?`)) {
-      dbStore.deletePlayer(playerId);
-      loadData();
-      setMessage(`Jugador ${playerName} eliminado.`);
+      const ok = await dbStore.deletePlayer(playerId);
+      setPlayers(dbStore.getPlayers());
+      setMessage(ok ? `Jugador ${playerName} eliminado.` : `Jugador ${playerName} eliminado en este equipo, pero no se pudo borrar de Supabase.`);
       setTimeout(() => setMessage(null), 4000);
     }
   };
@@ -389,7 +405,7 @@ export default function JugadoresPage() {
     };
 
     dbStore.savePlayerMapping(newMapping);
-    loadData();
+    setMappings(dbStore.getPlayerMappings());
     setIsAliasModalOpen(false);
     setAliasInput('');
     setSelectedPlayerForAlias(null);
@@ -411,18 +427,18 @@ export default function JugadoresPage() {
             <span>Plantilla de Jugadores y Datos Oficiales</span>
           </h1>
           <p className="text-xs text-slate-400 mt-0.5">
-            Gestión de plantilla, edición de datos, sincronización con Transfermarkt y mapeo de alias.
+            Gestión de plantilla, edición de datos, sincronización con 365scores y mapeo de alias.
           </p>
         </div>
 
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
           <button
-            onClick={handleScrapeTransfermarkt}
+            onClick={handleScrape365Scores}
             disabled={isScraping}
             className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-bold text-xs shadow-md shadow-sky-950/40 transition-all cursor-pointer"
           >
             <Globe className={`w-4 h-4 ${isScraping ? 'animate-spin' : ''}`} />
-            <span>{isScraping ? 'Sincronizando de Transfermarkt...' : 'Sincronizar Transfermarkt'}</span>
+            <span>{isScraping ? 'Sincronizando de 365scores...' : 'Sincronizar 365scores'}</span>
           </button>
 
           <button
@@ -660,10 +676,9 @@ export default function JugadoresPage() {
                 <label className="block text-slate-300 font-medium mb-1">Dorsal / Número *</label>
                 <input
                   type="number"
-                  required
-                  min={1}
+                  min={0}
                   max={99}
-                  value={formNumber}
+                  value={Number.isFinite(formNumber) ? formNumber : ''}
                   onChange={e => setFormNumber(parseInt(e.target.value, 10))}
                   className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 focus:outline-none focus:border-amber-500 font-mono font-bold"
                 />
@@ -676,7 +691,7 @@ export default function JugadoresPage() {
                   onChange={e => setFormPosition(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 focus:outline-none focus:border-amber-500 cursor-pointer"
                 >
-                  {SPANISH_POSITIONS.map(pos => (
+                  {(SPANISH_POSITIONS.includes(formPosition) ? SPANISH_POSITIONS : [formPosition, ...SPANISH_POSITIONS]).map(pos => (
                     <option key={pos} value={pos}>{pos}</option>
                   ))}
                 </select>
@@ -708,7 +723,7 @@ export default function JugadoresPage() {
                 <label className="block text-slate-300 font-medium mb-1">URL de la Foto</label>
                 <input
                   type="url"
-                  placeholder="https://img.transfermarkt.technology/..."
+                  placeholder="https://imagecache.365scores.com/..."
                   value={formPhotoUrl}
                   onChange={e => setFormPhotoUrl(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 focus:outline-none focus:border-amber-500"
